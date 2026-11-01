@@ -46,6 +46,13 @@ interface MediaTools {
      * write JPEG quality 85 to [out].
      */
     suspend fun cropJpeg(input: Path, box: CropBox, maxSide: Int, out: Path)
+
+    /**
+     * Cut the silent H.264 clip `[startMs, endMs]` from [video] at ≤ [maxFps]
+     * fps into [out] (plan W3-01). Returns the clip's metadata once the
+     * export is final.
+     */
+    suspend fun cutClip(video: Path, startMs: Long, endMs: Long, maxFps: Int, out: Path): ClipInfo
 }
 
 // ── Pure keyframe helpers (tested in commonTest) ──────────────────────────

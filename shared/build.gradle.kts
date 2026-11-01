@@ -76,6 +76,9 @@ kotlin {
             implementation(libs.ktor.server.cio)
             // W2-04 Receive: ML Kit barcode scanner over a CameraX use case.
             implementation(libs.mlkit.barcode.scanning)
+            // W3-01 Clips: Media3 Transformer cuts silent H.264 clips.
+            implementation(libs.media3.transformer)
+            implementation(libs.media3.extractor)
             // W5-04 Wear haptic mirror (MessageClient + CapabilityClient).
             implementation(libs.play.services.wearable)
         }

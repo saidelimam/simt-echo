@@ -1,17 +1,32 @@
 package app.simt.echo.media
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.media.MediaMetadataRetriever
+import android.net.Uri
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
+import androidx.media3.transformer.Composition
+import androidx.media3.transformer.EditedMediaItem
+import androidx.media3.transformer.ExportException
+import androidx.media3.transformer.ExportResult
+import androidx.media3.transformer.Transformer
+import kotlinx.coroutines.suspendCancellableCoroutine
 import okio.Path
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 /**
- * Android [MediaTools] (plan W1-05): [MediaMetadataRetriever] for frame
- * extraction, [Bitmap.createBitmap] for crops. Frames are rotated to
- * displayed orientation, scaled to [maxSide], and written as JPEG.
+ * Android [MediaTools] (plan W1-05, W3-01): [MediaMetadataRetriever] for
+ * frame extraction, [Bitmap.createBitmap] for crops, Media3 [Transformer]
+ * for silent H.264 clips. Frames are rotated to displayed orientation,
+ * scaled to [maxSide], and written as JPEG.
  */
-class AndroidMediaTools : MediaTools {
+class AndroidMediaTools(
+    private val context: Context,
+) : MediaTools {
 
     override suspend fun extractFrame(video: Path, atMs: Long, maxSide: Int, out: Path) {
         val retriever = MediaMetadataRetriever()
@@ -100,6 +115,63 @@ class AndroidMediaTools : MediaTools {
             cropped.recycle()
         } finally {
             full.recycle()
+        }
+    }
+
+    override suspend fun cutClip(video: Path, startMs: Long, endMs: Long, maxFps: Int, out: Path): ClipInfo {
+        val item = MediaItem.Builder()
+            .setUri(Uri.fromFile(video.toFile()))
+            .setClippingConfiguration(
+                MediaItem.ClippingConfiguration.Builder()
+                    .setStartPositionMs(startMs)
+                    .setEndPositionMs(endMs)
+                    .build(),
+            )
+            .build()
+        val edited = EditedMediaItem.Builder(item)
+            .setRemoveAudio(true)
+            .setFrameRate(maxFps)
+            .build()
+
+        // The Transformer must run on the main looper (plan W3-01); the
+        // listener delivers completion or an [ExportException].
+        val transformer = Transformer.Builder(context)
+            .setVideoMimeType(MimeTypes.VIDEO_H264)
+            .build()
+
+        suspendCancellableCoroutine<Unit> { cont ->
+            val listener = object : Transformer.Listener {
+                override fun onCompleted(composition: Composition, result: ExportResult) {
+                    cont.resume(Unit)
+                }
+
+                override fun onError(
+                    composition: Composition,
+                    result: ExportResult,
+                    error: ExportException,
+                ) {
+                    cont.resumeWithException(error)
+                }
+            }
+            transformer.addListener(listener)
+            transformer.start(edited, out.toString())
+            cont.invokeOnCancellation { transformer.cancel() }
+        }
+        transformer.removeAllListeners()
+
+        // Read back the exported clip's metadata (plan W3-01 → ClipInfo).
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(out.toString())
+            val frameCount = retriever.extractMetadata(
+                MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT,
+            )?.toIntOrNull() ?: 0
+            val durationMs = retriever.extractMetadata(
+                MediaMetadataRetriever.METADATA_KEY_DURATION,
+            )?.toLongOrNull() ?: (endMs - startMs)
+            return ClipInfo(out, frameCount, durationMs)
+        } finally {
+            retriever.release()
         }
     }
 }
