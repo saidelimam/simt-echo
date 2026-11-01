@@ -72,6 +72,7 @@ fun EchoNavHost(
                     media = mediaTools,
                     nowMs = ::currentEpochMs,
                     newId = { "lm-${Random.nextLong()}" },
+                    api = graph.apiClient,
                 )
             }
             ReviewScreen(
