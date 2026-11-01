@@ -8,7 +8,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.ReadOnlyComposable
 
-private val EchoDarkScheme = darkColorScheme(
+internal val EchoDarkScheme = darkColorScheme(
     primary = EchoLimeDark,
     background = EchoBgDark,
     surface = EchoSurfaceDark,
@@ -18,14 +18,14 @@ private val EchoDarkScheme = darkColorScheme(
     error = EchoDanger,
 )
 
-private val EchoLightScheme = lightColorScheme(
+internal val EchoLightScheme = lightColorScheme(
     primary = EchoLimeLight,
     background = EchoBgLight,
     surface = EchoSurfaceLight,
     surfaceVariant = EchoSurfaceHighLight,
     onBackground = EchoOnBgLight,
     onSurface = EchoOnBgLight,
-    error = EchoDanger,
+    error = EchoDangerLight,
 )
 
 /**
@@ -47,7 +47,7 @@ fun EchoTheme(
     } else {
         EchoExtraColors(
             warn = EchoWarn,
-            danger = EchoDanger,
+            danger = EchoDangerLight,
             ok = EchoOk,
             muted = EchoMutedLight,
         )

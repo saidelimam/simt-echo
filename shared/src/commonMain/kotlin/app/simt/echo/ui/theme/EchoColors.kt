@@ -25,9 +25,13 @@ internal val EchoLimeDark = Color(0xFFC6F432)
 internal val EchoLimeLight = Color(0xFF4E7A00)
 //endregion
 
-//region Status colors (identical in both themes, plan §8.1)
+//region Status colors (plan §8.1)
+// Deviation from §8.1's identical-in-both-themes status colors: EchoDanger
+// is only 2.87:1 on the light background, below the 4.5:1 text gate, so the
+// light scheme uses a darker red from the same hue family.
 internal val EchoWarn = Color(0xFFFFB020)
 internal val EchoDanger = Color(0xFFFF5A5F)
+internal val EchoDangerLight = Color(0xFFCC2A30)
 internal val EchoOk = Color(0xFF3DDC97)
 //endregion
 

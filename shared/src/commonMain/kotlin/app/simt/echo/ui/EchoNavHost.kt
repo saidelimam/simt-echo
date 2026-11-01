@@ -78,11 +78,17 @@ fun EchoNavHost(
                     nowMs = ::currentEpochMs,
                     newId = { "lm-${Random.nextLong()}" },
                     api = graph.apiClient,
+                    router = graph.aiRouter(),
+                    preferLocal = graph.configRepository.get().preferLocalModel,
                 )
             }
             ReviewScreen(
                 viewModel = viewModel,
-                onSaved = { navController.navigateTo(EchoRoute.RouteDetail(it)) },
+                onSaved = {
+                    navController.navigateTo(
+                        EchoRoute.RouteDetail(it, savedJobId = viewModel.ui.value.savedJobId),
+                    )
+                },
                 onBack = { navController.popBackStack() },
                 onFindLandmarks = { navController.navigateTo(EchoRoute.Processing(route.draftId)) },
             )
@@ -118,6 +124,10 @@ fun EchoNavHost(
                 routes = graph.routeRepository,
                 onShare = { navController.navigateTo(EchoRoute.Share(it)) },
                 onBack = { navController.popBackStack() },
+                onDeleted = { navController.popBackStack() },
+                api = graph.apiClient,
+                savedJobId = route.savedJobId,
+                transferService = graph.transferService,
             )
         }
         composable<EchoRoute.Share> { entry ->
@@ -179,6 +189,8 @@ fun EchoNavHost(
                             configs = graph.configRepository,
                             trials = graph.trialRepository,
                             sharing = sharing,
+                            onPhoneModelName = graph.onPhoneModelPath
+                                ?.substringAfterLast('/'),
                         )
                     }
                 },

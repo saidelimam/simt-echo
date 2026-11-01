@@ -34,6 +34,7 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -276,6 +277,30 @@ class ReviewViewModelTest {
     }
 
     @Test
+    fun editLandmarkPrivacyRiskFlagsAndDefaultsCropOff() = runTest(dispatcher) {
+        val h = harness()
+        val vm = h.vm()
+        advanceUntilIdle()
+        vm.openDraw("n1")
+        vm.editDrawTitle("Poster with face")
+        vm.confirmDraw("n1", CropBox(0.2f, 0.2f, 0.6f, 0.6f))
+        advanceUntilIdle()
+        val id = vm.ui.value.nodes[1].landmarks.single().id
+        assertFalse(vm.ui.value.nodes[1].landmarks.single().privacyRisk)
+
+        vm.editLandmark(id, "Poster with face", "Turn", privacyRisk = true)
+        advanceUntilIdle()
+        val flagged = vm.ui.value.nodes[1].landmarks.single()
+        assertTrue(flagged.privacyRisk)
+
+        // ExportSelection level: flagged crop defaults excluded.
+        val savedDraft = h.drafts.loadDraftRoute("draft-1")
+        assertNotNull(savedDraft)
+        val selection = app.simt.echo.transfer.defaultSelection(savedDraft)
+        assertTrue(flagged.cropAssetId in selection.excludedCropIds)
+    }
+
+    @Test
     fun saveExportsGeometryUntouchedAndDeletesDraft() = runTest(dispatcher) {
         val h = harness()
         val vm = h.vm()
@@ -307,6 +332,37 @@ class ReviewViewModelTest {
         assertNotNull(h.routes.readAsset("draft-1", exported.landmarks.single().cropAssetId!!))
         // The consumed draft is gone.
         assertNull(h.drafts.loadDraftRoute("draft-1"))
+    }
+
+    @Test
+    fun saveCapturesJobIdForPostSaveDeleteOffer() = runTest(dispatcher) {
+        val h = harness()
+        h.drafts.saveJobRecord("draft-1", JobRecord("job-1", "complete", 1_762_000_000_000L))
+        val vm = h.vm()
+        advanceUntilIdle()
+
+        var saved: String? = null
+        vm.save { saved = it }
+        advanceUntilIdle()
+
+        assertEquals("draft-1", saved)
+        assertEquals("job-1", vm.ui.value.savedJobId)
+        // The draft (with its job record) is consumed; the route is saved.
+        assertNull(h.drafts.loadJobRecord("draft-1"))
+        assertNotNull(h.routes.get("draft-1"))
+        assertEquals("job-1", h.routes.routeJobId("draft-1"))
+    }
+
+    @Test
+    fun saveWithoutJobLeavesNoDeleteOffer() = runTest(dispatcher) {
+        val h = harness()
+        val vm = h.vm()
+        advanceUntilIdle()
+
+        vm.save { }
+        advanceUntilIdle()
+
+        assertNull(vm.ui.value.savedJobId)
     }
 
     @Test
@@ -342,6 +398,60 @@ class ReviewViewModelTest {
         assertEquals(listOf(0.9, 0.2), ui.suggestions.getValue("n1").map { it.rank })
         assertEquals(0, ui.suggestionIndex.getValue("n1"))
         assertEquals("muse-spark-1.3 + sam-3.1", ui.aiModels)
+    }
+
+    // ── W5-01: local model ─────────────────────────────────────────────
+
+    private class FakeLocalVision : app.simt.echo.ai.LocalVision {
+        override val modelId: String = "glimmer-test"
+        var calls: Int = 0
+
+        override suspend fun propose(
+            checkpoint: app.simt.echo.ai.LocalCheckpoint,
+        ): List<app.simt.echo.ai.AiCandidate> {
+            calls++
+            if (checkpoint.nodeId != "n1") return emptyList()
+            return app.simt.echo.ai.cleanLocalCandidates(
+                checkpoint,
+                modelId,
+                listOf(
+                    app.simt.echo.ai.LocalCandidateDto(
+                        title = "Red pillar",
+                        samPhrase = "red pillar",
+                        description = "A red pillar.",
+                        box = listOf(100, 100, 400, 500),
+                        distinctiveness = 0.9,
+                        permanence = 1.0,
+                        cue = "Turn right at the red pillar",
+                    ),
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun localSuggestionsAppearWhenNoCloudJobExists() = runTest(dispatcher) {
+        val h = harness()
+        val vision = FakeLocalVision()
+        val vm = ReviewViewModel(
+            draftId = h.draftId,
+            drafts = h.drafts,
+            routes = h.routes,
+            media = h.media,
+            nowMs = { 1_762_000_100_000L },
+            newId = { "lm-test-x" },
+            api = h.api,
+            router = app.simt.echo.ai.AiRouter(vision),
+        )
+        advanceUntilIdle()
+
+        val ui = vm.ui.value
+        assertTrue(vision.calls > 0, "local provider was consulted")
+        assertEquals(listOf("n1"), ui.suggestions.keys.toList())
+        assertEquals("Red pillar", ui.suggestions.getValue("n1").single().title)
+        assertEquals("glimmer-test (local)", ui.aiModels)
+        // Cloud was never asked for a job (no record exists).
+        assertNull(h.api.gotten)
     }
 
     @Test

@@ -112,6 +112,49 @@ fun SettingsScreen(
             style = MaterialTheme.typography.bodyMedium,
         )
 
+        Text(text = "Advanced", style = MaterialTheme.typography.titleMedium)
+        Text(
+            text = "Local model (optional). A vision server on your own network, " +
+                "or a model file on this phone. Nothing is sent to the cloud when it runs.",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        OutlinedTextField(
+            value = ui.localModelBaseUrl,
+            onValueChange = viewModel::onLocalModelBaseUrlChange,
+            label = { Text(text = "LAN server URL") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = ui.localModelName,
+            onValueChange = viewModel::onLocalModelNameChange,
+            label = { Text(text = "Model name") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(
+                text = "Prefer local model",
+                modifier = Modifier.weight(1f),
+            )
+            Switch(
+                checked = ui.preferLocalModel,
+                onCheckedChange = viewModel::setPreferLocalModel,
+            )
+        }
+        Text(
+            text = if (ui.onPhoneModel != null) {
+                "On-phone model found: ${ui.onPhoneModel}"
+            } else {
+                "No on-phone model file found."
+            },
+            style = MaterialTheme.typography.bodyMedium,
+        )
+
         EchoButton(text = "Back", onClick = onBack, modifier = Modifier.fillMaxWidth())
     }
 }

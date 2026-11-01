@@ -23,6 +23,14 @@ data class SettingsUi(
     val baselineMode: Boolean = false,
     /** Camera HUD on Navigate (W5-02), persisted. */
     val cameraOverlayEnabled: Boolean = false,
+    /** LAN local-model base URL (W5-01), persisted. Empty = none. */
+    val localModelBaseUrl: String = "",
+    /** LAN local-model id (W5-01), persisted. Empty = none. */
+    val localModelName: String = "",
+    /** Prefer the local model over the cloud worker (W5-01). */
+    val preferLocalModel: Boolean = false,
+    /** On-phone model file name when one was pushed, else null (W5-01). */
+    val onPhoneModel: String? = null,
     /** Last calibration walk's measured distance, metres (input). */
     val measuredM: String = "",
     /** Result line after calibrating, or null before the first run. */
@@ -45,6 +53,8 @@ class SettingsViewModel(
     private val configs: ConfigRepository,
     private val trials: TrialRepository,
     private val sharing: FileSharing,
+    /** On-phone model file name when the platform found one (W5-01). */
+    private val onPhoneModelName: String? = null,
 ) : ViewModel() {
 
     private val _ui = MutableStateFlow(
@@ -53,6 +63,10 @@ class SettingsViewModel(
                 stepK = it.stepK,
                 baselineMode = it.baselineMode,
                 cameraOverlayEnabled = it.cameraOverlayEnabled,
+                localModelBaseUrl = it.localModelBaseUrl,
+                localModelName = it.localModelName,
+                preferLocalModel = it.preferLocalModel,
+                onPhoneModel = onPhoneModelName,
             )
         },
     )
@@ -126,6 +140,21 @@ class SettingsViewModel(
                 _ui.update { it.copy(exportNote = e.message ?: "Could not export the trials") }
             }
         }
+    }
+
+    fun onLocalModelBaseUrlChange(value: String) {
+        _ui.update { it.copy(localModelBaseUrl = value) }
+        configs.update { it.copy(localModelBaseUrl = value.trim()) }
+    }
+
+    fun onLocalModelNameChange(value: String) {
+        _ui.update { it.copy(localModelName = value) }
+        configs.update { it.copy(localModelName = value.trim()) }
+    }
+
+    fun setPreferLocalModel(enabled: Boolean) {
+        configs.update { it.copy(preferLocalModel = enabled) }
+        _ui.update { it.copy(preferLocalModel = enabled) }
     }
 }
 

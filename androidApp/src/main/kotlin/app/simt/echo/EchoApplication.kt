@@ -14,6 +14,21 @@ class EchoApplication : Application() {
             platform = AndroidPlatform(dataDir = filesDir.absolutePath),
             apiBaseUrl = BuildConfig.WORKERS_API_BASE,
             appToken = BuildConfig.ECHO_APP_TOKEN,
+            // W5-01: a .litertlm pushed into the app's models directory
+            // (adb) enables the on-phone provider; absent = LAN/manual.
+            onPhoneModelPath = getExternalFilesDir("models")
+                ?.listFiles()
+                ?.firstOrNull { it.isFile && it.name.endsWith(".litertlm") }
+                ?.absolutePath,
         )
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        // Receiver expiry (plan W3-08): routes whose time has come vanish
+        // on start. Missing storage is a no-op, never a crash at launch.
+        runCatching {
+            graph.routeRepository.purgeExpired(System.currentTimeMillis())
+        }
     }
 }

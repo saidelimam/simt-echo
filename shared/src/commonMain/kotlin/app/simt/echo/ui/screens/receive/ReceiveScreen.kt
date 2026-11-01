@@ -25,6 +25,7 @@ import app.simt.echo.platform.FileSharing
 import app.simt.echo.platform.QrScannerView
 import app.simt.echo.transfer.TransferService
 import app.simt.echo.ui.components.EchoButton
+import app.simt.echo.ui.components.ErrorState
 import app.simt.echo.ui.components.PillButton
 import app.simt.echo.ui.components.oneDecimal
 
@@ -104,15 +105,10 @@ fun ReceiveScreen(
                 }
                 val error = ui.error
                 if (error != null) {
-                    Text(
-                        text = error,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                    EchoButton(
-                        text = "Scan again",
-                        onClick = viewModel::rescan,
-                        modifier = Modifier.fillMaxWidth(),
+                    ErrorState(
+                        message = error,
+                        actionLabel = "Scan again",
+                        onAction = viewModel::rescan,
                     )
                 }
             }
@@ -149,6 +145,6 @@ private fun ImportSheet(
             )
         }
         EchoButton(text = "Save", onClick = onSave, modifier = Modifier.fillMaxWidth())
-        EchoButton(text = "Scan again", onClick = onRescan, modifier = Modifier.fillMaxWidth())
+        PillButton(text = "Scan again", onClick = onRescan, modifier = Modifier.fillMaxWidth())
     }
 }

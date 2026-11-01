@@ -33,6 +33,9 @@ class AppGraph(
      */
     val apiBaseUrl: String = "",
     val appToken: String = "",
+    /** On-phone LiteRT model file (W5-01), found by the platform entry
+     * point in its models directory; null when none was pushed. */
+    val onPhoneModelPath: String? = null,
 ) {
     /** Root of all on-disk state (plan §5.3). Empty only in previews/tests. */
     val fileStore: FileStore by lazy {
@@ -53,6 +56,30 @@ class AppGraph(
     val apiClient: EchoApiClient by lazy {
         EchoApiClient(createHttpClient(), apiBaseUrl, appToken)
     }
+
+    /**
+     * The configured local vision provider (W5-01), or null: a LAN
+     * OpenAI-compatible server when URL + model are set in Settings,
+     * else the on-phone engine when a model file was pushed. Read live
+     * from config on every call so Settings changes take effect
+     * without a restart.
+     */
+    fun localVision(): app.simt.echo.ai.LocalVision? {
+        val config = configRepository.get()
+        if (config.localModelBaseUrl.isNotBlank() && config.localModelName.isNotBlank()) {
+            return app.simt.echo.ai.OpenAiCompatVision(
+                http = createHttpClient(),
+                baseUrl = config.localModelBaseUrl,
+                modelId = config.localModelName,
+            )
+        }
+        val path = onPhoneModelPath ?: return null
+        return app.simt.echo.ai.createOnPhoneVision(path)
+    }
+
+    /** Router Review consults (W5-01); local part may be absent. */
+    fun aiRouter(): app.simt.echo.ai.AiRouter =
+        app.simt.echo.ai.AiRouter(localVision())
 
     /** LAN bundle transport + offer/receive service (W2-03). */
     val peerTransport: PeerTransport by lazy { createPeerTransport() }

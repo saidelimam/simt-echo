@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import app.simt.echo.transfer.JobStage
 import app.simt.echo.ui.components.EchoButton
+import app.simt.echo.ui.components.ErrorState
 import app.simt.echo.ui.components.PillButton
 import app.simt.echo.ui.components.StatusChip
 
@@ -66,16 +67,12 @@ fun ProcessingScreen(
                 EchoButton(text = "Continue", onClick = onDone, modifier = Modifier.fillMaxWidth())
             }
             is ProcessingPhase.Failed -> {
-                Text(
-                    text = phase.message,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.error,
-                )
-                EchoButton(text = "Retry", onClick = viewModel::retry, modifier = Modifier.fillMaxWidth())
-                PillButton(
-                    text = "Continue without AI",
-                    onClick = { viewModel.decline(onDone) },
-                    modifier = Modifier.fillMaxWidth(),
+                ErrorState(
+                    message = phase.message,
+                    actionLabel = "Retry",
+                    onAction = viewModel::retry,
+                    secondaryLabel = "Continue without AI",
+                    onSecondary = { viewModel.decline(onDone) },
                 )
             }
         }

@@ -10,18 +10,26 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import app.simt.echo.data.RouteRepository
+import app.simt.echo.transfer.CloudApi
+import app.simt.echo.transfer.TransferService
 import app.simt.echo.ui.components.EchoButton
 import app.simt.echo.ui.components.PillButton
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 /**
  * Saved-route detail (plan W2-01): read-only header, landmark list,
  * entry to Share. Navigation playback lands in W2-06; nothing here
- * navigates into it.
+ * navigates into it. Delete (W3-08) removes the route and leaves; the
+ * post-save upload delete reuses [CloudApi.delete].
  */
 @Composable
 fun RouteDetailScreen(
@@ -30,8 +38,23 @@ fun RouteDetailScreen(
     onShare: (String) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    onDeleted: () -> Unit = onBack,
+    /** Cloud API for the post-save upload delete (W3-08); null hides it. */
+    api: CloudApi? = null,
+    /** Server job from the just-completed Review save, if any. */
+    savedJobId: String? = null,
+    /** Plaintext-export cleanup on delete; null in previews/tests. */
+    transferService: TransferService? = null,
 ) {
     val route = remember(routeId) { routes.get(routeId) }
+    val persistedJobId = remember(routeId) { routes.routeJobId(routeId) }
+    var cloudJobId by remember(routeId, savedJobId, persistedJobId) {
+        mutableStateOf(savedJobId ?: persistedJobId)
+    }
+    var confirmDelete by remember(routeId) { mutableStateOf(false) }
+    var mediaDeleted by remember(routeId, savedJobId) { mutableStateOf(false) }
+    var deleteError by remember(routeId) { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -63,6 +86,54 @@ fun RouteDetailScreen(
             onClick = { onShare(routeId) },
             modifier = Modifier.fillMaxWidth(),
         )
+        val jobId = cloudJobId
+        if (jobId != null && api != null && !mediaDeleted) {
+            PillButton(
+                text = "Delete uploaded media now",
+                onClick = {
+                    scope.launch {
+                        try {
+                            api.delete(jobId)
+                        } catch (e: Exception) {
+                            deleteError = "Could not delete the uploaded files. Check the connection and try again."
+                            return@launch
+                        }
+                        routes.clearRouteJobId(routeId)
+                        cloudJobId = null
+                        mediaDeleted = true
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        if (mediaDeleted) {
+            Text(text = "Uploaded media deleted.", style = MaterialTheme.typography.bodyLarge)
+        }
+        deleteError?.let {
+            Text(text = it, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.error)
+        }
+        if (!confirmDelete) {
+            PillButton(
+                text = "Delete route",
+                onClick = { confirmDelete = true },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        } else {
+            EchoButton(
+                text = "Confirm delete",
+                onClick = {
+                    transferService?.deletePlainExportsFor(routeId)
+                    routes.delete(routeId)
+                    onDeleted()
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            PillButton(
+                text = "Keep route",
+                onClick = { confirmDelete = false },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
         PillButton(text = "Back home", onClick = onBack, modifier = Modifier.fillMaxWidth())
     }
 }

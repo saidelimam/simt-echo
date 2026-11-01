@@ -78,6 +78,9 @@ kotlin {
             implementation(libs.camerax.video)
             implementation(libs.camerax.compose)
             implementation(libs.cryptography.provider.optimal)
+            // W5-01 on-phone local model: LiteRT-LM engine (Android only;
+            // the iOS actual of createOnPhoneVision returns null).
+            implementation(libs.litertlm.android)
             // W2-03 KtorLanTransport: CIO server + OkHttp client engine.
             implementation(libs.ktor.client.okhttp)
             implementation(libs.ktor.server.cio)
