@@ -13,6 +13,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import kotlin.random.Random
 import app.simt.echo.AppGraph
+import app.simt.echo.data.DraftRepository
 import app.simt.echo.data.listRecoverable
 import app.simt.echo.platform.currentEpochMs
 import app.simt.echo.platform.rememberFileSharing
@@ -50,8 +51,10 @@ fun EchoNavHost(
         modifier = modifier,
     ) {
         composable<EchoRoute.Home> {
+            val draftIds = graph.draftRepository.listDraftIds()
             HomeScreen(
-                draftIds = graph.draftRepository.listDraftIds(),
+                draftIds = draftIds,
+                draftNames = draftIds.associateWith { draftDisplayName(graph.draftRepository, it) },
                 savedRoutes = graph.routeRepository.list(),
                 onOpen = navController::navigateTo,
                 recoverableDrafts = listRecoverable(graph.draftRepository),
@@ -204,3 +207,17 @@ fun EchoNavHost(
 }
 
 private fun NavHostController.navigateTo(route: EchoRoute) = navigate(route)
+
+/**
+ * Home draft label (W7-03): the route name the user typed, else the
+ * destination, else blank (Home falls back to "Untitled draft" — raw
+ * ids never reach screen copy).
+ */
+private fun draftDisplayName(drafts: DraftRepository, draftId: String): String {
+    val capture = runCatching { drafts.loadCapture(draftId) }.getOrNull() ?: return ""
+    return when {
+        capture.routeName.isNotBlank() -> capture.routeName
+        capture.destinationLabel.isNotBlank() -> capture.destinationLabel
+        else -> ""
+    }
+}

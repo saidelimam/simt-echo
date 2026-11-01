@@ -4,17 +4,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.simt.echo.data.RecoverableDraft
 import app.simt.echo.data.destination
 import app.simt.echo.model.EchoRoute as SavedRoute
@@ -33,6 +30,8 @@ fun HomeScreen(
     onOpen: (EchoRoute) -> Unit,
     modifier: Modifier = Modifier,
     draftIds: List<String> = emptyList(),
+    /** Display name per draft id (route name, else destination); blanks fall back, never raw ids. */
+    draftNames: Map<String, String> = emptyMap(),
     onOpenDraft: (String) -> Unit = { onOpen(EchoRoute.Review(it)) },
     savedRoutes: List<SavedRoute> = emptyList(),
     onOpenRoute: (String) -> Unit = { onOpen(EchoRoute.RouteDetail(it)) },
@@ -53,11 +52,12 @@ fun HomeScreen(
             // mid-upload must greet the user on relaunch, not hide.
             Text(text = "Interrupted drafts", style = MaterialTheme.typography.titleMedium)
             recoverableDrafts.forEach { draft ->
+                val name = draftDisplayName(draft.draftId, draftNames)
                 EchoButton(
                     text = if (draft.hasRouteDraft) {
-                        "${draft.draftId} · Open in Review"
+                        "$name · Open in Review"
                     } else {
-                        "${draft.draftId} · Resume recording (${draft.sampleCount} samples)"
+                        "$name · Resume recording (${draft.sampleCount} samples)"
                     },
                     onClick = { onResumeDraft(draft) },
                 )
@@ -78,45 +78,16 @@ fun HomeScreen(
         }
         draftIds.forEach { draftId ->
             EchoButton(
-                text = "$draftId · Draft",
+                text = "${draftDisplayName(draftId, draftNames)} · Draft",
                 onClick = { onOpenDraft(draftId) },
             )
         }
         EchoButton(text = "Record", onClick = { onOpen(EchoRoute.Record()) })
         EchoButton(text = "Receive", onClick = { onOpen(EchoRoute.Receive) })
-        EchoButton(text = "Review demo draft", onClick = { onOpen(EchoRoute.Review("demo-draft")) })
-        EchoButton(text = "Route detail demo", onClick = { onOpen(EchoRoute.RouteDetail("demo-route")) })
-        EchoButton(text = "Share demo route", onClick = { onOpen(EchoRoute.Share("demo-route")) })
-        EchoButton(text = "Align demo route", onClick = { onOpen(EchoRoute.Align("demo-route")) })
-        EchoButton(
-            text = "Navigate demo route",
-            onClick = { onOpen(EchoRoute.Navigate("demo-route", simulate = false)) },
-        )
         EchoButton(text = "Settings", onClick = { onOpen(EchoRoute.Settings) })
     }
 }
 
-/** Placeholder body shared by every not-yet-owned screen. */
-@Composable
-fun PlaceholderScreen(
-    viewModel: PlaceholderViewModel,
-    primaryText: String,
-    onPrimary: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val ui by viewModel.ui.collectAsStateWithLifecycle()
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text(text = ui.title, style = MaterialTheme.typography.titleLarge)
-        Text(text = ui.subtitle, style = MaterialTheme.typography.bodyLarge)
-        EchoButton(
-            text = primaryText,
-            onClick = onPrimary,
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
-}
+/** Draft display name: the route/draft name when one exists, never a raw id. */
+private fun draftDisplayName(draftId: String, names: Map<String, String>): String =
+    names[draftId]?.takeIf { it.isNotBlank() } ?: "Untitled draft"
