@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -21,6 +22,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onLongClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
@@ -41,6 +47,7 @@ import app.simt.echo.ui.components.PillButton
 import app.simt.echo.ui.components.RoundActionButton
 import app.simt.echo.ui.components.StatusChip
 import app.simt.echo.ui.components.oneDecimal
+import app.simt.echo.ui.theme.EchoTouchOther
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlin.random.Random
@@ -172,13 +179,23 @@ private fun FinishForm(onSave: (String, String) -> Unit) {
     }
 }
 
-/** Long-press (≥ 600 ms is the gesture recognizer's long-press) to finish. */
+/**
+ * Long-press (≥ 600 ms is the gesture recognizer's long-press) to finish.
+ * 48 dp target with a Button role so TalkBack can activate it via the
+ * custom long-click action; sighted touch users keep the gesture.
+ */
 @Composable
 private fun FinishButton(onFinish: () -> Unit) {
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
             .fillMaxWidth()
+            .sizeIn(minHeight = EchoTouchOther)
+            .semantics(mergeDescendants = true) {
+                role = Role.Button
+                contentDescription = "Hold to finish"
+                onLongClick { onFinish(); true }
+            }
             .padding(vertical = 8.dp)
             .pointerInput(Unit) {
                 detectTapGestures(onLongPress = { onFinish() })

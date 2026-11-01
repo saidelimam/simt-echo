@@ -10,6 +10,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
@@ -30,12 +32,15 @@ internal fun wrapPi(angleRad: Float): Float {
 /**
  * 200 dp navigation chevron (plan §8.3). The arrow animates with a spring
  * and unwraps 359°→0° transitions so it never spins a full turn.
+ * [contentDescription] names the arrow for TalkBack (usually the current
+ * instruction); null leaves the canvas decorative.
  */
 @Composable
 fun DirectionArrow(
     angleRad: Float,
     modifier: Modifier = Modifier,
     color: Color = Color(0xFFC6F432),
+    contentDescription: String? = null,
 ) {
     val animated = remember { Animatable(angleRad) }
     LaunchedEffect(angleRad) {
@@ -50,7 +55,12 @@ fun DirectionArrow(
             )
         }
     }
-    Canvas(modifier = modifier.size(200.dp)) {
+    val a11y = if (contentDescription != null) {
+        Modifier.semantics { this.contentDescription = contentDescription }
+    } else {
+        Modifier
+    }
+    Canvas(modifier = modifier.size(200.dp).then(a11y)) {
         rotate(degrees = animated.value * 180f / PI.toFloat()) {
             val w = size.width
             val h = size.height

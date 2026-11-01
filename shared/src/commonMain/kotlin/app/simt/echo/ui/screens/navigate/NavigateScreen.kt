@@ -1,5 +1,11 @@
 package app.simt.echo.ui.screens.navigate
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -34,6 +40,7 @@ import app.simt.echo.ui.components.CropImage
 import app.simt.echo.ui.components.DirectionArrow
 import app.simt.echo.ui.components.DistanceReadout
 import app.simt.echo.ui.components.EchoButton
+import app.simt.echo.ui.components.EmptyState
 import app.simt.echo.ui.components.LandmarkCard
 import app.simt.echo.ui.components.PillButton
 import app.simt.echo.ui.components.StatusChip
@@ -81,15 +88,12 @@ fun NavigateScreen(
 
     val nav = ui
     if (nav == null) {
-        Column(
-            modifier = modifier
-                .fillMaxSize()
-                .padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text(text = "No saved route $routeId", style = MaterialTheme.typography.titleLarge)
-            EchoButton(text = "Back", onClick = onBack, modifier = Modifier.fillMaxWidth())
-        }
+        EmptyState(
+            title = "No saved route $routeId",
+            actionLabel = "Back",
+            onAction = onBack,
+            modifier = modifier.fillMaxSize(),
+        )
         return
     }
 
@@ -104,23 +108,34 @@ fun NavigateScreen(
             if (!online) StatusChip(text = "Offline ✓")
             StatusChip(text = "±${oneDecimal(nav.uncertaintyM)} m")
         }
-        DirectionArrow(angleRad = nav.arrowRad.toFloat())
-        Text(text = nav.instruction, style = MaterialTheme.typography.titleLarge)
+        DirectionArrow(angleRad = nav.arrowRad.toFloat(), contentDescription = nav.instruction)
+        AnimatedContent(targetState = nav.instruction, label = "instruction") { instruction ->
+            Text(text = instruction, style = MaterialTheme.typography.titleLarge)
+        }
         DistanceReadout(text = "${oneDecimal(maxOf(0.0, nav.distanceToNextM))} m")
         // Baseline (SENSOR_ONLY) runs show no landmark cards: turns and
         // distance only, so the comparison against ECHO stays honest.
-        if (shouldShowLandmarkCards(viewModel.baselineMode)) nav.landmark?.let { landmark ->
-            val cropBytes = remember(landmark.cropAssetId) {
-                landmark.cropAssetId?.let { routes.readAsset(routeId, it) }
+        // Generic enter/exit only — no per-screen animation system.
+        val landmark = if (shouldShowLandmarkCards(viewModel.baselineMode)) nav.landmark else null
+        AnimatedVisibility(
+            visible = landmark != null,
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically(),
+            label = "landmark",
+        ) {
+            landmark?.let {
+                val cropBytes = remember(it.cropAssetId) {
+                    it.cropAssetId?.let { id -> routes.readAsset(routeId, id) }
+                }
+                if (cropBytes != null) {
+                    CropImage(bytes = cropBytes, contentDescription = it.title)
+                }
+                LandmarkCard(
+                    title = it.title,
+                    cue = it.cue,
+                    stats = "in ~${oneDecimal(maxOf(0.0, nav.distanceToNextM))} m",
+                )
             }
-            if (cropBytes != null) {
-                CropImage(bytes = cropBytes, contentDescription = landmark.title)
-            }
-            LandmarkCard(
-                title = landmark.title,
-                cue = landmark.cue,
-                stats = "in ~${oneDecimal(maxOf(0.0, nav.distanceToNextM))} m",
-            )
         }
         LinearProgressIndicator(
             progress = { nav.progress01.toFloat() },

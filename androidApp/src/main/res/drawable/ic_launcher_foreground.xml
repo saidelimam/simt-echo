@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- W4-04: lime echo rings on transparent; the adaptive-icon background
+     supplies the near-black. Rings stay inside the 66 dp safe circle
+     (r ≤ 30 + 2 dp stroke on a 108 dp viewport). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M44,54 a10,10 0 1,0 20,0 a10,10 0 1,0 -20,0"
+        android:strokeWidth="4"
+        android:strokeColor="#C6F432"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M34,54 a20,20 0 1,0 40,0 a20,20 0 1,0 -40,0"
+        android:strokeWidth="4"
+        android:strokeColor="#C6F432"
+        android:strokeAlpha="0.55"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M24,54 a30,30 0 1,0 60,0 a30,30 0 1,0 -60,0"
+        android:strokeWidth="4"
+        android:strokeColor="#C6F432"
+        android:strokeAlpha="0.3"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M49,54 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0"
+        android:fillColor="#C6F432" />
+</vector>
