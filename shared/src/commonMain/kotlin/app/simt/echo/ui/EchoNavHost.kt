@@ -13,6 +13,7 @@ import app.simt.echo.ui.screens.HomeScreen
 import app.simt.echo.ui.screens.PlaceholderScreen
 import app.simt.echo.ui.screens.PlaceholderViewModel
 import app.simt.echo.ui.screens.record.RecordScreen
+import app.simt.echo.ui.screens.review.ReviewScreen
 
 /**
  * Navigation shell (plan §8.2). This file is owned by Lane A: screens
@@ -44,10 +45,11 @@ fun EchoNavHost(
         }
         composable<EchoRoute.Review> { entry ->
             val route = entry.toRoute<EchoRoute.Review>()
-            val vm = remember(route.draftId) {
-                PlaceholderViewModel("Review ${route.draftId}", "Manual editor lands in W2-01.")
-            }
-            PlaceholderScreen(vm, "Find landmarks (W3-02)", { navController.navigateTo(EchoRoute.Processing(route.draftId)) })
+            ReviewScreen(
+                draftId = route.draftId,
+                drafts = graph.draftRepository,
+                onBack = { navController.popBackStack() },
+            )
         }
         composable<EchoRoute.Processing> { entry ->
             val route = entry.toRoute<EchoRoute.Processing>()
