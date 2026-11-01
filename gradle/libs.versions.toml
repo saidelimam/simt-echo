@@ -31,6 +31,7 @@ kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-
 
 # Files
 okio = { group = "com.squareup.okio", name = "okio", version.ref = "okio" }
+okio-fakefilesystem = { group = "com.squareup.okio", name = "okio-fakefilesystem", version.ref = "okio" }
 
 # HTTP
 ktor-client-core = { group = "io.ktor", name = "ktor-client-core", version.ref = "ktor" }

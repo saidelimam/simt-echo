@@ -70,6 +70,8 @@ kotlin {
         commonTest.dependencies {
             implementation(kotlin("test"))
             implementation(libs.kotlinx.coroutines.core)
+            // Repository tests (W0-04) run on the host against okio's fake.
+            implementation(libs.okio.fakefilesystem)
         }
     }
 }
