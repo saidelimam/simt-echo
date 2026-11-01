@@ -7,8 +7,8 @@ navigates a friend along it — turn cues, landmark AR overlays, QR checkpoints.
 
 Status: **scaffold complete** (slice W0-02) — module structure, build wiring,
 platform seams and a runnable app shell; no feature code yet. The
-authoritative spec is `SIMT_ECHO_IMPLEMENTATION_PLAN_V2.md` (tracked at the
-repo root), and agent work is sequenced by `docs/plans/0001-agentic-flow.md`.
+authoritative spec is `docs/research/SIMT_ECHO_IMPLEMENTATION_PLAN_V2.md`
+(tracked in `docs/research/`), and agent work is sequenced by `docs/plans/0001-agentic-flow.md`.
 
 ## Layout
 

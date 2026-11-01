@@ -12,7 +12,7 @@ vocabulary: `Queued` (ready when its dependencies are `Complete`),
 ## 1. Scope
 
 This plan does not re-slice the work. It takes the 36 slices already defined in
-`SIMT_ECHO_IMPLEMENTATION_PLAN_02.md` (§9 tracker, §10 per-slice detail) and adds
+`docs/research/SIMT_ECHO_IMPLEMENTATION_PLAN_V2.md` (§9 tracker, §10 per-slice detail) and adds
 the three things that document does not give a multi-agent team:
 
 1. **A model tier per slice** — which slices a small local model can execute
@@ -22,11 +22,11 @@ the three things that document does not give a multi-agent team:
    never edit the same files at the same time (§3, §5).
 3. **A reuse map against `simt-app`** — for every ECHO platform seam, the
    concrete `simt-app` class or module to reuse, adapt, or deliberately not
-   reuse, with the fallback Plan 02 already specifies (§4). This resolves the
-   `_tbd_` rows in Plan 02 §2.1.
+   reuse, with the fallback Plan already specifies (§4). This resolves the
+   `_tbd_` rows in Plan §2.1.
 
-Out of scope: changing any Plan 02 contract (§5), algorithm (§6), wire format,
-or cut order (§12). Where this plan and Plan 02 disagree, Plan 02 wins on
+Out of scope: changing any Plan contract (§5), algorithm (§6), wire format,
+or cut order (§12). Where this plan and Plan disagree, Plan wins on
 *what* is built; this plan governs *who* builds it, in what order, and with
 which model.
 
@@ -34,7 +34,7 @@ Acceptance for this document itself:
 
 - [x] This file exists at `docs/plans/0001-agentic-flow.md` and
       `simt plan status` reads its tracker (36 queued, 2 ready at creation).
-- [x] Every Plan 02 slice id (`W0-01`…`W5-04`, 36 ids) appears exactly once in
+- [x] Every Plan slice id (`W0-01`…`W5-04`, 36 ids) appears exactly once in
       the §6 tracker table, each with tier, lane, dependencies, and an
       evidence column (verified mechanically: 36 rows, 0 duplicate ids).
 - [x] No slice whose primary tier is **L** is sole-authored on cryptography,
@@ -53,7 +53,7 @@ cheapest tier that can finish it; do not assign by habit or by availability.
 
 | Tier | Name | Use when all of these hold | Never alone on |
 |---|---|---|---|
-| **L** | Small local model | Behaviour is fully specified in Plan 02 (code, thresholds, or JSON shape given verbatim); change is single-module and mostly pure/deterministic; a test oracle already exists in the plan; failure is cheap and local | Crypto, privacy, geometry, Navigator |
+| **L** | Small local model | Behaviour is fully specified in Plan (code, thresholds, or JSON shape given verbatim); change is single-module and mostly pure/deterministic; a test oracle already exists in the plan; failure is cheap and local | Crypto, privacy, geometry, Navigator |
 | **F** | Cloud flash model | Cross-file Android / Compose / CameraX / Ktor / Worker plumbing; moderate ambiguity resolvable by compiling and iterating; integration with an already-frozen contract | Contract changes, security design |
 | **S** | Frontier smart model | Contract or architecture freeze; security/privacy design; sensor-geometry validation; cross-repo reuse decisions; provider routing; merge and release gates | — (this is the ceiling) |
 
@@ -101,7 +101,7 @@ Parallel batches (a batch starts when every dependency in §6 is done):
 | 4 | W1-03, W1-05, W2-03, W2-04*, W3-05 | Record flow, keyframes, transport, grounding (*W2-04 UI starts against the W2-03 interface, finishes against its implementation) |
 | 5 | W1-04, W2-01, W2-06*, W3-02, W3-07* | Draft route, review editor, consent/processing (*integration slices; they serialise on the Review screen, §5) |
 | 6 | W2-07, W3-06, W3-08, W4-01…W4-05 | Fallbacks, privacy, trials, calibration, polish — mostly independent leaves |
-| 7 | W4-06, then W5-* | Release gate first; all P2 stretch work is cut before any P0 slice (Plan 02 §12) |
+| 7 | W4-06, then W5-* | Release gate first; all P2 stretch work is cut before any P0 slice (Plan §12) |
 
 Dependency wave referenced by the release slices in §6 (`wave P0` = every
 P0 build slice — i.e. all P0 rows except the dependent release slice itself —
@@ -134,24 +134,24 @@ decides the reuse mechanism, and W0-01 must settle it before W0-02 finishes:
   the consumer (domain patterns, QR payload shape). Copying Track's PDR into
   ECHO would fork a tested sensor stack three days before a deadline.
 
-| ECHO seam (Plan 02 §5) | `simt-app` source | Verdict | Fallback if reuse fails |
+| ECHO seam (Plan §5) | `simt-app` source | Verdict | Fallback if reuse fails |
 |---|---|---|---|
-| `MotionSource` | `feature/track`: `pdr/PdrEngine.kt` (StateFlows for steps, `currentPosition`, `headingDegrees`, `accuracy`; `start(stepDetectionEnabled)`), plus `MahonyAhrs`, `WeinbergEstimator`, `TiltProjector`, calibration classes — all unit-tested; `vio/VioProvider`, `ArCorePositionProvider`, `VioFusionManager` | **Adapt.** Build `TrackPlusMotionSource` in `androidApp` mapping `PdrEngine` flows to `Flow<MotionUpdate>`. Do not reimplement Plan 02 §6.1–6.2 as new code. VIO only if it does not contend with ECHO's video recording for the camera; both phones run the same `MotionSource` | `BuiltInPdrMotionSource` exactly as specified in Plan 02 §6.1–6.2 (that spec becomes the implementation, not a duplicate) |
-| `PeerTransport` (bulk bytes) | `feature/link` `offline/OfflineTransport` (+ `OfflineTransportRouter`, Wi-Fi Aware → Wi-Fi Direct), `network/LinkTcpSession`, `LinkTcpHandshake`, `SecurityManager` | **Adapt.** Reuse transport-up-to-IP, discovery, and the TCP session layer behind ECHO's `PeerTransport` (`offer`/`fetch: ByteArray`). This is the strongest reuse in the repo | `KtorLanTransport` (Plan 02 W2-03) behind the same seam |
-| Peer identity / pairing trust | `feature/link`: `LinkRepository` (`core/domain/link`), `security/LinkIdentitySecurity`, `handoff/LinkBootstrap*`, admission policies | **Adapt for trust, reject for bytes.** `LinkRepository` is peer-*message* oriented (`sendMessageToPeer(peerId, String)`, pulses, locations) with no arbitrary-byte/file API. Reuse discovery, pairing, and identity; do not tunnel bundle bytes through short validated text messages. A byte path is either a new Connect capability in `simt-app` (producer-first, §2) or ECHO's own transport | ECHO token-in-QR trust model (Plan 02 §5 wire format) with no Connect dependency |
-| `QrPayload` | `feature/link` `qr/LinkQrPayload` (`DecodeResult.Valid(bootstrap: LinkBootstrap)`), `qr/LinkQrWidgets`; `core/ui-camera` `scanner/QrCodeScanner` | **Adapt.** Reuse the scanner component and the payload-codec *pattern*. `LinkQrPayload` carries a `LinkBootstrap`, not ECHO's `simt-echo://r?v=1&h=&p=&t=&k=&s=&n=` URI (≤200 chars), so ECHO keeps its own codec — a good **L**-tier slice against the frozen format | Plan 02 `QrPayload` codec as specified (this is the primary; the adaptation is in scanning/rendering only) |
+| `MotionSource` | `feature/track`: `pdr/PdrEngine.kt` (StateFlows for steps, `currentPosition`, `headingDegrees`, `accuracy`; `start(stepDetectionEnabled)`), plus `MahonyAhrs`, `WeinbergEstimator`, `TiltProjector`, calibration classes — all unit-tested; `vio/VioProvider`, `ArCorePositionProvider`, `VioFusionManager` | **Adapt.** Build `TrackPlusMotionSource` in `androidApp` mapping `PdrEngine` flows to `Flow<MotionUpdate>`. Do not reimplement Plan §6.1–6.2 as new code. VIO only if it does not contend with ECHO's video recording for the camera; both phones run the same `MotionSource` | `BuiltInPdrMotionSource` exactly as specified in Plan §6.1–6.2 (that spec becomes the implementation, not a duplicate) |
+| `PeerTransport` (bulk bytes) | `feature/link` `offline/OfflineTransport` (+ `OfflineTransportRouter`, Wi-Fi Aware → Wi-Fi Direct), `network/LinkTcpSession`, `LinkTcpHandshake`, `SecurityManager` | **Adapt.** Reuse transport-up-to-IP, discovery, and the TCP session layer behind ECHO's `PeerTransport` (`offer`/`fetch: ByteArray`). This is the strongest reuse in the repo | `KtorLanTransport` (Plan W2-03) behind the same seam |
+| Peer identity / pairing trust | `feature/link`: `LinkRepository` (`core/domain/link`), `security/LinkIdentitySecurity`, `handoff/LinkBootstrap*`, admission policies | **Adapt for trust, reject for bytes.** `LinkRepository` is peer-*message* oriented (`sendMessageToPeer(peerId, String)`, pulses, locations) with no arbitrary-byte/file API. Reuse discovery, pairing, and identity; do not tunnel bundle bytes through short validated text messages. A byte path is either a new Connect capability in `simt-app` (producer-first, §2) or ECHO's own transport | ECHO token-in-QR trust model (Plan §5 wire format) with no Connect dependency |
+| `QrPayload` | `feature/link` `qr/LinkQrPayload` (`DecodeResult.Valid(bootstrap: LinkBootstrap)`), `qr/LinkQrWidgets`; `core/ui-camera` `scanner/QrCodeScanner` | **Adapt.** Reuse the scanner component and the payload-codec *pattern*. `LinkQrPayload` carries a `LinkBootstrap`, not ECHO's `simt-echo://r?v=1&h=&p=&t=&k=&s=&n=` URI (≤200 chars), so ECHO keeps its own codec — a good **L**-tier slice against the frozen format | Plan `QrPayload` codec as specified (this is the primary; the adaptation is in scanning/rendering only) |
 | `CameraRecorder`, `MediaTools` | `core/ui-camera`: `capture/SystemImageCaptureController`, `CameraUriUtils`, preview/overlay components | **Reuse where the API fits** (still capture, URI handling, preview); CameraX silent-video recording itself is ECHO code in W1-02 if the controller cannot express it | Raw CameraX in W1-02 as planned |
-| Design system, nav shell (W0-03) | `core/ui`: theme (`Color`, `Theme`, `Type`, `Shape`, `Motion`), components, `PermissionGate`; `core/navigation`: `AppRouter`/`ScreenRoute` | **Adapt tokens, own the shell.** Port ECHO's dark-first tokens (Plan 02 §8: bg `#0B0D10`, Echo Lime `#C6F432`) onto `core/ui` conventions and reuse components/`PermissionGate`. `core/navigation` is `simt-app`'s router; ECHO's Compose nav shell stays ECHO's to avoid importing an app graph into a KMP scaffold | Plan 02 W0-03 design system written fresh |
-| Iris overlay (W5-02) | `feature/iris`: `IrisScreen`, `IrisViewModel`, `IrisProjection`, `IrisTargetSpatialCalculator`, components (`IrisCameraView`, `TargetDirectionArrow`, `TargetInViewMarker`, `IrisTargetHud`) | **Reuse as the base** for Iris-lite; ECHO adds landmark anchoring, not a new overlay stack | Drop W5-02 (P2; first in the Plan 02 §12 cut order) |
+| Design system, nav shell (W0-03) | `core/ui`: theme (`Color`, `Theme`, `Type`, `Shape`, `Motion`), components, `PermissionGate`; `core/navigation`: `AppRouter`/`ScreenRoute` | **Adapt tokens, own the shell.** Port ECHO's dark-first tokens (Plan §8: bg `#0B0D10`, Echo Lime `#C6F432`) onto `core/ui` conventions and reuse components/`PermissionGate`. `core/navigation` is `simt-app`'s router; ECHO's Compose nav shell stays ECHO's to avoid importing an app graph into a KMP scaffold | Plan W0-03 design system written fresh |
+| Iris overlay (W5-02) | `feature/iris`: `IrisScreen`, `IrisViewModel`, `IrisProjection`, `IrisTargetSpatialCalculator`, components (`IrisCameraView`, `TargetDirectionArrow`, `TargetInViewMarker`, `IrisTargetHud`) | **Reuse as the base** for Iris-lite; ECHO adds landmark anchoring, not a new overlay stack | Drop W5-02 (P2; first in the Plan §12 cut order) |
 | Wear haptics (W5-04) | `data/wear`: `WearDataLayerManager`, `WearDataLayerRepository`, `WearSyncProtocol`, `DataLayerPaths` | **Reuse** the Data Layer transport; ECHO adds the haptic-pattern messages (`Haptics` enum) | Drop W5-04 (P2) |
-| Persistence & domain patterns | `core/domain`: dependency-free repositories returning sealed `RepositoryResult`; `data/local` `SettingsDataStore`; `feature/track` `TrackRepository` session/checkpoint patterns | **Port the pattern** into `shared/` (`RouteRepository`, `FileStore`); do not link `core/domain` from KMP. Track's recovery-checkpoint pattern is the model for W4-03 process-death recovery | Plan 02 §5 storage layout (`drafts/`, `routes/`, `trials/`) as specified |
-| Haptics (device) | No dedicated haptics helper exists in `simt-app` core | **New.** Small Android actual for the `Haptics` seam; waveforms from Plan 02 §8 | — |
-| DI | `simt-app` uses Hilt (`:core:di`, `di/LinkModule`) | **Do not reuse across the KMP boundary.** `androidApp` may use Hilt for Android actuals; `shared/` uses the manual `AppGraph` from Plan 02. One DI system per module, never both in `shared/` | Manual `AppGraph` everywhere |
+| Persistence & domain patterns | `core/domain`: dependency-free repositories returning sealed `RepositoryResult`; `data/local` `SettingsDataStore`; `feature/track` `TrackRepository` session/checkpoint patterns | **Port the pattern** into `shared/` (`RouteRepository`, `FileStore`); do not link `core/domain` from KMP. Track's recovery-checkpoint pattern is the model for W4-03 process-death recovery | Plan §5 storage layout (`drafts/`, `routes/`, `trials/`) as specified |
+| Haptics (device) | No dedicated haptics helper exists in `simt-app` core | **New.** Small Android actual for the `Haptics` seam; waveforms from Plan §8 | — |
+| DI | `simt-app` uses Hilt (`:core:di`, `di/LinkModule`) | **Do not reuse across the KMP boundary.** `androidApp` may use Hilt for Android actuals; `shared/` uses the manual `AppGraph` from Plan. One DI system per module, never both in `shared/` | Manual `AppGraph` everywhere |
 
-Version drift to settle in W0-01/W0-02: Plan 02 pins Kotlin 2.4.20 / AGP 9.2.0
+Version drift to settle in W0-01/W0-02: Plan pins Kotlin 2.4.20 / AGP 9.2.0
 / CMP 1.12.0; `simt-app` builds with AGP 9.5.0 / Kotlin 2.4.21. If ECHO links
 `simt-app` Android modules, ECHO's Android build must align to the newer pins.
-Staying on Plan 02's pins is only coherent with source-porting. This is the
+Staying on Plan's pins is only coherent with source-porting. This is the
 one decision that changes W0-02's build files, so it is made by the **S** agent
 on W0-01 and recorded in the W0-02 commit body.
 
@@ -162,7 +162,7 @@ whole plan, and other lanes consume it through its interface:
 
 | File / contract | Sole owner | Consumers wait for |
 |---|---|---|
-| Domain model & `EchoJson` (Plan 02 §5) | Lane A (W0-04) | The W0-04 commit; no lane invents a field |
+| Domain model & `EchoJson` (Plan §5) | Lane A (W0-04) | The W0-04 commit; no lane invents a field |
 | `gradle/libs.versions.toml`, root build files | Lane A (W0-02) | The version decision in §4 |
 | Worker `types.ts` / API contract | Lane D (W3-03) | The frozen request/response shapes |
 | Review screen | Lane E (W2-01), then W3-07 by handoff only | W3-07 starts only after W2-01 is committed; it is the one planned serial handoff |
@@ -171,10 +171,10 @@ whole plan, and other lanes consume it through its interface:
 
 ## 6. Tracker
 
-Evidence naming: `./gradlew :shared:allTests` (KMP slices — note Plan 02's
+Evidence naming: `./gradlew :shared:allTests` (KMP slices — note Plan's
 `:echo:shared:allTests` path is stale for this repo's layout), the exact
 worker command `npm test` in `worker/`, or a named manual check for field
-slices. A slice is `done` only with its evidence recorded, per Plan 02 §0.
+slices. A slice is `done` only with its evidence recorded, per Plan §0.
 
 | ID | State | Slice | Tier | Lane | Depends on | Evidence |
 |---|---|---|---|---|---|---|
@@ -182,7 +182,7 @@ slices. A slice is `done` only with its evidence recorded, per Plan 02 §0.
 | W0-02 | Complete | KMP scaffold (verify existing root `shared/` + `androidApp`) | F (S) | A | W0-01 | aa6d306af993833ba654563a653af16a2b82435e · test: JAVA_HOME=/Users/saidelimam/.sdkman/candidates/java/21.0.12-tem DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer ./gradlew clean :shared:testAndroidHostTest :shared:compileKotlinIosArm64 :shared:compileKotlinIosSimulatorArm64 :shared:compileTestKotlinIosSimulatorArm64 :androidApp:assembleDebug :androidApp:lintDebug (BUILD SUCCESSFUL, ScaffoldSmokeTest 2/2); worker: npm run typecheck + npm test (1/1) |
 | W0-03 | Complete | Design system + nav shell on `core/ui` conventions | F | A | W0-02 | 8f4b38ba4709fc69e8b5a087ccd7be91f92f3c83 · test: :shared:testAndroidHostTest --rerun-tasks (11/11: ScaffoldSmokeTest 2, RouteSerializationTest 3, ShellMathTest 6), :androidApp:assembleDebug, :shared:compileKotlinIosArm64, :shared:compileKotlinIosSimulatorArm64 — BUILD SUCCESSFUL |
 | W0-04 | Queued | Domain model, `FileStore`, `RouteRepository`, `L_ROUTE` fixture — contract freeze | S | A | W0-02 | — |
-| W0-05 | Queued | Worker scaffold: Hono, auth, rate limit, R2, deploy | F (S) | D | — | — |
+| W0-05 | In progress | Worker scaffold: Hono, auth, rate limit, R2, deploy | F (S) | D | — | — |
 | W1-01 | Queued | `TrackPlusMotionSource` adapter over `PdrEngine` (+ built-in fallback) | S | B | W0-04 | — |
 | W1-02 | Queued | `CameraRecorder`: CameraX silent video, `core/ui-camera` where it fits | F | B | W0-03 | — |
 | W1-03 | Queued | Record screen + `CaptureSession` + Finish | F | B | W1-01, W1-02 | — |
@@ -218,13 +218,13 @@ slices. A slice is `done` only with its evidence recorded, per Plan 02 §0.
 ## 7. Slice sections
 
 Each section states the tier rationale and the reuse hook; the build steps,
-files, and done-when criteria are Plan 02 §10 under the same id and are not
+files, and done-when criteria are Plan §10 under the same id and are not
 repeated here.
 
 ### W0-01 — Repo recon and reuse decision
-**S**, Lane A. The Plan 02 §2.1 adapter table is `_tbd_` because its author
+**S**, Lane A. The Plan §2.1 adapter table is `_tbd_` because its author
 could not read `simt-app`; §4 of this plan is the inventory that replaces it.
-Done when W0-01's commit records: Track adapter viability against the Plan 02
+Done when W0-01's commit records: Track adapter viability against the Plan
 decision rule (per-step or ≥5 Hz distance + relative yaw, ≤2 h to adapt, no
 exclusive camera conflict), the Connect byte-path verdict, and the version
 alignment (§4). Acceptance: the §2.1 table filled with named classes, no
@@ -257,7 +257,7 @@ in Batch 0 so the worker chain never blocks on Gradle. Acceptance:
 **S**, Lane B. Geometry is a hard gate: a wrong yaw or step length silently
 corrupts every downstream slice. The work is an adapter over the tested
 `simt-app` `PdrEngine` (§4), plus validation that its flows satisfy the
-`MotionUpdate` contract — not a reimplementation of Plan 02 §6.1–6.2, which
+`MotionUpdate` contract — not a reimplementation of Plan §6.1–6.2, which
 survives only as the built-in fallback. Acceptance: recorded-walk fixture
 produces monotonic distance and stable relative yaw on both implementations.
 
@@ -271,7 +271,7 @@ starvation on the target device.
 Acceptance: a 30–80 m walk produces one complete `CaptureLog` on disk.
 
 ### W1-04 — Segmenter
-**L (S review)**, Lane B. The algorithm is fully specified in Plan 02 §6.3
+**L (S review)**, Lane B. The algorithm is fully specified in Plan §6.3
 (resample 0.5 m, turn ≥45°, level Δh > 2.2 m, merge < 3 m, drop nodes < 4 m),
 pure, and testable against fixtures — exactly the local-tier profile. The
 **S** reviewer checks the geometry edge cases (hysteresis, mark merging)
@@ -305,7 +305,7 @@ two devices in airplane mode; QR URI ≤ 200 chars and rejects tampering.
 implementation, not a mock.
 
 ### W2-05 — Navigator
-**S**, Lane C. The state machine (Plan 02 §6.4: ALIGN/WALK/APPROACH/TURNING/
+**S**, Lane C. The state machine (Plan §6.4: ALIGN/WALK/APPROACH/TURNING/
 CONFIRM/UNCERTAIN/OFF_ROUTE/ARRIVED, σ growth, corridor snapping) plus
 `TurnDetector` (§6.5) and the 7 replay scenario tests. Frontier-owned: honest
 uncertainty and wrong-start behaviour are acceptance criteria A5/A6 of the
@@ -359,7 +359,7 @@ Acceptance: one real route processes inside the envelope, cost recorded.
 **F (S review)**, Lane E. The planned serial handoff on the Review screen
 (§5): starts only after W2-01 and W3-06 are committed. **S** reviews that AI
 candidates can never mutate geometry — they attach to sensor-owned nodes or
-they do not attach (Plan 02 §0 rule). Acceptance: candidates appear as
+they do not attach (Plan §0 rule). Acceptance: candidates appear as
 `AI_SUGGESTED` landmarks with mask overlay; graph unchanged by merge.
 
 ### W3-08 — Privacy preview, expiry, delete
@@ -415,7 +415,7 @@ landmark anchoring to its existing projection/HUD components. Cut before
 any P0 work (§8).
 
 ### W5-03 — iOS actuals (P2)
-**S**, Lane A. Largest single estimate in Plan 02 (6 h) and pure stretch;
+**S**, Lane A. Largest single estimate in Plan (6 h) and pure stretch;
 starts only when every P0 row above is `Complete`.
 
 **Status: postponed — iOS is out of v1 scope and this slice is not to be
@@ -428,29 +428,29 @@ ECHO contributes only the haptic-pattern messages.
 
 ## 8. Review of the source documents
 
-Findings from reading the proposal and Plan 02 against both repos. None of
+Findings from reading the proposal and Plan against both repos. None of
 these block Batch 0; each names the slice that resolves it.
 
 1. **AI provider story differs between the two documents.** The proposal
    (v1.0) puts Meta Model API (Muse Spark 1.3 + SAM 3.1) on the creation
-   path and names existing Track+/Iris/Connect as foundations. Plan 02 (v1.2)
+   path and names existing Track+/Iris/Connect as foundations. Plan (v1.2)
    makes a Cloudflare Worker with Workers AI the default and the Meta API
-   optional (`META_API_KEY`). Plan 02 is the later, more specific document
+   optional (`META_API_KEY`). Plan is the later, more specific document
    and this plan follows it — but the demo script (W4-06) must tell one
    story, and "Push the Frontier / Meta models" judging makes the choice
    visible. Resolved by: W4-06, informed by W3-06's live cost/latency and
    W3-09's status.
-2. **Module location and test path are stale in Plan 02.** It plans an
+2. **Module location and test path are stale in Plan.** It plans an
    `echo/` tree inside `simt-app` and gates on `./gradlew :echo:shared:allTests`;
    this repo is already a standalone scaffold with root `shared/` and
    `androidApp/`, so the gate is `./gradlew :shared:allTests`. Resolved by:
    W0-02 verifying the existing scaffold instead of regenerating it.
-3. **Plan 02 §2.1 (adapter mapping) is entirely `_tbd_`.** The inventory now
+3. **Plan §2.1 (adapter mapping) is entirely `_tbd_`.** The inventory now
    exists (§4): Track's `PdrEngine` is a mature, tested sensor stack that
    exceeds the §6.2 spec; Connect's `LinkRepository` has no byte-transfer
    API, so bundle transfer reuse is real at the transport layer and absent
    at the repository layer. Resolved by: W0-01.
-4. **Version drift.** Plan 02 pins AGP 9.2.0 / Kotlin 2.4.20; `simt-app`
+4. **Version drift.** Plan pins AGP 9.2.0 / Kotlin 2.4.20; `simt-app`
    builds on AGP 9.5.0 / Kotlin 2.4.21. Linking `simt-app` modules forces
    alignment; source-porting does not. Resolved by: W0-01 decision, applied
    in W0-02.
@@ -458,15 +458,15 @@ these block Batch 0; each names the slice that resolves it.
    Android-library + Hilt; ECHO's `shared/` is KMP. Any plan that assumes
    `shared/` can import Track or Connect modules is wrong; §4 splits reuse
    into *link* (Android side) and *port the pattern* (KMP side).
-6. **Proposal acceptance A1–A8 is fully covered by Plan 02 slices** —
+6. **Proposal acceptance A1–A8 is fully covered by Plan slices** —
    A5/A6 by W2-05/W2-06, A7 by W3-02/W3-08, A1–A4/A8 by W3-05/W2-03/W4-01/
-   W4-06. No proposal requirement is unowned; no Plan 02 P0 slice lacks a
+   W4-06. No proposal requirement is unowned; no Plan P0 slice lacks a
    proposal reason. The proposal's illustrative landmark JSON remains
-   explicitly non-normative; Plan 02 §5/§7 schemas govern.
+   explicitly non-normative; Plan §5/§7 schemas govern.
 
 ## 9. Cut order and escalation
 
-Plan 02 §12 governs and is restated here so agents under time pressure do
+Plan §12 governs and is restated here so agents under time pressure do
 not improvise: cut Wave 5 → W3-09 → W4-05 → mask overlays → SAM video
 grounding → AI entirely. Never cut: capture (W1-01…W1-03), segmenter
 (W1-04), bundle (W2-02), transfer (W2-03/W2-04), navigator (W2-05),
@@ -474,7 +474,7 @@ alignment/uncertainty (W2-06), trials (W4-01). A no-AI ECHO that walks a
 route from Phone A to Phone B offline is a complete demo; an AI-only ECHO
 that cannot is not.
 
-Blocked-slice rule (Plan 02 §0): after 45 minutes blocked, apply the slice's
+Blocked-slice rule (Plan §0): after 45 minutes blocked, apply the slice's
 named fallback and note it in the evidence column — for reuse slices the
 fallback is always the §4 right-hand column, which is why every reuse row
 has one.
