@@ -40,3 +40,20 @@ real-clip check deferred) and W3-05 (live SAM check blocked). To record it:
 set `META_API_KEY`, deploy the worker, POST one 60 m job (6–8
 checkpoints), then append the measured `scoutMs`/`samMs`, `samFrames`,
 vendor-billed cost, and total latency to this file.
+
+### Addendum (review 0004, 2026-11-01) — what has actually run live since
+
+- **SAM 3.1 (W3-05 path):** real grounding through `runGround` with the
+  `.env` Meta key: `AI_GROUNDED` in 693 ms, mask raster 120×799,
+  confidence 0.9298, box within 2 px of the synthetic ground truth.
+  This run found and fixed the done-event collection bug (648e722).
+- **Muse Spark (W3-09 path):** real call through `metaSparkScout`:
+  schema-valid sealed result in ~1.6–2.9 s; zero candidates proposed
+  for the synthetic photo (the model's honest answer to fake content).
+- **Workers AI scout / deployed 60 m job:** attempted via the account
+  REST API with the environment's Cloudflare token — authentication
+  error (code 10000, token lacks Workers AI scope), and deploys remain
+  blocked on R2 bucket-create permission. The full deployed-job
+  latency/cost envelope (~$0.16/route, < 2 min) is therefore still
+  unmeasured and unclaimed; usage fields in `result.json` are now
+  measured (vendor frames per send, real Meta time) for when it runs.
