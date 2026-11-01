@@ -212,7 +212,7 @@ slices. A slice is `done` only with its evidence recorded, per Plan 02 §0.
 | W4-06 | Queued | README, limitations, demo script, release APK | S | F | wave P0 | — |
 | W5-01 | Queued | Local-model provider (P2) | S | D | W3-07 | — |
 | W5-02 | Queued | Iris-lite overlay on `feature/iris` (P2) | F (S) | E | W2-06 | — |
-| W5-03 | Queued | iOS actuals (P2) | S | A | wave P0, W4-06 | — |
+| W5-03 | Accepted | iOS actuals (P2) | S | A | wave P0, W4-06 | Postponed — iOS is out of v1 scope; not to implement |
 | W5-04 | Queued | Wear OS haptic bridge on `data/wear` (P2) | F | F | W0-01 | — |
 
 ## 7. Slice sections
@@ -417,6 +417,10 @@ any P0 work (§8).
 ### W5-03 — iOS actuals (P2)
 **S**, Lane A. Largest single estimate in Plan 02 (6 h) and pure stretch;
 starts only when every P0 row above is `Complete`.
+
+**Status: postponed — iOS is out of v1 scope and this slice is not to be
+implemented.** Tracker row is `Accepted` (deliberately not done; it satisfies
+no dependencies and nothing depends on it).
 
 ### W5-04 — Wear OS haptic bridge (P2)
 **F**, Lane F. Reuses `simt-app` `data/wear` Data Layer transport (§4);
