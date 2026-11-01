@@ -1,0 +1,47 @@
+# Root context docs are tracked (hackathon proposal + implementation plan).
+
+# Gradle / build
+.gradle/
+build/
+local.properties
+.kotlin/
+
+# Android Studio / IDE
+*.iml
+.idea/
+captures/
+.cxx/
+.externalNativeBuild/
+
+# Xcode (iOS shell)
+xcuserdata/
+DerivedData/
+Pods/
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# macOS
+.DS_Store
+
+# Secrets
+*.keystore
+*.jks
+*.p12
+
+# Node / Cloudflare worker
+node_modules/
+dist/
+.wrangler/
+.dev.vars
+
+# Logs
+*.log
+
+# Write journal for `simt undo`. Local state, never shared.
+.simt/local/
+
+# Per-developer git identity, written by `simt init`. Not a file to share:
+# it carries whoever is committing into the tree, and a repository has more than
+# one of those.
+git.config
