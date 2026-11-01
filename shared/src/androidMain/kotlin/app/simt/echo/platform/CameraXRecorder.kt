@@ -72,11 +72,14 @@ class CameraXRecorder(
     }
 
     @Composable
-    override fun Preview(modifier: Modifier) {
+    override fun Preview(modifier: Modifier, onError: (String) -> Unit) {
         var request by remember { mutableStateOf<SurfaceRequest?>(null) }
         LaunchedEffect(Unit) {
-            ensureBound()
-            boundPreview?.setSurfaceProvider { request = it }
+            // A bind failure is a graceful error, not a crash (W4-03):
+            // the screen shows it and the user can go back.
+            runCatching { ensureBound() }
+                .onFailure { onError("Camera could not start: ${it.message ?: "unavailable"}") }
+                .onSuccess { boundPreview?.setSurfaceProvider { request = it } }
         }
         DisposableEffect(Unit) {
             onDispose { provider?.unbindAll() }

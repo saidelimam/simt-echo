@@ -74,10 +74,37 @@ class CaptureSession(
     private var lastSampleNs: Long = Long.MIN_VALUE
     private var collectJob: Job? = null
     private var autosaveJob: Job? = null
+    private var resumedDraftId: String? = null
 
     /** Preview is live; [start] may be called. */
     fun ready() {
         if (_state.value == CaptureState.IDLE) _state.value = CaptureState.READY
+    }
+
+    /**
+     * Reopens an interrupted draft (W4-03 process-death recovery): the
+     * autosaved capture log is reloaded into this session, and [start]
+     * continues recording into the SAME draft — samples and marks append,
+     * the draft id and original start time survive. Video restarts (the
+     * pre-kill take is replaced); the sensor timeline is what segments.
+     * Returns false when the draft has no readable capture log.
+     */
+    fun resume(draftId: String): Boolean {
+        if (_state.value != CaptureState.IDLE) return false
+        val log = runCatching { drafts.loadCapture(draftId) }.getOrNull() ?: return false
+        resumedDraftId = draftId
+        samples += log.samples
+        marks += log.marks
+        startedAtEpochMs = log.startedAtEpochMs
+        lastSampleNs = log.samples.lastOrNull()?.tNs ?: Long.MIN_VALUE
+        _hud.update {
+            it.copy(
+                distanceM = log.samples.lastOrNull()?.d ?: 0.0,
+                marks = marks.size,
+            )
+        }
+        _state.value = CaptureState.READY
+        return true
     }
 
     /**
@@ -86,9 +113,9 @@ class CaptureSession(
      */
     suspend fun start() {
         check(_state.value == CaptureState.READY) { "start() from ${_state.value}" }
-        val id = newDraftId()
+        val id = resumedDraftId ?: newDraftId()
         draftId = id
-        startedAtEpochMs = nowMs()
+        if (resumedDraftId == null) startedAtEpochMs = nowMs()
         // Calibrated geometry in, raw sensors out: the configured step K
         // reaches any calibratable source (W4-02); others ignore it.
         (motion as? StepCalibratable)?.stepK = config.stepK

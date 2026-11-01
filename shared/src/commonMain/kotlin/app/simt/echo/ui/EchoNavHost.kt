@@ -13,6 +13,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import kotlin.random.Random
 import app.simt.echo.AppGraph
+import app.simt.echo.data.listRecoverable
 import app.simt.echo.platform.currentEpochMs
 import app.simt.echo.platform.rememberMediaTools
 import app.simt.echo.platform.rememberHaptics
@@ -52,13 +53,16 @@ fun EchoNavHost(
                 draftIds = graph.draftRepository.listDraftIds(),
                 savedRoutes = graph.routeRepository.list(),
                 onOpen = navController::navigateTo,
+                recoverableDrafts = listRecoverable(graph.draftRepository),
             )
         }
-        composable<EchoRoute.Record> {
+        composable<EchoRoute.Record> { entry ->
+            val route = entry.toRoute<EchoRoute.Record>()
             RecordScreen(
                 drafts = graph.draftRepository,
                 onSaved = { navController.popBackStack() },
                 config = graph.configRepository.get(),
+                resumeDraftId = route.resumeDraftId,
             )
         }
         composable<EchoRoute.Review> { entry ->

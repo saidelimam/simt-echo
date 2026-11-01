@@ -39,6 +39,20 @@ class FileStore(
         fileSystem.write(target) { writeUtf8(text) }
     }
 
+    /**
+     * Write-then-rename: a kill mid-write leaves the previous complete
+     * file untouched (plus a stray `.tmp`), never a truncated original.
+     * Used where a torn write would destroy the only copy — the capture
+     * autosave that process-death recovery reads (W4-03).
+     */
+    fun writeTextAtomic(path: String, text: String) {
+        val target = resolve(path)
+        val tmp = resolve("$path.tmp")
+        target.parent?.let { fileSystem.createDirectories(it) }
+        fileSystem.write(tmp) { writeUtf8(text) }
+        fileSystem.atomicMove(tmp, target)
+    }
+
     fun writeBytes(path: String, bytes: ByteArray) {
         val target = resolve(path)
         target.parent?.let { fileSystem.createDirectories(it) }

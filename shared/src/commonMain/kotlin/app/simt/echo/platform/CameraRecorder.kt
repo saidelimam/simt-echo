@@ -11,9 +11,13 @@ import okio.Path
  * one timeline without conversion.
  */
 interface CameraRecorder {
-    /** Live preview. Binds on first composition, unbinds on dispose. */
+    /**
+     * Live preview. Binds on first composition, unbinds on dispose.
+     * A bind failure reports through [onError] instead of throwing out
+     * of composition (W4-03 graceful camera errors).
+     */
     @Composable
-    fun Preview(modifier: Modifier)
+    fun Preview(modifier: Modifier, onError: (String) -> Unit = {})
 
     /** Single still into [out], e.g. the start photo. */
     suspend fun takePhoto(out: Path): Path
