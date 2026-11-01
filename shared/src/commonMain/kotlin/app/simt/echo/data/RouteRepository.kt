@@ -17,9 +17,12 @@ class RouteRepository(private val store: FileStore) {
             .mapNotNull { get(it.name) }
             .sortedByDescending { it.createdAtEpochMs }
 
+    /** One saved route, or null when absent/corrupt — a torn or
+     * hand-edited `route.json` must never throw into list/screens/
+     * startup purge (W7-10; same seam as TrialRepository). */
     fun get(routeId: String): EchoRoute? {
         val text = store.readText(routeFile(routeId)) ?: return null
-        return EchoJson.decodeFromString<EchoRoute>(text)
+        return runCatching { EchoJson.decodeFromString<EchoRoute>(text) }.getOrNull()
     }
 
     /**

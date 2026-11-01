@@ -29,14 +29,23 @@ class FileStore(
 
     fun readText(path: String): String? {
         val target = resolve(path)
-        if (!fileSystem.exists(target)) return null
-        return fileSystem.read(target) { readUtf8() }
+        // Corrupt/missing storage never throws into callers (W7-10):
+        // a path deleted between the exists check and the read, a
+        // directory where a file was expected, or any IO failure
+        // degrades to "absent" and the repositories fall back to
+        // their honest empty states.
+        return runCatching {
+            if (!fileSystem.exists(target)) return null
+            fileSystem.read(target) { readUtf8() }
+        }.getOrNull()
     }
 
     fun readBytes(path: String): ByteArray? {
         val target = resolve(path)
-        if (!fileSystem.exists(target)) return null
-        return fileSystem.read(target) { readByteArray() }
+        return runCatching {
+            if (!fileSystem.exists(target)) return null
+            fileSystem.read(target) { readByteArray() }
+        }.getOrNull()
     }
 
     fun writeText(path: String, text: String) {
@@ -65,17 +74,22 @@ class FileStore(
         fileSystem.write(target) { write(bytes) }
     }
 
-    /** Lists one directory (non-recursive); empty when it does not exist. */
+    /** Lists one directory (non-recursive); empty when it does not exist
+     * or is not a directory (a file where a directory was expected is
+     * corrupt storage, not a crash). */
     fun list(path: String): List<Path> {
         val target = resolve(path)
-        if (!fileSystem.exists(target)) return emptyList()
-        return fileSystem.list(target)
+        return runCatching {
+            if (!fileSystem.exists(target)) return emptyList()
+            fileSystem.list(target)
+        }.getOrDefault(emptyList())
     }
 
     /** Deletes a file or directory tree; missing paths are a no-op. */
     fun deleteRecursively(path: String) {
-        fileSystem.deleteRecursively(resolve(path))
+        runCatching { fileSystem.deleteRecursively(resolve(path)) }
     }
 
-    fun exists(path: String): Boolean = fileSystem.exists(resolve(path))
+    fun exists(path: String): Boolean =
+        runCatching { fileSystem.exists(resolve(path)) }.getOrDefault(false)
 }

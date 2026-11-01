@@ -6,6 +6,7 @@ import okio.Path.Companion.toPath
 import okio.fakefilesystem.FakeFileSystem
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -104,5 +105,72 @@ class RepositoryTest {
         assertEquals("hello", store.readText("deep/nested/file.txt"))
         store.deleteRecursively("deep")
         assertNull(store.readText("deep/nested/file.txt"))
+    }
+
+    @Test
+    fun corruptRouteJsonReadsAsNullAndListSkipsIt() {
+        routes.save(Fixtures.L_ROUTE)
+        store.writeText("routes/broken/route.json", "{truncated")
+        store.writeText("routes/wrong-shape/route.json", """{"routeId":"wrong-shape"}""")
+        assertNull(routes.get("broken"))
+        assertNull(routes.get("wrong-shape"))
+        assertEquals(listOf(Fixtures.L_ROUTE.routeId), routes.list().map { it.routeId })
+    }
+
+    @Test
+    fun corruptDraftFilesDegradeToNull() {
+        store.writeText("drafts/d1/capture.json", "{torn autosave")
+        store.writeText("drafts/r1/route.draft.json", "[1,2,3")
+        store.writeText("drafts/d1/job.json", "not json at all")
+        assertNull(drafts.loadCapture("d1"))
+        assertNull(drafts.loadDraftRoute("r1"))
+        assertNull(drafts.loadJobRecord("d1"))
+    }
+
+    @Test
+    fun missingAssetsReadAsNull() {
+        routes.save(Fixtures.L_ROUTE)
+        assertNull(routes.readAsset(Fixtures.L_ROUTE.routeId, "nope"))
+        assertNull(routes.readAsset("ghost-route", "a_start"))
+    }
+
+    @Test
+    fun purgedWhileOpenReadsAsNullAndDoubleDeleteIsNoOp() {
+        routes.save(Fixtures.L_ROUTE)
+        routes.delete(Fixtures.L_ROUTE.routeId)
+        assertNull(routes.get(Fixtures.L_ROUTE.routeId))
+        assertTrue(routes.list().isEmpty())
+        routes.delete(Fixtures.L_ROUTE.routeId)
+        store.deleteRecursively("routes/never-existed")
+    }
+
+    @Test
+    fun startupPurgeOverCorruptAndMissingStorageNeverThrows() {
+        // Mirrors the EchoApplication.onCreate sequence: purgeExpired over
+        // whatever is on disk must count expiries, never throw.
+        assertEquals(0, routes.purgeExpired(nowMs = 1_000L))
+        val expired = Fixtures.L_ROUTE.copy(
+            routeId = "expired",
+            privacy = PrivacyInfo(expiresAtEpochMs = 100L),
+        )
+        routes.save(expired)
+        store.writeText("routes/broken/route.json", "{corrupt")
+        assertEquals(1, routes.purgeExpired(nowMs = 1_000L))
+        assertNull(routes.get("broken"))
+        assertTrue(routes.list().isEmpty())
+        // A file where the routes directory is expected: corrupt layout,
+        // not a crash.
+        store.deleteRecursively("routes")
+        store.writeText("routes", "x")
+        assertTrue(routes.list().isEmpty())
+        assertEquals(0, routes.purgeExpired(nowMs = 1_000L))
+    }
+
+    @Test
+    fun fileStoreToleratesMismatchedPaths() {
+        store.writeText("adir/file.txt", "x")
+        assertNull(store.readText("adir"))
+        assertTrue(store.list("adir/file.txt").isEmpty())
+        assertFalse(store.exists("missing"))
     }
 }

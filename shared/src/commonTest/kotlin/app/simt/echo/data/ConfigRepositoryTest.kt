@@ -41,6 +41,14 @@ class ConfigRepositoryTest {
     }
 
     @Test
+    fun emptyAndWrongShapeConfigDegradeToDefaults() {
+        store.writeText("config/echo.json", "")
+        assertEquals(EchoConfig(), configs.get())
+        store.writeText("config/echo.json", "[1,2,3]")
+        assertEquals(EchoConfig(), configs.get())
+    }
+
+    @Test
     fun updateTransformsAndStores() {
         val next = configs.update { it.copy(stepK = 0.55) }
         assertEquals(0.55, next.stepK)
