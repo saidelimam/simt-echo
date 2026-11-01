@@ -19,9 +19,12 @@ class DraftRepository(private val store: FileStore) {
         store.writeTextAtomic(captureFile(log.draftId), EchoJson.encodeToString(log))
     }
 
+    /** The capture log, or null when absent/corrupt — a torn autosave
+     * or hand-edited `capture.json` degrades to "no recoverable log",
+     * never a throw into recovery/screens (W7-10). */
     fun loadCapture(draftId: String): CaptureLog? {
         val text = store.readText(captureFile(draftId)) ?: return null
-        return EchoJson.decodeFromString<CaptureLog>(text)
+        return runCatching { EchoJson.decodeFromString<CaptureLog>(text) }.getOrNull()
     }
 
     fun saveDraftRoute(route: EchoRoute) {
@@ -29,9 +32,10 @@ class DraftRepository(private val store: FileStore) {
         store.writeText(draftRouteFile(route.routeId), EchoJson.encodeToString(route))
     }
 
+    /** The draft route, or null when absent/corrupt (W7-10). */
     fun loadDraftRoute(routeId: String): EchoRoute? {
         val text = store.readText(draftRouteFile(routeId)) ?: return null
-        return EchoJson.decodeFromString<EchoRoute>(text)
+        return runCatching { EchoJson.decodeFromString<EchoRoute>(text) }.getOrNull()
     }
 
     /**
@@ -46,10 +50,11 @@ class DraftRepository(private val store: FileStore) {
         store.writeText("$DRAFTS_DIR/$draftId/$JOB_FILE", EchoJson.encodeToString(record))
     }
 
-    /** The persisted cloud job record, or null when never submitted. */
+    /** The persisted cloud job record, or null when never submitted,
+     * absent, or corrupt (W7-10). */
     fun loadJobRecord(draftId: String): JobRecord? {
         val text = store.readText("$DRAFTS_DIR/$draftId/$JOB_FILE") ?: return null
-        return EchoJson.decodeFromString<JobRecord>(text)
+        return runCatching { EchoJson.decodeFromString<JobRecord>(text) }.getOrNull()
     }
 
     /** Clears the persisted cloud job record (delete-now, resubmit). */
