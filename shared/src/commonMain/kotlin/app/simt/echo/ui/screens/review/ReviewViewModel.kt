@@ -91,6 +91,10 @@ class ReviewViewModel(
     private val newId: () -> String,
     /** Cloud API for the AI result; null keeps Review manual-only. */
     private val api: CloudApi? = null,
+    /** Local-model router (W5-01); null keeps Review cloud/manual only. */
+    private val router: app.simt.echo.ai.AiRouter? = null,
+    /** "Prefer local model" from Settings (W5-01). */
+    private val preferLocal: Boolean = false,
 ) : ViewModel() {
 
     private val _ui = MutableStateFlow(ReviewUiState())
@@ -129,46 +133,121 @@ class ReviewViewModel(
      * draft is untouched. A transport failure surfaces as an error line;
      * the manual flow keeps working underneath it.
      */
+    /**
+     * Suggestion routing (W3-07 cloud, W5-01 local): the cloud result is
+     * the default; a configured local model runs when "Prefer local" is
+     * on, or when the cloud produced nothing usable. With neither, Review
+     * stays manual-only and the draft is untouched.
+     */
     private fun loadSuggestions() {
-        val api = api ?: return
         viewModelScope.launch {
-            try {
-                val job = drafts.loadJobRecord(draftId) ?: return@launch
-                if (job.status != "complete") return@launch
-                val raw = api.get(job.jobId).resultRaw
-                if (raw == null) {
-                    _ui.update { it.copy(error = "The AI job finished but returned no result.") }
-                    return@launch
-                }
-                val parsed = CandidateMerger.parseResult(raw)
-                if (parsed == null) {
-                    _ui.update { it.copy(error = "Could not read the AI result. You can still add landmarks by hand.") }
-                    return@launch
-                }
-                val current = route ?: return@launch
-                val merged = CandidateMerger.merge(current, parsed)
-                aiResult = parsed
-                // Load each candidate's own keyframe bytes for the card:
-                // the box belongs to that frame, not necessarily the hero.
-                val images = mutableMapOf<String, ByteArray>()
-                for ((nodeId, candidates) in merged) {
-                    val node = current.nodes.firstOrNull { it.id == nodeId } ?: continue
-                    for (candidate in candidates) {
-                        val name = candidateFileName(current, node, candidate) ?: continue
-                        drafts.readDraftFile(draftId, name)?.let { images[candidate.candidateId] = it }
-                    }
-                }
-                _ui.update {
-                    it.copy(
-                        suggestions = merged,
-                        suggestionIndex = merged.mapValues { 0 },
-                        suggestionImages = images,
-                        aiModels = CandidateMerger.modelsLine(parsed),
+            val localFirst = preferLocal && router?.localAvailable == true
+            if (localFirst && proposeLocally()) return@launch
+            if (loadCloudSuggestions()) return@launch
+            if (!localFirst && router?.localAvailable == true) {
+                proposeLocally()
+            }
+        }
+    }
+
+    /** Cloud path (W3-07): true when a usable result was published. */
+    private suspend fun loadCloudSuggestions(): Boolean {
+        val api = api ?: return false
+        return try {
+            val job = drafts.loadJobRecord(draftId) ?: return false
+            if (job.status != "complete") return false
+            val raw = api.get(job.jobId).resultRaw
+            if (raw == null) {
+                _ui.update { it.copy(error = "The AI job finished but returned no result.") }
+                return false
+            }
+            val parsed = CandidateMerger.parseResult(raw)
+            if (parsed == null) {
+                _ui.update { it.copy(error = "Could not read the AI result. You can still add landmarks by hand.") }
+                return false
+            }
+            publishSuggestions(parsed)
+            true
+        } catch (e: Exception) {
+            _ui.update { it.copy(error = e.message ?: "Could not load AI suggestions.") }
+            false
+        }
+    }
+
+    /**
+     * Local path (W5-01): builds one checkpoint per non-start node from
+     * the draft's own keyframes and asks the configured provider. True
+     * when candidates were published; a typed provider failure is
+     * surfaced, never silently swallowed.
+     */
+    private suspend fun proposeLocally(): Boolean {
+        val router = router ?: return false
+        val current = route ?: return false
+        return try {
+            val checkpoints = current.nodes
+                .filter { it.type != app.simt.echo.model.NodeType.START }
+                .mapNotNull { node ->
+                    val name = keyframeFileName(current, node) ?: return@mapNotNull null
+                    val bytes = drafts.readDraftFile(draftId, name) ?: return@mapNotNull null
+                    val keyframeId = keyframeFiles(keyframeSpecs(listOf(node)))
+                        .entries.firstOrNull { it.value == name }?.key ?: name
+                    app.simt.echo.ai.LocalCheckpoint(
+                        nodeId = node.id,
+                        keyframeId = keyframeId,
+                        context = localContext(current, node),
+                        heroJpeg = bytes,
                     )
                 }
-            } catch (e: Exception) {
-                _ui.update { it.copy(error = e.message ?: "Could not load AI suggestions.") }
+            if (checkpoints.isEmpty()) return false
+            val result = router.proposeLocal(checkpoints)
+            if (result.checkpoints.isEmpty()) {
+                _ui.update { it.copy(error = "The local model found no landmarks. You can still add landmarks by hand.") }
+                return false
             }
+            publishSuggestions(result)
+            true
+        } catch (e: app.simt.echo.ai.LocalModelException) {
+            _ui.update { it.copy(error = e.message ?: "Local model unavailable.") }
+            false
+        } catch (e: Exception) {
+            _ui.update { it.copy(error = e.message ?: "Could not load local suggestions.") }
+            false
+        }
+    }
+
+    /** Sensor-measured context line for one checkpoint (never inferred). */
+    private fun localContext(route: EchoRoute, node: RouteNode): String {
+        val what = when (node.type) {
+            app.simt.echo.model.NodeType.TURN -> "TURN ${node.turn ?: ""}".trim()
+            app.simt.echo.model.NodeType.LEVEL_CHANGE -> "LEVEL CHANGE"
+            else -> node.type.name
+        }
+        return "Route: ${route.name}, ${route.totalLengthM.toInt()} m. Checkpoint: " +
+            "$what at ${node.atDistanceM} m (sensor-measured)."
+    }
+
+    /** Publishes any provider's result: merge, preselect, load card images. */
+    private fun publishSuggestions(parsed: AiJobResult) {
+        val current = route ?: return
+        val merged = CandidateMerger.merge(current, parsed)
+        aiResult = parsed
+        // Load each candidate's own keyframe bytes for the card:
+        // the box belongs to that frame, not necessarily the hero.
+        val images = mutableMapOf<String, ByteArray>()
+        for ((nodeId, candidates) in merged) {
+            val node = current.nodes.firstOrNull { it.id == nodeId } ?: continue
+            for (candidate in candidates) {
+                val name = candidateFileName(current, node, candidate) ?: continue
+                drafts.readDraftFile(draftId, name)?.let { images[candidate.candidateId] = it }
+            }
+        }
+        _ui.update {
+            it.copy(
+                suggestions = merged,
+                suggestionIndex = merged.mapValues { 0 },
+                suggestionImages = images,
+                aiModels = CandidateMerger.modelsLine(parsed),
+            )
         }
     }
 

@@ -344,6 +344,60 @@ class ReviewViewModelTest {
         assertEquals("muse-spark-1.3 + sam-3.1", ui.aiModels)
     }
 
+    // ── W5-01: local model ─────────────────────────────────────────────
+
+    private class FakeLocalVision : app.simt.echo.ai.LocalVision {
+        override val modelId: String = "glimmer-test"
+        var calls: Int = 0
+
+        override suspend fun propose(
+            checkpoint: app.simt.echo.ai.LocalCheckpoint,
+        ): List<app.simt.echo.ai.AiCandidate> {
+            calls++
+            if (checkpoint.nodeId != "n1") return emptyList()
+            return app.simt.echo.ai.cleanLocalCandidates(
+                checkpoint,
+                modelId,
+                listOf(
+                    app.simt.echo.ai.LocalCandidateDto(
+                        title = "Red pillar",
+                        samPhrase = "red pillar",
+                        description = "A red pillar.",
+                        box = listOf(100, 100, 400, 500),
+                        distinctiveness = 0.9,
+                        permanence = 1.0,
+                        cue = "Turn right at the red pillar",
+                    ),
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun localSuggestionsAppearWhenNoCloudJobExists() = runTest(dispatcher) {
+        val h = harness()
+        val vision = FakeLocalVision()
+        val vm = ReviewViewModel(
+            draftId = h.draftId,
+            drafts = h.drafts,
+            routes = h.routes,
+            media = h.media,
+            nowMs = { 1_762_000_100_000L },
+            newId = { "lm-test-x" },
+            api = h.api,
+            router = app.simt.echo.ai.AiRouter(vision),
+        )
+        advanceUntilIdle()
+
+        val ui = vm.ui.value
+        assertTrue(vision.calls > 0, "local provider was consulted")
+        assertEquals(listOf("n1"), ui.suggestions.keys.toList())
+        assertEquals("Red pillar", ui.suggestions.getValue("n1").single().title)
+        assertEquals("glimmer-test (local)", ui.aiModels)
+        // Cloud was never asked for a job (no record exists).
+        assertNull(h.api.gotten)
+    }
+
     @Test
     fun noSuggestionsWithoutCompletedJob() = runTest(dispatcher) {
         val h = harness()

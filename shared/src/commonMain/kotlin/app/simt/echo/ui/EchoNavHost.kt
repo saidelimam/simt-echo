@@ -78,6 +78,8 @@ fun EchoNavHost(
                     nowMs = ::currentEpochMs,
                     newId = { "lm-${Random.nextLong()}" },
                     api = graph.apiClient,
+                    router = graph.aiRouter(),
+                    preferLocal = graph.configRepository.get().preferLocalModel,
                 )
             }
             ReviewScreen(
@@ -174,7 +176,11 @@ fun EchoNavHost(
             val vm: SettingsViewModel = viewModel(
                 factory = viewModelFactory {
                     addInitializer(SettingsViewModel::class) {
-                        SettingsViewModel(graph.configRepository)
+                        SettingsViewModel(
+                            graph.configRepository,
+                            onPhoneModelName = graph.onPhoneModelPath
+                                ?.substringAfterLast('/'),
+                        )
                     }
                 },
             )
