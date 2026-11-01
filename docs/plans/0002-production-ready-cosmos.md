@@ -212,15 +212,15 @@ with device model + build SHA. No slice is Complete on a partial pass.
 |---|---|---|---|---|---|---|
 | W7-01 | Complete | Runtime truth audit + V2 coverage matrix (docs) | T (S) | F | — | 264fb5c7281ee0cab96ba996a1358cedffdccf59 |
 | W7-02 | Complete | Fix the red host gate: Robolectric savedstate + ExportSelection | T | E | — | b48637784d1b50fe45dd1162c7b6a58894136890 · test: ./gradlew :shared:testAndroidHostTest |
-| W7-03 | Queued | Purge demo Home; real routes/drafts only, honest empty state | F (T) | E | W7-02 | — |
+| W7-03 | Complete | Purge demo Home; real routes/drafts only, honest empty state | F (T) | E | W7-02 | 9f4756890e003642a347290bde7f758546588837 · test: ./gradlew :shared:testAndroidHostTest |
 | W7-04 | Queued | Close the loop: RouteDetail → Align → Navigate + Simulate | T (S) | E | W7-03 | — |
 | W7-05 | Queued | Record → Review handoff (Finish lands in Review, named drafts) | F (T) | B | W7-03 | — |
 | W7-06 | Queued | Human copy & error taxonomy (no ids, epochs, or exceptions) | F (T) | E | W7-01 | — |
 | W7-07 | Queued | AI-unavailable honesty when the worker is unconfigured | F (S) | D | W7-06 | — |
 | W7-08 | Queued | Share/Receive failure recovery & offer lifecycle | F (T) | E | W7-06 | — |
 | W7-09 | Queued | Headless user-journey tests for the full core loop | T | F | W7-04, W7-05, W7-08 | — |
-| W7-10 | Queued | Corrupt/missing storage never crashes startup or screens | F (T) | A | W7-02 | — |
-| W7-11 | Queued | Repo truth: README, tracker states, stale scaffolding removed | L (F) | F | W7-01 | — |
+| W7-10 | Complete | Corrupt/missing storage never crashes startup or screens | F (T) | A | W7-02 | f73c967d4b4a7fbaa816a8c3697ec266ecb18683 |
+| W7-11 | Complete | Repo truth: README, tracker states, stale scaffolding removed | L (F) | F | W7-01 | 72c8c1cbde400ddbf19614a5e03e9d7b7a495fdf |
 | W7-12 | Queued | Wave 7 exit gate: offline core loop proven on one device | S | F | W7-09, W7-10, W7-11 | — |
 | W8-01 | Queued | Cosmos adoption freeze (tokens, accents, non-adoptions) | S | A | W7-12 | — |
 | W8-02 | Queued | Cosmos tokens & theme in code + contrast gate | F (T) | E | W8-01 | — |
