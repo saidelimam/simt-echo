@@ -60,6 +60,8 @@ kotlin {
             implementation(libs.cryptography.core)
             // W2-04 Share: QR generation (Compose Multiplatform painter).
             implementation(libs.qrose)
+            // W4-05 relay client: core only; engines stay platform-side.
+            implementation(libs.ktor.client.core)
         }
         androidMain.dependencies {
             implementation(libs.androidx.activity.compose)

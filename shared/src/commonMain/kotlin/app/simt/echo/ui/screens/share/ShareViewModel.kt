@@ -16,6 +16,9 @@ data class ShareUiState(
     val qrUri: String? = null,
     val sent: Boolean = false,
     val error: String? = null,
+    /** Internet relay configured (W4-05); the relay action hides without it. */
+    val relayAvailable: Boolean = false,
+    val relayOffered: Boolean = false,
 )
 
 class ShareViewModel(
@@ -31,13 +34,32 @@ class ShareViewModel(
         viewModelScope.launch {
             try {
                 val offer = service.offer(routeId)
-                _ui.update { it.copy(qrUri = offer.qrUri) }
+                _ui.update {
+                    it.copy(qrUri = offer.qrUri, relayAvailable = service.relayAvailable)
+                }
                 service.served.collect {
                     _ui.update { state -> state.copy(sent = true) }
                     haptics.play(HapticPattern.CONFIRM)
                 }
             } catch (e: Exception) {
                 _ui.update { it.copy(error = e.message ?: "Could not start sharing") }
+            }
+        }
+    }
+
+    /**
+     * Re-offers through the internet relay (W4-05): the QR gains `c=` and a
+     * receiver that cannot reach this phone falls back to the relay. The
+     * previous QR stops working — this offer replaces it.
+     */
+    fun useInternetRelay() {
+        if (_ui.value.relayOffered) return
+        viewModelScope.launch {
+            try {
+                val offer = service.offer(routeId, useRelay = true)
+                _ui.update { it.copy(qrUri = offer.qrUri, relayOffered = true, error = null) }
+            } catch (e: Exception) {
+                _ui.update { it.copy(error = e.message ?: "Could not start the relay") }
             }
         }
     }
