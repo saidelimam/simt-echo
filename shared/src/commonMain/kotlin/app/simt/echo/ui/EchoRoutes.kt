@@ -23,7 +23,11 @@ sealed interface EchoRoute {
     data class Processing(val draftId: String) : EchoRoute
 
     @Serializable
-    data class RouteDetail(val routeId: String) : EchoRoute
+    data class RouteDetail(
+        val routeId: String,
+        /** Server job from the just-completed Review save (W3-08 delete offer). */
+        val savedJobId: String? = null,
+    ) : EchoRoute
 
     @Serializable
     data class Share(val routeId: String) : EchoRoute

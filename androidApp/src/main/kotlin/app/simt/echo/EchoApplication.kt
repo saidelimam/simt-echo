@@ -16,4 +16,13 @@ class EchoApplication : Application() {
             appToken = BuildConfig.ECHO_APP_TOKEN,
         )
     }
+
+    override fun onCreate() {
+        super.onCreate()
+        // Receiver expiry (plan W3-08): routes whose time has come vanish
+        // on start. Missing storage is a no-op, never a crash at launch.
+        runCatching {
+            graph.routeRepository.purgeExpired(System.currentTimeMillis())
+        }
+    }
 }

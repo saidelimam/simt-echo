@@ -62,6 +62,8 @@ data class ReviewUiState(
     val aiModels: String? = null,
     val saving: Boolean = false,
     val savedRouteId: String? = null,
+    /** Server job whose files outlived the draft (W3-08 delete offer). */
+    val savedJobId: String? = null,
     val error: String? = null,
 )
 
@@ -371,9 +373,18 @@ class ReviewViewModel(
         }
     }
 
-    fun editLandmark(landmarkId: String, title: String, cue: String) = mutate { route ->
+    fun editLandmark(
+        landmarkId: String,
+        title: String,
+        cue: String,
+        privacyRisk: Boolean? = null,
+    ) = mutate { route ->
         route.copy(landmarks = route.landmarks.map {
-            if (it.id == landmarkId) it.copy(title = title, cue = cue) else it
+            if (it.id == landmarkId) {
+                it.copy(title = title, cue = cue, privacyRisk = privacyRisk ?: it.privacyRisk)
+            } else {
+                it
+            }
         })
     }
 
@@ -414,9 +425,14 @@ class ReviewViewModel(
                         } else landmark
                     },
                 )
+                // Capture the server job before the draft is consumed:
+                // persist it per-route so RouteDetail can delete the
+                // uploaded media later, not only via the nav arg.
+                val jobId = drafts.loadJobRecord(draftId)?.jobId
                 routes.save(export, assets)
+                if (jobId != null) routes.saveRouteJobId(export.routeId, jobId)
                 drafts.delete(draftId)
-                _ui.update { it.copy(saving = false, savedRouteId = export.routeId) }
+                _ui.update { it.copy(saving = false, savedRouteId = export.routeId, savedJobId = jobId) }
                 onSaved(export.routeId)
             } catch (e: Exception) {
                 _ui.update { it.copy(saving = false, error = e.message ?: "Could not save the route.") }

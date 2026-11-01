@@ -47,13 +47,22 @@ class TransferService(
      * Starts a LAN offer; with [useRelay] the sealed bytes are also uploaded
      * to the relay and the QR gains `c=` so a receiver whose LAN attempt
      * fails can fall back to it. The bundle key stays in the QR either way.
+     *
+     * With [selection] (W3-08 preview sheet) the bundle holds the filtered
+     * route copy only — toggled-off crops are absent, never just hidden.
      */
-    suspend fun offer(routeId: String, useRelay: Boolean = false): OfferInfo {
+    suspend fun offer(
+        routeId: String,
+        useRelay: Boolean = false,
+        selection: ExportSelection? = null,
+    ): OfferInfo {
         val route = routes.get(routeId)
             ?: error("offer: no route $routeId")
-        val assets = collectAssets(routeId, route)
-        val container = BundleCodec.encode(route, assets)
-        val body = BundleBody(route = route, assets = assets.sortedBy { it.id })
+        checkNotExpired(route)
+        val exportRoute = selection?.let { applySelection(route, it, nowMs()) } ?: route
+        val assets = collectAssets(routeId, exportRoute)
+        val container = BundleCodec.encode(exportRoute, assets)
+        val body = BundleBody(route = exportRoute, assets = assets.sortedBy { it.id })
         val (sealed, key) = BundleCodec.seal(container)
         val tokenBytes = randomBytes(QrPayload.TOKEN_BYTES)
         val endpoint = transport.offer(sealed, base64Url(tokenBytes))
@@ -136,16 +145,55 @@ class TransferService(
     }
 
     /**
+     * Preview rows for the Share export sheet (W3-08): start photo plus
+     * every landmark crop, with privacy-risk defaults applied.
+     */
+    fun describeExport(routeId: String): List<ExportItem> {
+        val route = routes.get(routeId)
+            ?: error("describeExport: no route $routeId")
+        return describeExport(route)
+    }
+
+    /** Route-aware default selection (preserves stored expiry). */
+    fun defaultSelectionFor(routeId: String): ExportSelection {
+        val route = routes.get(routeId)
+            ?: error("defaultSelection: no route $routeId")
+        return defaultSelection(route)
+    }
+
+    /** Honest preview summary for the current [selection]. */
+    fun summaryFor(routeId: String, selection: ExportSelection): ExportSummary {
+        val route = routes.get(routeId)
+            ?: error("summary: no route $routeId")
+        return exportSummary(route, selection, nowMs())
+    }
+
+    private fun checkNotExpired(route: app.simt.echo.model.EchoRoute) {
+        val expiry = route.privacy.expiresAtEpochMs
+        if (expiry != null && expiry <= nowMs()) throw RouteExpiredException(expiry)
+    }
+
+    /** Deletes pending plaintext exports for one route only (`*-<routeId>.echo`). */
+    fun deletePlainExportsFor(routeId: String) {
+        store.list(EXPORTS_DIR)
+            .filter { it.name.endsWith("-$routeId.echo") }
+            .forEach { store.deleteRecursively("$EXPORTS_DIR/${it.name}") }
+    }
+
+    /**
      * File-fallback export (W2-07): writes the **plain** container `C`
      * (unsealed — no key) to `exports/<name>.echo` under app storage and
      * returns its path. The caller must have shown the privacy warning
      * before invoking this; the bytes are readable without the QR key.
+     * With [selection] the same W3-08 filter as [offer] applies.
      */
-    suspend fun exportFile(routeId: String): Path {
+    suspend fun exportFile(routeId: String, selection: ExportSelection? = null): Path {
         val route = routes.get(routeId)
             ?: error("exportFile: no route $routeId")
-        val assets = collectAssets(routeId, route)
-        val container = BundleCodec.encode(route, assets)
+        checkNotExpired(route)
+        val exportRoute = selection?.let { applySelection(route, it, nowMs()) } ?: route
+        val assets = collectAssets(routeId, exportRoute)
+        val container = BundleCodec.encode(exportRoute, assets)
         // Route id in the filename: two same-named routes must not
         // overwrite each other's pending plaintext export.
         val name = echoFileName(route.name).removeSuffix(".echo") +

@@ -14,6 +14,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -122,7 +123,7 @@ fun ReviewScreen(
                 onLabel = { viewModel.renameNode(reviewNode.node.id, it) },
                 onCue = { viewModel.editCue(reviewNode.node.id, it) },
                 onDraw = { viewModel.openDraw(reviewNode.node.id) },
-                onEditLandmark = { id, title, cue -> viewModel.editLandmark(id, title, cue) },
+                onEditLandmark = { id, title, cue, risky -> viewModel.editLandmark(id, title, cue, risky) },
                 onDeleteLandmark = viewModel::deleteLandmark,
                 onUseSuggestion = { viewModel.useSuggestion(reviewNode.node.id) },
                 onNextSuggestion = { viewModel.nextSuggestion(reviewNode.node.id) },
@@ -177,7 +178,7 @@ private fun NodeCard(
     onLabel: (String) -> Unit,
     onCue: (String) -> Unit,
     onDraw: () -> Unit,
-    onEditLandmark: (String, String, String) -> Unit,
+    onEditLandmark: (String, String, String, Boolean) -> Unit,
     onDeleteLandmark: (String) -> Unit,
     onUseSuggestion: () -> Unit,
     onNextSuggestion: () -> Unit,
@@ -319,23 +320,37 @@ private fun SuggestionCard(
 @Composable
 private fun LandmarkRow(
     landmark: Landmark,
-    onEdit: (String, String, String) -> Unit,
+    onEdit: (String, String, String, Boolean) -> Unit,
     onDelete: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         OutlinedTextField(
             value = landmark.title,
-            onValueChange = { onEdit(landmark.id, it, landmark.cue) },
+            onValueChange = { onEdit(landmark.id, it, landmark.cue, landmark.privacyRisk) },
             label = { Text(text = "Landmark") },
             modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
             value = landmark.cue,
-            onValueChange = { onEdit(landmark.id, landmark.title, it) },
+            onValueChange = { onEdit(landmark.id, landmark.title, it, landmark.privacyRisk) },
             label = { Text(text = "Landmark cue") },
             modifier = Modifier.fillMaxWidth(),
         )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "Sensitive (people, plates, screens)",
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.weight(1f),
+            )
+            Switch(
+                checked = landmark.privacyRisk,
+                onCheckedChange = { onEdit(landmark.id, landmark.title, landmark.cue, it) },
+            )
+        }
         PillButton(text = "Delete", onClick = { onDelete(landmark.id) })
     }
 }

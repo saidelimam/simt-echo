@@ -93,6 +93,8 @@ data class Landmark(
     val samPhrase: String? = null,
     val signText: String? = null,
     val cropAssetId: String? = null,
+    /** Faces, plates, screens: export preview defaults this crop OFF. */
+    val privacyRisk: Boolean = false,
     val visibleFromM: Double? = null,
     val trackability: Double? = null,
     val samConfidence: Double? = null,
