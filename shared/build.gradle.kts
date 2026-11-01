@@ -66,6 +66,8 @@ kotlin {
             implementation(libs.camerax.lifecycle)
             implementation(libs.camerax.video)
             implementation(libs.camerax.compose)
+            // W5-04 Wear haptic mirror (MessageClient + CapabilityClient).
+            implementation(libs.play.services.wearable)
         }
         commonTest.dependencies {
             implementation(kotlin("test"))

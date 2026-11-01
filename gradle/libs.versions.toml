@@ -17,6 +17,7 @@ camerax = "1.6.2"
 media3 = "1.10.1"
 qrose = "2.0.1"
 mlkit-barcode = "17.3.0"
+play-services-wearable = "20.0.1"
 
 [libraries]
 # AndroidX
@@ -57,6 +58,9 @@ camerax-video = { group = "androidx.camera", name = "camera-video", version.ref 
 camerax-compose = { group = "androidx.camera", name = "camera-compose", version.ref = "camerax" }
 media3-transformer = { group = "androidx.media3", name = "media3-transformer", version.ref = "media3" }
 media3-extractor = { group = "androidx.media3", name = "media3-extractor", version.ref = "media3" }
+
+# Wear OS (W5-04 haptic mirror: MessageClient + CapabilityClient only)
+play-services-wearable = { group = "com.google.android.gms", name = "play-services-wearable", version.ref = "play-services-wearable" }
 
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }
