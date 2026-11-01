@@ -3,6 +3,13 @@
 // tests only need the class shape plus a synchronous step runner so the
 // W3-03 skeleton executes end to end.
 
+export class NonRetryableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NonRetryableError";
+  }
+}
+
 export interface WorkflowStep {
   do<T>(name: string, config: unknown, fn: () => Promise<T>): Promise<T>;
 }

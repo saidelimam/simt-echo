@@ -196,6 +196,92 @@ describe("runScout validation", () => {
     expect(ai.calls.filter((c) => c.model === GEMMA)).toHaveLength(1);
   });
 
+  it("falls back to Gemma when Llama returns schema-invalid output", async () => {
+    const media = new FakeR2();
+    const jobId = "job-1";
+    seedMedia(media, jobId);
+    const ai = new FakeAI({
+      // distinctiveness out of the 0–1 range: Zod rejects this answer.
+      [LLAMA]: () => ({ response: checkpointResult("n2", [candidate({ distinctiveness: 2 })]) }),
+      [GEMMA]: () => ({ response: checkpointResult() }),
+    });
+
+    const result = await runScout(envFor(media, ai), jobId, structuredClone(validManifest()) as never);
+
+    expect(result.model).toBe(GEMMA);
+    expect(ai.calls.filter((c) => c.model === LLAMA)).toHaveLength(1);
+    expect(ai.calls.filter((c) => c.model === GEMMA)).toHaveLength(1);
+  });
+
+  it("falls back to Gemma when Llama answers for the wrong checkpoint", async () => {
+    const media = new FakeR2();
+    const jobId = "job-1";
+    seedMedia(media, jobId);
+    const ai = new FakeAI({
+      [LLAMA]: () => ({ response: checkpointResult("n99") }),
+      [GEMMA]: () => ({ response: checkpointResult("n2") }),
+    });
+
+    const result = await runScout(envFor(media, ai), jobId, structuredClone(validManifest()) as never);
+
+    expect(result.model).toBe(GEMMA);
+    expect(result.checkpoints[0].nodeId).toBe("n2");
+    expect(ai.calls.filter((c) => c.model === GEMMA)).toHaveLength(1);
+  });
+
+  it("does not retry the same model without schema after a parse failure", async () => {
+    const media = new FakeR2();
+    const jobId = "job-1";
+    seedMedia(media, jobId);
+    const ai = new FakeAI({
+      // Free text mentioning "schema": a parse failure, not a binding
+      // rejection of response_format — no same-model retry is owed.
+      [LLAMA]: () => ({ response: "this is not the schema you wanted" }),
+      [GEMMA]: () => ({ response: checkpointResult() }),
+    });
+
+    const result = await runScout(envFor(media, ai), jobId, structuredClone(validManifest()) as never);
+
+    expect(result.model).toBe(GEMMA);
+    expect(ai.calls.filter((c) => c.model === LLAMA)).toHaveLength(1);
+  });
+
+  it("falls back to Gemma when Llama hangs past the model timeout", async () => {
+    const media = new FakeR2();
+    const jobId = "job-1";
+    seedMedia(media, jobId);
+    const ai = new FakeAI({
+      [LLAMA]: () => new Promise(() => {}),
+      [GEMMA]: () => ({ response: checkpointResult() }),
+    });
+    const env = envFor(media, ai, { SCOUT_MODEL_TIMEOUT_MS: "20" });
+
+    const result = await runScout(env, jobId, structuredClone(validManifest()) as never);
+
+    expect(result.model).toBe(GEMMA);
+  });
+
+  it("drops candidates naming a keyframe whose bytes never loaded", async () => {
+    const media = new FakeR2();
+    const jobId = "job-1";
+    // Only kf_n2_0 is uploaded; kf_n2_1 is a manifest ref the model was
+    // never sent and must not be able to box.
+    await media.put(`jobs/${jobId}/in/kf_n2_0`, new Uint8Array([1, 2, 3]).buffer as ArrayBuffer);
+    const ai = new FakeAI({
+      [LLAMA]: () => ({
+        response: checkpointResult("n2", [
+          candidate({ imageId: "kf_n2_1", distinctiveness: 1, permanence: 1 }),
+          candidate({ imageId: "kf_n2_0", distinctiveness: 0.5, permanence: 0.5 }),
+        ]),
+      }),
+    });
+
+    const result = await runScout(envFor(media, ai), jobId, structuredClone(validManifest()) as never);
+
+    expect(result.checkpoints[0].candidates).toHaveLength(1);
+    expect(result.checkpoints[0].candidates[0].imageId).toBe("kf_n2_0");
+  });
+
   it("retries once without response_format when the model rejects it", async () => {
     const media = new FakeR2();
     const jobId = "job-1";

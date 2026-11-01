@@ -165,52 +165,74 @@ const workersAiProvider: ScoutProvider = {
       .map((m) => m.trim())
       .filter((m) => m !== "");
     const gateway = env.AI_GATEWAY_ID;
+    const timeoutMs = modelTimeoutMs(env);
     let lastError: unknown = null;
     for (const model of models) {
       for (let attempt = 0; attempt < 2; attempt++) {
         const withSchema = attempt === 0;
+        let out: unknown;
         try {
-          const out = await ai.run(
+          out = await withModelTimeout(
+            ai.run(
+              model,
+              {
+                messages: [
+                  { role: "system", content: SYSTEM },
+                  {
+                    role: "user",
+                    content: [
+                      {
+                        type: "text",
+                        text: withSchema
+                          ? context
+                          : `${context}\nReturn only JSON matching this schema: ${JSON.stringify(CHECKPOINT_JSON_SCHEMA)}`,
+                      },
+                      ...images.map((img) => ({
+                        type: "image_url",
+                        image_url: { url: `data:image/jpeg;base64,${img.b64}` },
+                      })),
+                    ],
+                  },
+                ],
+                ...(withSchema
+                  ? {
+                      response_format: {
+                        type: "json_schema",
+                        json_schema: CHECKPOINT_JSON_SCHEMA,
+                      },
+                    }
+                  : {}),
+                max_tokens: 1500,
+                temperature: 0.1,
+              },
+              { gateway: { id: gateway } },
+            ),
+            timeoutMs,
             model,
-            {
-              messages: [
-                { role: "system", content: SYSTEM },
-                {
-                  role: "user",
-                  content: [
-                    {
-                      type: "text",
-                      text: withSchema
-                        ? context
-                        : `${context}\nReturn only JSON matching this schema: ${JSON.stringify(CHECKPOINT_JSON_SCHEMA)}`,
-                    },
-                    ...images.map((img) => ({
-                      type: "image_url",
-                      image_url: { url: `data:image/jpeg;base64,${img.b64}` },
-                    })),
-                  ],
-                },
-              ],
-              ...(withSchema
-                ? {
-                    response_format: {
-                      type: "json_schema",
-                      json_schema: CHECKPOINT_JSON_SCHEMA,
-                    },
-                  }
-                : {}),
-              max_tokens: 1500,
-              temperature: 0.1,
-            },
-            { gateway: { id: gateway } },
           );
-          const raw = extractResponse(out);
-          return { model, raw, result: ScoutCheckpointSchema.parse(raw) };
         } catch (e) {
           lastError = e;
-          // A model that rejects `response_format` gets one retry without it
-          // (plan §7.2); any other error moves straight to the next model.
+          // Only a binding-level rejection of `response_format` earns the
+          // no-schema retry (plan §7.2). Parse/validation failures never
+          // reach this catch — they are handled below and move straight
+          // to the next model.
           if (!(withSchema && mentionsFormat(e))) break;
+          continue;
+        }
+        try {
+          const raw = extractResponse(out);
+          const result = ScoutCheckpointSchema.parse(raw);
+          // An answer for a different checkpoint is invalid output from
+          // this model, not a chain failure: fall through to the next one.
+          if (result.nodeId !== checkpoint.nodeId) {
+            throw new Error(
+              `workers-ai: model answered for ${result.nodeId}, asked for ${checkpoint.nodeId}`,
+            );
+          }
+          return { model, raw, result };
+        } catch (e) {
+          lastError = e;
+          break;
         }
       }
     }
@@ -237,7 +259,34 @@ function extractResponse(out: unknown): unknown {
 }
 
 function mentionsFormat(e: unknown): boolean {
-  return /response_format|json_schema|format|schema/i.test(errorMessage(e));
+  return /response_format|json_schema/i.test(errorMessage(e));
+}
+
+/** Per-model call bound: a hung first model must not starve the fallback.
+ * The binding takes no abort signal, so the call is raced; the loser keeps
+ * running in the background but the chain moves on. */
+export const DEFAULT_MODEL_TIMEOUT_MS = 90_000;
+
+function modelTimeoutMs(env: Env): number {
+  const parsed = Number(env.SCOUT_MODEL_TIMEOUT_MS);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_MODEL_TIMEOUT_MS;
+}
+
+async function withModelTimeout<T>(call: Promise<T>, timeoutMs: number, model: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      call,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`workers-ai: ${model} timed out after ${timeoutMs} ms`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function errorMessage(e: unknown): string {
@@ -358,16 +407,12 @@ export async function runScout(env: Env, jobId: string, manifest: Manifest): Pro
           rawKey(jobId, cp.nodeId, n),
           JSON.stringify({ model: attempt.model, raw: attempt.raw }),
         );
-        if (attempt.result.nodeId !== cp.nodeId) {
-          throw new ScoutError(
-            "all_models_failed",
-            `workers-ai: model answered for ${attempt.result.nodeId}, asked for ${cp.nodeId}`,
-          );
-        }
         ranModels.push(attempt.model);
         checkpoints.push({
           nodeId: cp.nodeId,
-          candidates: cleanCandidates(attempt.result, new Set(refs.map((r) => r.id))),
+          // Only images actually loaded and sent may be boxed: a candidate
+          // naming a manifest ref whose bytes never loaded is invented.
+          candidates: cleanCandidates(attempt.result, new Set(loaded.map((l) => l.id))),
         });
       }
       // The model(s) that ran, in checkpoint order (plan §7: the ids that ran

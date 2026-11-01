@@ -13,6 +13,7 @@ export interface Env {
   GROUND_ORDER: string;
   AI_GATEWAY_ID: string;
   WORKERS_AI_MODELS?: string;
+  SCOUT_MODEL_TIMEOUT_MS?: string;
   ENV?: string;
   META_API_KEY?: string;
   ECHO_APP_TOKEN?: string;

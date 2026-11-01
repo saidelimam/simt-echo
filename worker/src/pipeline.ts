@@ -1,9 +1,10 @@
 import { WorkflowEntrypoint } from "cloudflare:workers";
+import { NonRetryableError } from "cloudflare:workflows";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
 import type { Env } from "./index";
 import { JobResultSchema, ManifestSchema, type JobResult, type Manifest } from "./types";
 import { putError, putProgress } from "./jobs";
-import { runScout, type ScoutResult } from "./scout";
+import { runScout, ScoutError, type ScoutResult } from "./scout";
 
 export interface PipelineParams {
   jobId: string;
@@ -46,7 +47,14 @@ async function loadManifest(env: Env, jobId: string): Promise<Manifest> {
 
 async function runScoutStep(env: Env, jobId: string, manifest: Manifest): Promise<ScoutResult> {
   await putProgress(env, jobId, "scouting");
-  return runScout(env, jobId, manifest);
+  try {
+    return await runScout(env, jobId, manifest);
+  } catch (e) {
+    // Scout failures are deterministic (no provider, missing media, every
+    // model already fell back and failed): retrying re-bills the same calls.
+    if (e instanceof ScoutError) throw new NonRetryableError(e.message);
+    throw e;
+  }
 }
 
 async function assembleEmpty(env: Env, jobId: string, manifest: Manifest): Promise<JobResult> {
