@@ -86,6 +86,7 @@ class ProcessingViewModelTest {
         var samEnabled: Boolean = true,
         var polls: ArrayDeque<Result<JobPoll>> = ArrayDeque(),
         var submitError: EchoApiError? = null,
+        var deleteError: EchoApiError? = null,
     ) : CloudApi {
         val submits = mutableListOf<Pair<String, List<UploadFile>>>()
         val deletes = mutableListOf<String>()
@@ -101,6 +102,7 @@ class ProcessingViewModelTest {
 
         override suspend fun delete(jobId: String) {
             deletes += jobId
+            deleteError?.let { throw it }
         }
 
         override suspend fun samEnabled(): Boolean = samEnabled
@@ -266,7 +268,7 @@ class ProcessingViewModelTest {
     }
 
     @Test
-    fun erroredJobShowsMessageAndRetryResubmits() = runTest(dispatcher) {
+    fun erroredJobShowsMessageAndRetryReturnsToConsentBeforeResubmitting() = runTest(dispatcher) {
         val h = harness()
         val api = FakeCloudApi(
             polls = ArrayDeque(listOf(errored("scout down"), complete())),
@@ -279,13 +281,86 @@ class ProcessingViewModelTest {
         val failed = assertIs<ProcessingPhase.Failed>(vm.ui.value.phase)
         assertEquals("scout down", failed.message)
 
+        // Retry deletes the dead job but must not re-upload: the user has
+        // to see the consent copy and press Send again.
         vm.retry()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Consent>(vm.ui.value.phase)
+        assertEquals(1, api.submits.size)
+        assertEquals(listOf("job-1"), api.deletes)
+        assertNull(h.drafts.loadJobRecord("draft-1"))
+
+        vm.send()
         advanceUntilIdle()
 
         assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
         assertEquals(2, api.submits.size)
-        assertEquals(listOf("job-1"), api.deletes)
         assertEquals("complete", h.drafts.loadJobRecord("draft-1")?.status)
+    }
+
+    @Test
+    fun sendBeforeConsentAndDoubleSendNeverSubmit() = runTest(dispatcher) {
+        val h = harness()
+        val api = FakeCloudApi(polls = ArrayDeque(listOf(complete())))
+        val vm = h.vm(api)
+
+        // Still Loading: no consent has been shown, so nothing may upload.
+        vm.send()
+        advanceUntilIdle()
+        assertIs<ProcessingPhase.Consent>(vm.ui.value.phase)
+        assertTrue(api.submits.isEmpty())
+
+        // A double-tap claims the phase once: exactly one submit.
+        vm.send()
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
+        assertEquals(1, api.submits.size)
+    }
+
+    @Test
+    fun erroredJobOnEntryOffersDeleteAndFailedDeleteKeepsRecord() = runTest(dispatcher) {
+        val h = harness()
+        h.drafts.saveJobRecord("draft-1", JobRecord("job-9", "errored", 0L))
+        val api = FakeCloudApi(deleteError = EchoApiError.Server(500, "boom"))
+        val vm = h.vm(api)
+        advanceUntilIdle()
+
+        val consent = assertIs<ProcessingPhase.Consent>(vm.ui.value.phase)
+        assertTrue(consent.hasJob)
+        assertEquals("job-9", vm.ui.value.jobId)
+
+        vm.deleteNow()
+        advanceUntilIdle()
+
+        val failed = assertIs<ProcessingPhase.Failed>(vm.ui.value.phase)
+        assertTrue(failed.message.contains("Could not delete", ignoreCase = true), failed.message)
+        // The record survives so the delete can be retried, not orphaned.
+        assertEquals("job-9", h.drafts.loadJobRecord("draft-1")?.jobId)
+    }
+
+    @Test
+    fun transientPollFailuresRecoverWithoutFailingTheJob() = runTest(dispatcher) {
+        val h = harness()
+        val api = FakeCloudApi(
+            polls = ArrayDeque(
+                listOf(
+                    Result.failure(EchoApiError.Network(RuntimeException("blip"))),
+                    Result.failure(EchoApiError.Server(503, "busy")),
+                    running(),
+                    complete(),
+                ),
+            ),
+        )
+        val vm = h.vm(api)
+        advanceUntilIdle()
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
+        assertEquals(1, api.submits.size)
     }
 
     @Test

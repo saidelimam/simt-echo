@@ -109,6 +109,19 @@ class EchoApiClientTest {
     }
 
     @Test
+    fun cleartextBaseUrlIsRefusedExceptOnLoopback() = runTest {
+        val cleartext = client({ respond("{}") }, baseUrl = "http://echo.test")
+        assertFailsWith<EchoApiError.NotConfigured> { cleartext.submit("{}", emptyList()) }
+        assertFailsWith<EchoApiError.NotConfigured> { cleartext.get("job-1") }
+        assertFailsWith<EchoApiError.NotConfigured> { cleartext.delete("job-1") }
+
+        val loopback = client({
+            respond("""{"ok":true,"jobId":"j"}""", HttpStatusCode.Accepted)
+        }, baseUrl = "http://127.0.0.1:8787")
+        assertEquals("j", loopback.submit("{}", emptyList()))
+    }
+
+    @Test
     fun getParsesRunningAndComplete() = runTest {
         val running = client({
             respond(

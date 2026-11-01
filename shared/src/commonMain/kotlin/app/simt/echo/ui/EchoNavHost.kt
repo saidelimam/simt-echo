@@ -3,6 +3,9 @@ package app.simt.echo.ui
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -77,15 +80,22 @@ fun EchoNavHost(
         composable<EchoRoute.Processing> { entry ->
             val route = entry.toRoute<EchoRoute.Processing>()
             val mediaTools = rememberMediaTools()
-            val viewModel = remember(route.draftId, mediaTools) {
-                ProcessingViewModel(
-                    draftId = route.draftId,
-                    drafts = graph.draftRepository,
-                    media = mediaTools,
-                    api = graph.apiClient,
-                    nowMs = ::currentEpochMs,
-                )
-            }
+            // Back-stack-scoped, not `remember`: leaving the screen must
+            // cancel polling via onCleared() (review 0001 R3).
+            val viewModel: ProcessingViewModel = viewModel(
+                key = route.draftId,
+                factory = viewModelFactory {
+                    addInitializer(ProcessingViewModel::class) {
+                        ProcessingViewModel(
+                            draftId = route.draftId,
+                            drafts = graph.draftRepository,
+                            media = mediaTools,
+                            api = graph.apiClient,
+                            nowMs = ::currentEpochMs,
+                        )
+                    }
+                },
+            )
             ProcessingScreen(
                 viewModel = viewModel,
                 onDone = { navController.popBackStack() },

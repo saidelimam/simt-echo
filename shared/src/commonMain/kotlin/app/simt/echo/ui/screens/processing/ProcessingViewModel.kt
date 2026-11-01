@@ -23,6 +23,7 @@ import app.simt.echo.transfer.EchoApiError
 import app.simt.echo.transfer.JobRecord
 import app.simt.echo.transfer.JobStage
 import app.simt.echo.transfer.UploadFile
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -81,6 +82,7 @@ class ProcessingViewModel(
     private val nowMs: () -> Long,
     private val pollIntervalMs: Long = 2_000L,
     private val maxPolls: Int = 150,
+    private val maxTransientPollFailures: Int = 3,
 ) : ViewModel() {
 
     private val _ui = MutableStateFlow(ProcessingUiState())
@@ -116,17 +118,29 @@ class ProcessingViewModel(
                 poll(job.jobId)
             } else if (job != null && job.status == "complete") {
                 _ui.update { it.copy(phase = ProcessingPhase.Ready, jobId = job.jobId) }
+            } else if (job != null) {
+                // Errored job: its files may still be on the server, so the
+                // consent screen's delete-now action must stay reachable and
+                // the job must not be orphaned by clearing its id here.
+                _ui.update { it.copy(phase = ProcessingPhase.Consent(counts, hasJob = true), jobId = job.jobId) }
             } else {
                 _ui.update { it.copy(phase = ProcessingPhase.Consent(counts, hasJob = false), jobId = null) }
             }
         }
     }
 
-    /** Consent Send: builds the manifest, uploads files, starts polling. */
+    /**
+     * Consent Send: builds the manifest, uploads files, starts polling.
+     * This is the only upload path, and it is gated on the Consent phase —
+     * the consent flag in the manifest is true because the user is looking
+     * at the consent copy, not because a caller asserted it. The phase is
+     * claimed synchronously before launching, so a double-tap cannot pass
+     * the gate twice and submit two jobs (review 0001 R3).
+     */
     fun send() {
-        if (_ui.value.phase is ProcessingPhase.Uploading) return
+        if (_ui.value.phase !is ProcessingPhase.Consent) return
+        _ui.update { it.copy(phase = ProcessingPhase.Uploading) }
         viewModelScope.launch {
-            _ui.update { it.copy(phase = ProcessingPhase.Uploading) }
             try {
                 val route = checkNotNull(drafts.loadDraftRoute(draftId)) { "Draft is gone." }
                 val log = checkNotNull(drafts.loadCapture(draftId)) { "Capture log is gone." }
@@ -146,6 +160,8 @@ class ProcessingViewModel(
                 persist(jobId, "queued")
                 _ui.update { it.copy(phase = ProcessingPhase.Working(JobStage.QUEUED), jobId = jobId) }
                 poll(jobId)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _ui.update { it.copy(phase = ProcessingPhase.Failed(friendly(e))) }
             }
@@ -155,23 +171,49 @@ class ProcessingViewModel(
     /** Consent Not now / error Continue without AI: back to Review. */
     fun decline(onDone: () -> Unit) = onDone()
 
-    /** Failure Retry: drops the dead job server-side, then resubmits. */
+    /**
+     * Failure Retry: drops the dead job server-side, then returns to the
+     * Consent phase. It never re-uploads on its own — a fresh upload needs
+     * a fresh explicit Send in front of the consent copy (review 0001 R3).
+     */
     fun retry() {
         val jobId = _ui.value.jobId
         viewModelScope.launch {
             if (jobId != null) {
-                runCatching { api.delete(jobId) }
+                try {
+                    api.delete(jobId)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    _ui.update {
+                        it.copy(phase = ProcessingPhase.Failed("Could not delete the failed job from the server. Check the connection and retry."))
+                    }
+                    return@launch
+                }
                 drafts.clearJobRecord(draftId)
             }
-            send()
+            _ui.update { it.copy(phase = ProcessingPhase.Consent(counts, hasJob = false), jobId = null) }
         }
     }
 
-    /** Consent "delete now": removes the server's files + the job record. */
+    /**
+     * Consent "delete now": removes the server's files + the job record.
+     * A failed delete keeps the record and says so — silently clearing it
+     * would strand the files with no way to retry (review 0001 R3).
+     */
     fun deleteNow() {
         val jobId = _ui.value.jobId ?: return
         viewModelScope.launch {
-            runCatching { api.delete(jobId) }
+            try {
+                api.delete(jobId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _ui.update {
+                    it.copy(phase = ProcessingPhase.Failed("Could not delete the uploaded files. They may still be on the server — check the connection and try again."))
+                }
+                return@launch
+            }
             drafts.clearJobRecord(draftId)
             _ui.update { it.copy(phase = ProcessingPhase.Consent(counts, hasJob = false), jobId = null) }
         }
@@ -184,18 +226,29 @@ class ProcessingViewModel(
     }
 
     private suspend fun poll(jobId: String) {
+        var consecutiveFailures = 0
         repeat(maxPolls) {
             delay(pollIntervalMs)
             val poll = try {
                 api.get(jobId)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: EchoApiError.JobNotFound) {
                 drafts.clearJobRecord(draftId)
                 _ui.update { it.copy(phase = ProcessingPhase.Failed("The job is gone from the server.")) }
                 return
             } catch (e: Exception) {
-                _ui.update { it.copy(phase = ProcessingPhase.Failed(friendly(e))) }
-                return
+                // A transient blip must not kill a minutes-long job or push
+                // the user into a destructive re-upload: tolerate a few in
+                // a row before declaring failure (review 0001 R3).
+                consecutiveFailures++
+                if (consecutiveFailures > maxTransientPollFailures) {
+                    _ui.update { it.copy(phase = ProcessingPhase.Failed(friendly(e))) }
+                    return
+                }
+                return@repeat
             }
+            consecutiveFailures = 0
             persist(jobId, poll.status)
             when (poll.status) {
                 "complete" -> {

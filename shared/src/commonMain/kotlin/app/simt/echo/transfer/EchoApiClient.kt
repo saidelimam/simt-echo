@@ -8,6 +8,7 @@ import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -118,6 +119,9 @@ class EchoApiClient(
 ) : CloudApi {
     private fun configured() {
         if (baseUrl.isBlank() || appToken.isBlank()) throw EchoApiError.NotConfigured()
+        // The bearer token and the photos travel together: never in
+        // cleartext. Loopback stays allowed for local worker development.
+        if (!isAllowedBaseUrl(baseUrl)) throw EchoApiError.NotConfigured()
     }
 
     /**
@@ -149,6 +153,8 @@ class EchoApiClient(
             ) {
                 headers.append(HttpHeaders.Authorization, "Bearer $appToken")
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             throw EchoApiError.Network(e)
         }
@@ -168,6 +174,8 @@ class EchoApiClient(
             http.get("$baseUrl/v1/jobs/$jobId") {
                 headers.append(HttpHeaders.Authorization, "Bearer $appToken")
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             throw EchoApiError.Network(e)
         }
@@ -189,6 +197,8 @@ class EchoApiClient(
             http.delete("$baseUrl/v1/jobs/$jobId") {
                 headers.append(HttpHeaders.Authorization, "Bearer $appToken")
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             throw EchoApiError.Network(e)
         }
@@ -203,9 +213,18 @@ class EchoApiClient(
         return try {
             val body = http.get("$baseUrl/v1/health").bodyAsText()
             runCatching { apiJson.decodeFromString<HealthResponse>(body).metaKeyConfigured }.getOrDefault(false)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             false
         }
+    }
+
+    private fun isAllowedBaseUrl(url: String): Boolean {
+        if (url.startsWith("https://")) return true
+        if (!url.startsWith("http://")) return false
+        val host = url.removePrefix("http://").substringBefore('/').substringBefore(':')
+        return host == "localhost" || host == "127.0.0.1" || host == "10.0.2.2"
     }
 
     private fun throwSubmitError(status: Int, body: String): Nothing {
