@@ -1,0 +1,68 @@
+package app.simt.echo.ui.screens.detail
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import app.simt.echo.data.RouteRepository
+import app.simt.echo.ui.components.EchoButton
+import app.simt.echo.ui.components.PillButton
+import kotlin.math.roundToInt
+
+/**
+ * Saved-route detail (plan W2-01): read-only header, landmark list,
+ * entry to Share. Navigation playback lands in W2-06; nothing here
+ * navigates into it.
+ */
+@Composable
+fun RouteDetailScreen(
+    routeId: String,
+    routes: RouteRepository,
+    onShare: (String) -> Unit,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val route = remember(routeId) { routes.get(routeId) }
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        if (route == null) {
+            Text(text = "No saved route $routeId", style = MaterialTheme.typography.titleLarge)
+            EchoButton(text = "Back home", onClick = onBack, modifier = Modifier.fillMaxWidth())
+            return@Column
+        }
+        Text(text = route.name.ifEmpty { routeId }, style = MaterialTheme.typography.titleLarge)
+        Text(
+            text = "${route.totalLengthM.roundToInt()} m · ${route.nodes.size} nodes · " +
+                "${route.landmarks.size} landmarks",
+            style = MaterialTheme.typography.bodyLarge,
+        )
+        route.landmarks.forEach { landmark ->
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(text = landmark.title, style = MaterialTheme.typography.titleMedium)
+                if (landmark.cue.isNotBlank()) {
+                    Text(text = landmark.cue, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        }
+        EchoButton(
+            text = "Share",
+            onClick = { onShare(routeId) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        PillButton(text = "Back home", onClick = onBack, modifier = Modifier.fillMaxWidth())
+    }
+}

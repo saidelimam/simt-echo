@@ -8,14 +8,18 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
+import kotlin.random.Random
 import app.simt.echo.AppGraph
+import app.simt.echo.platform.currentEpochMs
 import app.simt.echo.platform.rememberHaptics
 import app.simt.echo.ui.screens.HomeScreen
+import app.simt.echo.ui.screens.detail.RouteDetailScreen
 import app.simt.echo.ui.screens.PlaceholderScreen
 import app.simt.echo.ui.screens.PlaceholderViewModel
 import app.simt.echo.ui.screens.receive.ReceiveScreen
 import app.simt.echo.ui.screens.record.RecordScreen
 import app.simt.echo.ui.screens.review.ReviewScreen
+import app.simt.echo.ui.screens.review.ReviewViewModel
 import app.simt.echo.ui.screens.share.ShareScreen
 
 /**
@@ -37,6 +41,7 @@ fun EchoNavHost(
         composable<EchoRoute.Home> {
             HomeScreen(
                 draftIds = graph.draftRepository.listDraftIds(),
+                savedRoutes = graph.routeRepository.list(),
                 onOpen = navController::navigateTo,
             )
         }
@@ -48,9 +53,19 @@ fun EchoNavHost(
         }
         composable<EchoRoute.Review> { entry ->
             val route = entry.toRoute<EchoRoute.Review>()
+            val viewModel = remember(route.draftId) {
+                ReviewViewModel(
+                    draftId = route.draftId,
+                    drafts = graph.draftRepository,
+                    routes = graph.routeRepository,
+                    media = graph.mediaTools,
+                    nowMs = ::currentEpochMs,
+                    newId = { "lm-${Random.nextLong()}" },
+                )
+            }
             ReviewScreen(
-                draftId = route.draftId,
-                drafts = graph.draftRepository,
+                viewModel = viewModel,
+                onSaved = { navController.navigateTo(EchoRoute.RouteDetail(it)) },
                 onBack = { navController.popBackStack() },
             )
         }
@@ -63,10 +78,12 @@ fun EchoNavHost(
         }
         composable<EchoRoute.RouteDetail> { entry ->
             val route = entry.toRoute<EchoRoute.RouteDetail>()
-            val vm = remember(route.routeId) {
-                PlaceholderViewModel("Route ${route.routeId}", "Detail lands in W2-01.")
-            }
-            PlaceholderScreen(vm, "Share", { navController.navigateTo(EchoRoute.Share(route.routeId)) })
+            RouteDetailScreen(
+                routeId = route.routeId,
+                routes = graph.routeRepository,
+                onShare = { navController.navigateTo(EchoRoute.Share(it)) },
+                onBack = { navController.popBackStack() },
+            )
         }
         composable<EchoRoute.Share> { entry ->
             val route = entry.toRoute<EchoRoute.Share>()
