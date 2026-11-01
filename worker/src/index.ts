@@ -92,6 +92,10 @@ app.get("/v1/health", (c) => {
 
 app.notFound((c) => c.json({ ok: false, error: "not_found" }, 404));
 
+// The Workflow class must be exported from the worker entry or the
+// `echo-pipeline` binding in wrangler.jsonc cannot resolve on deploy.
+export { EchoPipeline } from "./pipeline";
+
 export default {
   fetch: app.fetch,
 };
