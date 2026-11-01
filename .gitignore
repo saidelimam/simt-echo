@@ -45,3 +45,6 @@ dist/
 # it carries whoever is committing into the tree, and a repository has more than
 # one of those.
 git.config
+
+# Local secrets (review 0003: live-check key must never be committed)
+.env
