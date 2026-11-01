@@ -3,6 +3,7 @@ package app.simt.echo.capture
 import app.simt.echo.data.DraftRepository
 import app.simt.echo.model.CaptureLog
 import app.simt.echo.model.CaptureSample
+import app.simt.echo.model.EchoConfig
 import app.simt.echo.model.Mark
 import app.simt.echo.platform.CameraRecorder
 import app.simt.echo.platform.HapticPattern
@@ -40,7 +41,8 @@ data class CaptureHud(
  * One recording session (plan W1-03). Joins [MotionSource] and
  * [CameraRecorder] on the shared monotonic clock, stores every step plus
  * a 500 ms heartbeat as [CaptureSample]s, autosaves the in-progress
- * [CaptureLog] every 10 s, and writes the final log on [finish].
+ * [CaptureLog] every 10 s, and writes the final log plus the segmented
+ * draft route on [save] (plan W1-04).
  *
  * Pure orchestration: clocks and ids are injected, so host tests drive
  * the whole lifecycle with fakes and a [DraftRepository] on FakeFileSystem.
@@ -54,6 +56,7 @@ class CaptureSession(
     private val nowMs: () -> Long,
     private val newDraftId: () -> String,
     private val autosaveEveryMs: Long = 10_000L,
+    private val config: EchoConfig = EchoConfig(),
 ) {
     private val _state = MutableStateFlow(CaptureState.IDLE)
     val state: StateFlow<CaptureState> = _state.asStateFlow()
@@ -124,11 +127,16 @@ class CaptureSession(
         camera.stopVideo()
     }
 
-    /** Finish-sheet Save: writes the final `capture.json` and ends the session. */
+    /**
+     * Finish-sheet Save: writes the final `capture.json`, then segments the
+     * log into a draft `route.draft.json` (W1-04) and ends the session.
+     */
     suspend fun save(routeName: String, destinationLabel: String): CaptureLog {
         check(_state.value == CaptureState.FINISHING) { "save() from ${_state.value}" }
         val log = buildLog(routeName = routeName, destinationLabel = destinationLabel)
         drafts.saveCapture(log)
+        // Draft routes are keyed by draftId until Save assigns permanence.
+        drafts.saveDraftRoute(segment(log, config, log.draftId, nowMs()))
         _state.value = CaptureState.SAVED
         return log
     }
