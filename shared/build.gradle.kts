@@ -107,5 +107,14 @@ kotlin {
             // MockEngine for the cloud API client tests (W3-02).
             implementation(libs.ktor.client.mock)
         }
+        sourceSets.named("androidHostTest") {
+            dependencies {
+                // Headless UI gate (W6-03/W7-02): Robolectric + Compose test
+                // rule. androidMain's own deps (activity-compose, lifecycle,
+                // core) are already on this compilation's classpath.
+                implementation(libs.robolectric)
+                implementation(libs.compose.ui.test.junit4)
+            }
+        }
     }
 }
