@@ -56,6 +56,8 @@ kotlin {
             implementation(libs.androidx.navigation.compose)
             implementation(libs.androidx.lifecycle.runtime.compose)
             implementation(libs.androidx.lifecycle.viewmodel.compose)
+            // W2-02 BundleCodec: SHA-256 + AES-GCM (provider actual below).
+            implementation(libs.cryptography.core)
         }
         androidMain.dependencies {
             implementation(libs.androidx.activity.compose)
@@ -66,6 +68,10 @@ kotlin {
             implementation(libs.camerax.lifecycle)
             implementation(libs.camerax.video)
             implementation(libs.camerax.compose)
+            implementation(libs.cryptography.provider.optimal)
+        }
+        iosMain.dependencies {
+            implementation(libs.cryptography.provider.optimal)
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
