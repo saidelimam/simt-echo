@@ -9,9 +9,9 @@ import app.simt.echo.platform.Haptics
 import app.simt.echo.transfer.ExpiryOption
 import app.simt.echo.transfer.ExportItem
 import app.simt.echo.transfer.ExportSelection
+import app.simt.echo.transfer.ExportSummary
 import app.simt.echo.transfer.START_PHOTO_ITEM_ID
 import app.simt.echo.transfer.TransferService
-import app.simt.echo.transfer.defaultSelection
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -33,6 +33,8 @@ data class ShareUiState(
     val exportItems: List<ExportItem> = emptyList(),
     /** Current preview-sheet choice; the offer always encodes this. */
     val selection: ExportSelection = ExportSelection(),
+    /** Honest summary of everything the bundle carries. */
+    val summary: ExportSummary? = null,
 )
 
 /** Plan copy for the W2-07 plain-file export warning. */
@@ -55,7 +57,8 @@ class ShareViewModel(
         viewModelScope.launch {
             try {
                 val items = service.describeExport(routeId)
-                val selection = defaultSelection(items)
+                val selection = service.defaultSelectionFor(routeId)
+                val summary = service.summaryFor(routeId, selection)
                 val offer = service.offer(routeId, selection = selection)
                 _ui.update {
                     it.copy(
@@ -63,6 +66,7 @@ class ShareViewModel(
                         relayAvailable = service.relayAvailable,
                         exportItems = items,
                         selection = selection,
+                        summary = summary,
                     )
                 }
                 service.served.collect {
@@ -103,7 +107,11 @@ class ShareViewModel(
     }
 
     private fun reoffer(selection: ExportSelection) {
-        _ui.update { it.copy(selection = selection, error = null) }
+        // Clear the stale (superset) QR + sent state before re-offering.
+        val summary = runCatching { service.summaryFor(routeId, selection) }.getOrNull()
+        _ui.update {
+            it.copy(selection = selection, summary = summary, qrUri = null, sent = false, error = null)
+        }
         viewModelScope.launch {
             try {
                 val relayed = _ui.value.relayOffered
@@ -122,6 +130,7 @@ class ShareViewModel(
      */
     fun useInternetRelay() {
         if (_ui.value.relayOffered) return
+        _ui.update { it.copy(qrUri = null, sent = false, error = null) }
         viewModelScope.launch {
             try {
                 val offer = service.offer(routeId, useRelay = true, selection = _ui.value.selection)

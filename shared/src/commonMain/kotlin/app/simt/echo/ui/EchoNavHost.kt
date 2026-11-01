@@ -124,6 +124,7 @@ fun EchoNavHost(
                 onDeleted = { navController.popBackStack() },
                 api = graph.apiClient,
                 savedJobId = route.savedJobId,
+                transferService = graph.transferService,
             )
         }
         composable<EchoRoute.Share> { entry ->

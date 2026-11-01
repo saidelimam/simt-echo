@@ -3,6 +3,7 @@ package app.simt.echo.transfer
 import app.simt.echo.Fixtures
 import app.simt.echo.data.FileStore
 import app.simt.echo.data.RouteRepository
+import app.simt.echo.model.AiProvenance
 import app.simt.echo.model.Confirmation
 import app.simt.echo.model.Landmark
 import app.simt.echo.model.LandmarkSource
@@ -14,6 +15,7 @@ import okio.Path.Companion.toPath
 import okio.fakefilesystem.FakeFileSystem
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -155,6 +157,114 @@ class ExportSelectionTest {
         // The persisted import matches: nothing risky on disk on B.
         assertNull(phoneB.readAsset(route.routeId, "kf/risky.jpg"))
         assertNotNull(phoneB.readAsset(route.routeId, "kf/safe.jpg"))
+    }
+
+    @Test
+    fun summaryCoversEverythingMaterial() {
+        val route = riskyRoute().copy(
+            ai = AiProvenance("job-42", "scout-v1", "ground-v2", 1_762_000_000_500L),
+            privacy = PrivacyInfo(expiresAtEpochMs = 1_762_999_999_999L),
+            landmarks = riskyRoute().landmarks.map {
+                if (it.id == "lm-safe") it.copy(signText = "Exit") else it
+            },
+        )
+        val selection = ExportSelection(excludedCropIds = setOf("kf/safe.jpg"), expiry = ExpiryOption.KEEP_STORED)
+        val summary = exportSummary(route, selection, nowMs = 1_762_000_000_000L)
+        assertEquals(route.name, summary.routeName)
+        assertEquals(route.creatorLabel, summary.creatorLabel)
+        assertEquals(route.createdAtEpochMs, summary.createdAtEpochMs)
+        assertEquals(route.nodes.size, summary.nodeCount)
+        assertEquals(route.path.size, summary.pathPointCount)
+        assertEquals(route.totalLengthM, summary.totalLengthM)
+        assertEquals(route.start.description, summary.startDescription)
+        assertTrue(summary.hasAlignmentHint)
+        assertTrue(summary.hasStartPhoto)
+        assertEquals(2, summary.landmarks.size)
+        val safe = summary.landmarks.single { it.id == "lm-safe" }
+        assertEquals("Red pillar", safe.title)
+        assertEquals("Turn", safe.cue)
+        assertEquals("Exit", safe.signText)
+        assertTrue(safe.hasCrop)
+        assertFalse(safe.cropIncluded)
+        val risky = summary.landmarks.single { it.id == "lm-risky" }
+        assertTrue(risky.privacyRisk)
+        assertEquals("job-42", summary.ai?.jobId)
+        assertEquals("scout-v1", summary.ai?.scoutModel)
+        assertEquals("ground-v2", summary.ai?.groundModel)
+        assertEquals(1_762_999_999_999L, summary.expiresAtEpochMs)
+    }
+
+    @Test
+    fun applySelectionDropsAiSuggestedLandmarksEntirely() {
+        val route = riskyRoute().copy(
+            landmarks = riskyRoute().landmarks + Landmark(
+                id = "lm-ai",
+                nodeId = "n1",
+                title = "Unreviewed",
+                description = "",
+                cue = "Turn",
+                signText = "Secret sign",
+                cropAssetId = "kf/ai.jpg",
+                source = LandmarkSource.AI_GROUNDED,
+                confirmation = Confirmation.AI_SUGGESTED,
+            ),
+        )
+        val filtered = applySelection(route, ExportSelection(), nowMs = 0L)
+        assertTrue(filtered.landmarks.none { it.id == "lm-ai" })
+        assertTrue(filtered.nodes.all { "lm-ai" !in it.landmarkIds })
+        // Summary must not list it either.
+        assertTrue(exportSummary(route, ExportSelection(), 0L).landmarks.none { it.id == "lm-ai" })
+    }
+
+    @Test
+    fun reExportPreservesStoredExpiryByDefault() {
+        val route = riskyRoute().copy(privacy = PrivacyInfo(expiresAtEpochMs = 9_999_999_999_999L))
+        val selection = defaultSelection(route)
+        assertEquals(ExpiryOption.KEEP_STORED, selection.expiry)
+        val filtered = applySelection(route, selection, nowMs = 1_000L)
+        assertEquals(9_999_999_999_999L, filtered.privacy.expiresAtEpochMs)
+    }
+
+    @Test
+    fun expiredRouteCannotBeOfferedOrExported() = runTest {
+        val store = FileStore(FakeFileSystem(), "/data".toPath())
+        val routes = RouteRepository(store)
+        val expired = Fixtures.L_ROUTE.copy(privacy = PrivacyInfo(expiresAtEpochMs = 1_000L))
+        routes.save(expired)
+        val transport = object : PeerTransport {
+            override suspend fun offer(payload: ByteArray, token: String): Endpoint = Endpoint("192.168.1.20", 51234)
+            override suspend fun fetch(endpoint: Endpoint, token: String): ByteArray = error("unused")
+            override fun stopOffer() = Unit
+        }
+        val service = TransferService(transport, routes, store, nowMs = { 2_000L })
+        assertFailsWith<RouteExpiredException> { service.offer(expired.routeId) }
+        assertFailsWith<RouteExpiredException> { service.exportFile(expired.routeId) }
+    }
+
+    @Test
+    fun deleteRemovesPlainExportsAndJobIdRecord() {
+        val store = FileStore(FakeFileSystem(), "/data".toPath())
+        val routes = RouteRepository(store)
+        routes.save(Fixtures.L_ROUTE)
+        store.writeBytes("exports/L_route_-fixture-l-route.echo", byteArrayOf(1))
+        store.writeBytes("exports/Other-other.echo", byteArrayOf(2))
+        val transport = object : PeerTransport {
+            override suspend fun offer(payload: ByteArray, token: String): Endpoint = Endpoint("h", 1)
+            override suspend fun fetch(endpoint: Endpoint, token: String): ByteArray = error("unused")
+            override fun stopOffer() = Unit
+        }
+        val service = TransferService(transport, routes, store, nowMs = { 0L })
+        service.deletePlainExportsFor(Fixtures.L_ROUTE.routeId)
+        assertNull(store.readBytes("exports/L_route_-fixture-l-route.echo"))
+        assertNotNull(store.readBytes("exports/Other-other.echo"))
+
+        routes.saveRouteJobId(Fixtures.L_ROUTE.routeId, "job-7")
+        assertEquals("job-7", routes.routeJobId(Fixtures.L_ROUTE.routeId))
+        routes.clearRouteJobId(Fixtures.L_ROUTE.routeId)
+        assertNull(routes.routeJobId(Fixtures.L_ROUTE.routeId))
+        routes.saveRouteJobId(Fixtures.L_ROUTE.routeId, "job-8")
+        routes.delete(Fixtures.L_ROUTE.routeId)
+        assertNull(routes.routeJobId(Fixtures.L_ROUTE.routeId))
     }
 
     @Test

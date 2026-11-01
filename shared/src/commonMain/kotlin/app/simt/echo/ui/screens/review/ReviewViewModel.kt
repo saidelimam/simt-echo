@@ -176,9 +176,18 @@ class ReviewViewModel(
         }
     }
 
-    fun editLandmark(landmarkId: String, title: String, cue: String) = mutate { route ->
+    fun editLandmark(
+        landmarkId: String,
+        title: String,
+        cue: String,
+        privacyRisk: Boolean? = null,
+    ) = mutate { route ->
         route.copy(landmarks = route.landmarks.map {
-            if (it.id == landmarkId) it.copy(title = title, cue = cue) else it
+            if (it.id == landmarkId) {
+                it.copy(title = title, cue = cue, privacyRisk = privacyRisk ?: it.privacyRisk)
+            } else {
+                it
+            }
         })
     }
 
@@ -219,11 +228,12 @@ class ReviewViewModel(
                         } else landmark
                     },
                 )
-                routes.save(export, assets)
-                // The draft (with its job record) is consumed here, so
-                // capture the server job first: its files may still need
-                // the W3-08 "delete uploaded media now" offer after save.
+                // Capture the server job before the draft is consumed:
+                // persist it per-route so RouteDetail can delete the
+                // uploaded media later, not only via the nav arg.
                 val jobId = drafts.loadJobRecord(draftId)?.jobId
+                routes.save(export, assets)
+                if (jobId != null) routes.saveRouteJobId(export.routeId, jobId)
                 drafts.delete(draftId)
                 _ui.update { it.copy(saving = false, savedRouteId = export.routeId, savedJobId = jobId) }
                 onSaved(export.routeId)

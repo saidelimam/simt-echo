@@ -263,6 +263,50 @@ class ShareViewModelTest {
     }
 
     @Test
+    fun toggleClearsStaleQrAndSentBeforeReoffer() = runTest(dispatcher) {
+        val (service, transport) = serviceWithRoute()
+        val vm = ShareViewModel(Fixtures.L_ROUTE.routeId, service, FakeHaptics(), FakeFileSharing())
+        advanceUntilIdle()
+        transport.downloads.emit(Unit)
+        advanceUntilIdle()
+        assertTrue(vm.ui.value.sent)
+        assertNotNull(vm.ui.value.qrUri)
+
+        vm.toggleAsset("start", false)
+        // Synchronously cleared: no stale superset QR stays live.
+        assertNull(vm.ui.value.qrUri)
+        assertFalse(vm.ui.value.sent)
+
+        advanceUntilIdle()
+        assertNotNull(vm.ui.value.qrUri)
+        assertFalse(vm.ui.value.sent)
+    }
+
+    @Test
+    fun expiredRouteSurfacesErrorAndNoQr() = runTest(dispatcher) {
+        val fileSystem = FakeFileSystem()
+        val store = FileStore(fileSystem, "/data".toPath())
+        val routes = RouteRepository(store)
+        routes.save(
+            Fixtures.L_ROUTE.copy(
+                privacy = app.simt.echo.model.PrivacyInfo(expiresAtEpochMs = 1_000L),
+            ),
+        )
+        val service = TransferService(
+            transport = FakeTransport(MutableSharedFlow()),
+            routes = routes,
+            store = store,
+            randomBytes = { size -> ByteArray(size) { (it + 1).toByte() } },
+            nowMs = { 2_000L },
+        )
+        val vm = ShareViewModel(Fixtures.L_ROUTE.routeId, service, FakeHaptics(), FakeFileSharing())
+        advanceUntilIdle()
+        assertNull(vm.ui.value.qrUri)
+        assertNotNull(vm.ui.value.error)
+        assertTrue(vm.ui.value.error!!.contains("expired", ignoreCase = true))
+    }
+
+    @Test
     fun fileShareSheetFailureShowsError() = runTest(dispatcher) {
         val (service, _, store) = serviceWithRoute()
         val sharing = FakeFileSharing().apply { shareFails = true }

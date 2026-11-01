@@ -19,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.transfer.CloudApi
+import app.simt.echo.transfer.TransferService
 import app.simt.echo.ui.components.EchoButton
 import app.simt.echo.ui.components.PillButton
 import kotlinx.coroutines.launch
@@ -42,8 +43,14 @@ fun RouteDetailScreen(
     api: CloudApi? = null,
     /** Server job from the just-completed Review save, if any. */
     savedJobId: String? = null,
+    /** Plaintext-export cleanup on delete; null in previews/tests. */
+    transferService: TransferService? = null,
 ) {
     val route = remember(routeId) { routes.get(routeId) }
+    val persistedJobId = remember(routeId) { routes.routeJobId(routeId) }
+    var cloudJobId by remember(routeId, savedJobId, persistedJobId) {
+        mutableStateOf(savedJobId ?: persistedJobId)
+    }
     var confirmDelete by remember(routeId) { mutableStateOf(false) }
     var mediaDeleted by remember(routeId, savedJobId) { mutableStateOf(false) }
     var deleteError by remember(routeId) { mutableStateOf<String?>(null) }
@@ -79,17 +86,20 @@ fun RouteDetailScreen(
             onClick = { onShare(routeId) },
             modifier = Modifier.fillMaxWidth(),
         )
-        if (savedJobId != null && api != null && !mediaDeleted) {
+        val jobId = cloudJobId
+        if (jobId != null && api != null && !mediaDeleted) {
             PillButton(
                 text = "Delete uploaded media now",
                 onClick = {
                     scope.launch {
                         try {
-                            api.delete(savedJobId)
+                            api.delete(jobId)
                         } catch (e: Exception) {
                             deleteError = "Could not delete the uploaded files. Check the connection and try again."
                             return@launch
                         }
+                        routes.clearRouteJobId(routeId)
+                        cloudJobId = null
                         mediaDeleted = true
                     }
                 },
@@ -112,6 +122,7 @@ fun RouteDetailScreen(
             EchoButton(
                 text = "Confirm delete",
                 onClick = {
+                    transferService?.deletePlainExportsFor(routeId)
                     routes.delete(routeId)
                     onDeleted()
                 },

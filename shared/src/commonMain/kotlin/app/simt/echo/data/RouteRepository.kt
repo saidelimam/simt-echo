@@ -55,6 +55,21 @@ class RouteRepository(private val store: FileStore) {
         store.deleteRecursively("$ROUTES_DIR/$routeId")
     }
 
+    /** Persists the cloud job id for a saved route (post-save delete offer). */
+    fun saveRouteJobId(routeId: String, jobId: String) {
+        require(isSafeStorageId(routeId)) { "unsafe route id: $routeId" }
+        store.writeText("$ROUTES_DIR/$routeId/$JOB_ID_FILE", jobId)
+    }
+
+    /** The persisted cloud job id for [routeId], or null. */
+    fun routeJobId(routeId: String): String? =
+        store.readText("$ROUTES_DIR/$routeId/$JOB_ID_FILE")?.trim()?.takeIf { it.isNotEmpty() }
+
+    /** Clears the persisted cloud job id after a successful cloud delete. */
+    fun clearRouteJobId(routeId: String) {
+        store.deleteRecursively("$ROUTES_DIR/$routeId/$JOB_ID_FILE")
+    }
+
     /**
      * Deletes routes whose privacy expiry has passed.
      * @return how many routes were purged.
@@ -82,6 +97,7 @@ class RouteRepository(private val store: FileStore) {
         const val ROUTES_DIR = "routes"
         const val ROUTE_FILE = "route.json"
         const val ASSETS_DIR = "assets"
+        const val JOB_ID_FILE = "cloud-job.txt"
     }
 }
 

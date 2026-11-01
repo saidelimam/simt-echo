@@ -58,6 +58,7 @@ class TransferService(
     ): OfferInfo {
         val route = routes.get(routeId)
             ?: error("offer: no route $routeId")
+        checkNotExpired(route)
         val exportRoute = selection?.let { applySelection(route, it, nowMs()) } ?: route
         val assets = collectAssets(routeId, exportRoute)
         val container = BundleCodec.encode(exportRoute, assets)
@@ -153,6 +154,32 @@ class TransferService(
         return describeExport(route)
     }
 
+    /** Route-aware default selection (preserves stored expiry). */
+    fun defaultSelectionFor(routeId: String): ExportSelection {
+        val route = routes.get(routeId)
+            ?: error("defaultSelection: no route $routeId")
+        return defaultSelection(route)
+    }
+
+    /** Honest preview summary for the current [selection]. */
+    fun summaryFor(routeId: String, selection: ExportSelection): ExportSummary {
+        val route = routes.get(routeId)
+            ?: error("summary: no route $routeId")
+        return exportSummary(route, selection, nowMs())
+    }
+
+    private fun checkNotExpired(route: app.simt.echo.model.EchoRoute) {
+        val expiry = route.privacy.expiresAtEpochMs
+        if (expiry != null && expiry <= nowMs()) throw RouteExpiredException(expiry)
+    }
+
+    /** Deletes pending plaintext exports for one route only (`*-<routeId>.echo`). */
+    fun deletePlainExportsFor(routeId: String) {
+        store.list(EXPORTS_DIR)
+            .filter { it.name.endsWith("-$routeId.echo") }
+            .forEach { store.deleteRecursively("$EXPORTS_DIR/${it.name}") }
+    }
+
     /**
      * File-fallback export (W2-07): writes the **plain** container `C`
      * (unsealed — no key) to `exports/<name>.echo` under app storage and
@@ -163,6 +190,7 @@ class TransferService(
     suspend fun exportFile(routeId: String, selection: ExportSelection? = null): Path {
         val route = routes.get(routeId)
             ?: error("exportFile: no route $routeId")
+        checkNotExpired(route)
         val exportRoute = selection?.let { applySelection(route, it, nowMs()) } ?: route
         val assets = collectAssets(routeId, exportRoute)
         val container = BundleCodec.encode(exportRoute, assets)

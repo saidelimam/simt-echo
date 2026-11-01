@@ -30,6 +30,7 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -237,6 +238,30 @@ class ReviewViewModelTest {
     }
 
     @Test
+    fun editLandmarkPrivacyRiskFlagsAndDefaultsCropOff() = runTest(dispatcher) {
+        val h = harness()
+        val vm = h.vm()
+        advanceUntilIdle()
+        vm.openDraw("n1")
+        vm.editDrawTitle("Poster with face")
+        vm.confirmDraw("n1", CropBox(0.2f, 0.2f, 0.6f, 0.6f))
+        advanceUntilIdle()
+        val id = vm.ui.value.nodes[1].landmarks.single().id
+        assertFalse(vm.ui.value.nodes[1].landmarks.single().privacyRisk)
+
+        vm.editLandmark(id, "Poster with face", "Turn", privacyRisk = true)
+        advanceUntilIdle()
+        val flagged = vm.ui.value.nodes[1].landmarks.single()
+        assertTrue(flagged.privacyRisk)
+
+        // ExportSelection level: flagged crop defaults excluded.
+        val savedDraft = h.drafts.loadDraftRoute("draft-1")
+        assertNotNull(savedDraft)
+        val selection = app.simt.echo.transfer.defaultSelection(savedDraft)
+        assertTrue(flagged.cropAssetId in selection.excludedCropIds)
+    }
+
+    @Test
     fun saveExportsGeometryUntouchedAndDeletesDraft() = runTest(dispatcher) {
         val h = harness()
         val vm = h.vm()
@@ -286,6 +311,7 @@ class ReviewViewModelTest {
         // The draft (with its job record) is consumed; the route is saved.
         assertNull(h.drafts.loadJobRecord("draft-1"))
         assertNotNull(h.routes.get("draft-1"))
+        assertEquals("job-1", h.routes.routeJobId("draft-1"))
     }
 
     @Test
