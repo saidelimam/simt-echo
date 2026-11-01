@@ -197,7 +197,7 @@ slices. A slice is `done` only with its evidence recorded, per Plan §0.
 | W1-05 | Queued | `MediaTools`: keyframes + crop | L (F) | B | W1-02 | — |
 | W2-01 | Queued | Review screen + manual landmark editor + Save | F (S) | E | W1-04, W1-05 | — |
 | W2-02 | Complete | `BundleCodec`: `ECHO` container, SHA-256, AES-256-GCM `ECX1` | S | C | W0-04 | 3bfbbf09dd79db1b71f6c5d212ec9a30b16cc0d1 · test: :shared:testAndroidHostTest (BundleCodecTest 10/10, suite 53/53), :androidApp:assembleDebug, :shared:compileKotlinIosArm64, :shared:compileKotlinIosSimulatorArm64 — BUILD SUCCESSFUL; catalog cryptography pin corrected 0.8.0 → 0.6.0 (0.8.0 unpublished) |
-| W2-03 | Queued | `PeerTransport` over Connect offline transport + `QrPayload` codec | S | C | W2-02 | — |
+| W2-03 | Complete | `PeerTransport` LAN transport (`KtorLanTransport`) + `QrPayload` codec | S | C | W2-02 | 7c5b80482c2af04aea7c5dbb04876a602f64f2b3 · test: :shared:testAndroidHostTest (QrPayloadTest 7/7, TransferServiceTest 6/6, suite 66/66), :androidApp:assembleDebug, :shared:compileKotlinIosArm64, :shared:compileKotlinIosSimulatorArm64 — BUILD SUCCESSFUL |
 | W2-04 | Queued | Share + Receive QR screens (`QrCodeScanner` reuse) | F | E | W2-03 | — |
 | W2-05 | Queued | `Navigator` + `TurnDetector` + `ReplayMotionSource` + 7 scenario tests | S | C | W0-04 | — |
 | W2-06 | Queued | Align / Navigate / Arrived screens + haptics | F (S) | E | W2-05, W2-01 | — |
