@@ -267,7 +267,7 @@ private class Geo(private val samples: List<CaptureSample>) {
     fun legHeadingDeg(a: Double, b: Double, smooth: List<SamplePoint>, cfg: EchoConfig): Double {
         val lo = ((a + cfg.yawSmoothWindowM) / cfg.resampleStepM).toInt().coerceIn(0, smooth.size - 1)
         val hi = ((b - cfg.yawSmoothWindowM) / cfg.resampleStepM).toInt().coerceIn(lo, smooth.size - 1)
-        return Math.toDegrees(circularMean(smooth.subList(lo, hi + 1).map { it.yaw }))
+        return circularMean(smooth.subList(lo, hi + 1).map { it.yaw }) * 180.0 / kotlin.math.PI
     }
 
     /**
@@ -319,10 +319,10 @@ private fun detectTurns(smooth: List<SamplePoint>, cfg: EchoConfig): List<Turn> 
 
     val openDist = (cfg.turnOpenDistanceM / cfg.resampleStepM).roundToInt()
     val legWin = (cfg.legHeadingWindowM / cfg.resampleStepM).roundToInt()
-    val openThresh = Math.toRadians(cfg.turnOpenDeviationDeg)
-    val closeThresh = Math.toRadians(cfg.turnCloseChangeDeg)
-    val minAngle = Math.toRadians(cfg.turnMinAngleDeg)
-    val uTurnAngle = Math.toRadians(cfg.uTurnAngleDeg)
+    val openThresh = cfg.turnOpenDeviationDeg * kotlin.math.PI / 180.0
+    val closeThresh = cfg.turnCloseChangeDeg * kotlin.math.PI / 180.0
+    val minAngle = cfg.turnMinAngleDeg * kotlin.math.PI / 180.0
+    val uTurnAngle = cfg.uTurnAngleDeg * kotlin.math.PI / 180.0
 
     var i = legWin
     while (i < smooth.size) {
