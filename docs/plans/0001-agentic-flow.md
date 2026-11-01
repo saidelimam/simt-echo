@@ -215,7 +215,7 @@ slices. A slice is `done` only with its evidence recorded, per Plan §0.
 | W4-02 | Queued | Calibration: step-K + `EchoConfig` | F (S) | F | W2-06 | — |
 | W4-03 | Queued | Robustness: permissions, process-death recovery | F | F | W2-06 | — |
 | W4-04 | Queued | UX polish, accessibility, app icon | L (F) | E | W3-07 | — |
-| W4-05 | Queued | Relay fallback: zero-knowledge R2 relay (P1) | S | D | W2-04, W0-05 | — |
+| W4-05 | Complete | Relay fallback: zero-knowledge R2 relay (P1) | S | D | W2-04, W0-05 | 656fbedd1dbb28da4e32037d4bbe8e42176dcadd, merged 14e0080 · test: worker npm run typecheck clean, npm test 14/14 (relay.test.ts 7: code alphabet/collision, ciphertext-verbatim store, expiry delete, 400/413/401), wrangler deploy --dry-run binds MEDIA; :shared:testAndroidHostTest --tests app.simt.echo.transfer.TransferServiceTest (13/13) --tests app.simt.echo.ui.screens.share.ShareViewModelTest (4/4), host suite 162/162, :shared:compileKotlinIosArm64, :shared:compileKotlinIosSimulatorArm64, :androidApp:assembleDebug — BUILD SUCCESSFUL, merged-main gate re-run green · RelayClient injected-nullable (chosen design): AppGraph leaves relay unconfigured until W3-02 supplies Worker URL/token, so Share hides the relay action by default; live two-phone relay transfer device-unverified |
 | W4-06 | Queued | README, limitations, demo script, release APK | S | F | wave P0 | — |
 | W5-01 | Queued | Local-model provider (P2) | S | D | W3-07 | — |
 | W5-02 | Queued | Camera overlay: copied projection/HUD components (P2) | F (S) | E | W2-06 | — |
