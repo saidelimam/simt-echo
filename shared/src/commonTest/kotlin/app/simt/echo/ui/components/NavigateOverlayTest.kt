@@ -36,4 +36,26 @@ class NavigateOverlayTest {
         assertFalse(shouldShowLandmarkCrop(byteArrayOf()))
         assertTrue(shouldShowLandmarkCrop(byteArrayOf(1, 2, 3)))
     }
+
+    @Test
+    fun maskPointsMapFromFrameSpaceIntoCropSpace() {
+        // Real live-check geometry: mask raster 120x799 over a 720x1280
+        // frame, SAM box [300,300,420,1100] within it.
+        val box = listOf(300, 300, 420, 1100)
+        // The mask point at the box's top-left corner maps to (0,0).
+        val corner = maskPointInCrop(50f, 300f / 1280f * 799f, 120, 799, box, 720, 1280)
+        assertTrue(kotlin.math.abs(corner!!.first - 0f) < 0.01f)
+        assertTrue(kotlin.math.abs(corner.second - 0f) < 0.01f)
+        // The box centre maps to (0.5, 0.5).
+        val centre = maskPointInCrop(60f, 700f / 1280f * 799f, 120, 799, box, 720, 1280)
+        assertTrue(kotlin.math.abs(centre!!.first - 0.5f) < 0.01f)
+        assertTrue(kotlin.math.abs(centre.second - 0.5f) < 0.01f)
+    }
+
+    @Test
+    fun maskPointDegenerateGeometryIsNull() {
+        assertTrue(maskPointInCrop(1f, 1f, 0, 10, listOf(0, 0, 5, 5), 100, 100) == null)
+        assertTrue(maskPointInCrop(1f, 1f, 10, 10, listOf(0, 0, 0, 5), 100, 100) == null)
+        assertTrue(maskPointInCrop(1f, 1f, 10, 10, listOf(0, 0), 100, 100) == null)
+    }
 }
