@@ -20,22 +20,26 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
+import app.simt.echo.platform.FileSharing
 import app.simt.echo.platform.QrScannerView
 import app.simt.echo.transfer.TransferService
 import app.simt.echo.ui.components.EchoButton
+import app.simt.echo.ui.components.PillButton
 
 /**
  * Receive screen (plan §8.3 / W2-04): scanner with a rounded cutout, fetch
  * spinner, import sheet (name, length, landmarks, creator, expiry) as an
  * inline panel — no dialog windows — then Save and a Received badge.
+ * "Import file" (W2-07) feeds a picked plain `.echo` into the same sheet.
  */
 @Composable
 fun ReceiveScreen(
     service: TransferService,
+    sharing: FileSharing,
     onImported: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val viewModel = remember(service) { ReceiveViewModel(service) }
+    val viewModel = remember(service, sharing) { ReceiveViewModel(service, sharing) }
     val ui by viewModel.ui.collectAsState()
 
     Column(
@@ -83,6 +87,11 @@ fun ReceiveScreen(
                     Text(
                         text = "Scan the QR on the other phone",
                         style = MaterialTheme.typography.bodyLarge,
+                    )
+                    PillButton(
+                        text = "Import file",
+                        onClick = viewModel::importFile,
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
                 if (ui.fetching) {

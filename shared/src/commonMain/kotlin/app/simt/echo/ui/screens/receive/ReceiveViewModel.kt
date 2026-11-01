@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.simt.echo.model.BundleBody
 import app.simt.echo.model.NodeType
+import app.simt.echo.platform.FileSharing
 import app.simt.echo.transfer.TransferService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -35,6 +36,7 @@ const val UNREACHABLE_COPY = "Can't reach the other phone. Join its hotspot and 
 
 class ReceiveViewModel(
     private val service: TransferService,
+    private val sharing: FileSharing,
 ) : ViewModel() {
 
     private val _ui = MutableStateFlow(ReceiveUiState())
@@ -68,6 +70,30 @@ class ReceiveViewModel(
                 onSaved(body.route.routeId)
             } catch (e: Exception) {
                 _ui.update { it.copy(error = e.message ?: "Could not save the route") }
+            }
+        }
+    }
+
+    /**
+     * File fallback (W2-07): opens the document picker, decodes the plain
+     * container and reuses the import sheet. Nothing leaves the device, so
+     * no privacy warning is needed on import.
+     */
+    fun importFile() {
+        if (handledUri != null || _ui.value.fetching || _ui.value.preview != null) return
+        _ui.update { it.copy(fetching = true, error = null) }
+        viewModelScope.launch {
+            try {
+                val bytes = sharing.pickDocument()
+                if (bytes == null) {
+                    _ui.update { it.copy(fetching = false) }
+                    return@launch
+                }
+                val body = service.importFile(bytes)
+                previewBody = body
+                _ui.update { it.copy(fetching = false, preview = summarize(body)) }
+            } catch (e: Exception) {
+                _ui.update { it.copy(fetching = false, error = e.message ?: "Could not read the file") }
             }
         }
     }

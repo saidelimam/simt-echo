@@ -56,9 +56,17 @@ class TransferServiceTest {
         }
     }
 
-    private fun setup(): Triple<RouteRepository, FakeTransport, TransferService> {
+    private data class Setup(
+        val routes: RouteRepository,
+        val transport: FakeTransport,
+        val service: TransferService,
+        val store: FileStore,
+    )
+
+    private fun setup(): Setup {
         val fileSystem = FakeFileSystem()
-        val routes = RouteRepository(FileStore(fileSystem, "/data".toPath()))
+        val store = FileStore(fileSystem, "/data".toPath())
+        val routes = RouteRepository(store)
         // Seed a route with a start-photo asset on disk.
         val source = "/camera/start.jpg".toPath()
         fileSystem.createDirectories("/camera".toPath())
@@ -68,10 +76,11 @@ class TransferServiceTest {
         val service = TransferService(
             transport = transport,
             routes = routes,
+            store = store,
             randomBytes = { size -> ByteArray(size) { (it + 1).toByte() } },
             nowMs = { 1_762_000_000_000L },
         )
-        return Triple(routes, transport, service)
+        return Setup(routes, transport, service, store)
     }
 
     @Test
@@ -87,8 +96,9 @@ class TransferServiceTest {
         assertEquals(Fixtures.L_ROUTE.name, payload.name)
 
         // Receive into a *different* repository, like Phone B.
-        val phoneB = RouteRepository(FileStore(FakeFileSystem(), "/phoneB".toPath()))
-        val serviceB = TransferService(transport, phoneB, nowMs = { 1_762_000_000_000L })
+        val storeB = FileStore(FakeFileSystem(), "/phoneB".toPath())
+        val phoneB = RouteRepository(storeB)
+        val serviceB = TransferService(transport, phoneB, storeB, nowMs = { 1_762_000_000_000L })
         val received = serviceB.receive(offer.qrUri)
 
         assertEquals(Fixtures.L_ROUTE, received.route)
@@ -129,8 +139,9 @@ class TransferServiceTest {
         val (_, transport, service) = setup()
         val offer = service.offer(Fixtures.L_ROUTE.routeId)
 
-        val phoneB = RouteRepository(FileStore(FakeFileSystem(), "/phoneB".toPath()))
-        val serviceB = TransferService(transport, phoneB, nowMs = { 1_762_000_000_000L })
+        val storeB = FileStore(FakeFileSystem(), "/phoneB".toPath())
+        val phoneB = RouteRepository(storeB)
+        val serviceB = TransferService(transport, phoneB, storeB, nowMs = { 1_762_000_000_000L })
         val body = serviceB.fetchPreview(offer.qrUri)
 
         assertEquals(Fixtures.L_ROUTE, body.route)
@@ -142,8 +153,9 @@ class TransferServiceTest {
         val (_, transport, service) = setup()
         val offer = service.offer(Fixtures.L_ROUTE.routeId)
 
-        val phoneB = RouteRepository(FileStore(FakeFileSystem(), "/phoneB".toPath()))
-        val serviceB = TransferService(transport, phoneB, nowMs = { 1_762_000_000_000L })
+        val storeB = FileStore(FakeFileSystem(), "/phoneB".toPath())
+        val phoneB = RouteRepository(storeB)
+        val serviceB = TransferService(transport, phoneB, storeB, nowMs = { 1_762_000_000_000L })
         val body = serviceB.fetchPreview(offer.qrUri)
         serviceB.saveImported(body)
 
@@ -159,14 +171,15 @@ class TransferServiceTest {
         val seeded = setup()
         val relay = FakeRelay()
         val withRelay = TransferService(
-            transport = seeded.second,
-            routes = seeded.first,
+            transport = seeded.transport,
+            routes = seeded.routes,
+            store = seeded.store,
             randomBytes = { size -> ByteArray(size) { (it + 1).toByte() } },
             nowMs = { 1_762_000_000_000L },
             relay = relay,
         )
         assertTrue(withRelay.relayAvailable)
-        assertTrue(!seeded.third.relayAvailable)
+        assertTrue(!seeded.service.relayAvailable)
 
         val offer = withRelay.offer(Fixtures.L_ROUTE.routeId, useRelay = true)
         val payload = QrPayload.parse(offer.qrUri).getOrThrow()
@@ -174,7 +187,7 @@ class TransferServiceTest {
 
         // The relay only ever holds the sealed bytes (ECX1 ciphertext).
         val uploaded = relay.store.getValue("ABC234")
-        assertTrue(uploaded.contentEquals(seeded.second.servedPayload))
+        assertTrue(uploaded.contentEquals(seeded.transport.servedPayload))
         assertEquals("ECX1", uploaded.decodeToString(0, 4))
     }
 
@@ -191,8 +204,9 @@ class TransferServiceTest {
         val relay = FakeRelay()
         val seeded = setup()
         val senderWithRelay = TransferService(
-            transport = seeded.second,
-            routes = seeded.first,
+            transport = seeded.transport,
+            routes = seeded.routes,
+            store = seeded.store,
             randomBytes = { size -> ByteArray(size) { (it + 1).toByte() } },
             nowMs = { 1_762_000_000_000L },
             relay = relay,
@@ -201,10 +215,12 @@ class TransferServiceTest {
 
         // Phone B: LAN is blocked, relay is configured with the same store.
         val deadLan = FakeTransport().apply { failFetch = true }
-        val phoneB = RouteRepository(FileStore(FakeFileSystem(), "/phoneB".toPath()))
+        val storeB = FileStore(FakeFileSystem(), "/phoneB".toPath())
+        val phoneB = RouteRepository(storeB)
         val serviceB = TransferService(
             transport = deadLan,
             routes = phoneB,
+            store = storeB,
             nowMs = { 1_762_000_000_000L },
             relay = relay,
         )
@@ -220,10 +236,12 @@ class TransferServiceTest {
         assertNull(QrPayload.parse(offer.qrUri).getOrThrow().relayCode)
 
         val deadLan = FakeTransport().apply { failFetch = true }
-        val phoneB = RouteRepository(FileStore(FakeFileSystem(), "/phoneB".toPath()))
+        val storeB = FileStore(FakeFileSystem(), "/phoneB".toPath())
+        val phoneB = RouteRepository(storeB)
         val serviceB = TransferService(
             transport = deadLan,
             routes = phoneB,
+            store = storeB,
             nowMs = { 1_762_000_000_000L },
             relay = FakeRelay(),
         )

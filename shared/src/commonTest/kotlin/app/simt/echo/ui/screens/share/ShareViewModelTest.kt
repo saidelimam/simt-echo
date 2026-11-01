@@ -3,7 +3,9 @@ package app.simt.echo.ui.screens.share
 import app.simt.echo.Fixtures
 import app.simt.echo.data.FileStore
 import app.simt.echo.data.RouteRepository
+import app.simt.echo.platform.ECHO_MIME
 import app.simt.echo.platform.Endpoint
+import app.simt.echo.platform.FileSharing
 import app.simt.echo.platform.HapticPattern
 import app.simt.echo.platform.Haptics
 import app.simt.echo.platform.PeerTransport
@@ -18,12 +20,14 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import okio.Path
 import okio.Path.Companion.toPath
 import okio.fakefilesystem.FakeFileSystem
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -66,25 +70,43 @@ class ShareViewModelTest {
         override val served: Flow<Unit> get() = downloads
     }
 
-    private fun serviceWithRoute(): Pair<TransferService, FakeTransport> {
+    private class FakeFileSharing : FileSharing {
+        var sharedPath: Path? = null
+        var sharedName: String? = null
+        var sharedMime: String? = null
+        var shareFails = false
+
+        override suspend fun shareFile(path: Path, name: String, mime: String): Boolean {
+            sharedPath = path
+            sharedName = name
+            sharedMime = mime
+            return !shareFails
+        }
+
+        override suspend fun pickDocument(): ByteArray? = null
+    }
+
+    private fun serviceWithRoute(): Triple<TransferService, FakeTransport, FileStore> {
         val fileSystem = FakeFileSystem()
-        val routes = RouteRepository(FileStore(fileSystem, "/data".toPath()))
+        val store = FileStore(fileSystem, "/data".toPath())
+        val routes = RouteRepository(store)
         routes.save(Fixtures.L_ROUTE)
         val transport = FakeTransport(MutableSharedFlow())
         val service = TransferService(
             transport = transport,
             routes = routes,
+            store = store,
             randomBytes = { size -> ByteArray(size) { (it + 1).toByte() } },
             nowMs = { 1_762_000_000_000L },
         )
-        return service to transport
+        return Triple(service, transport, store)
     }
 
     @Test
     fun offerShowsQrThenSentOnDownload() = runTest(dispatcher) {
         val (service, _) = serviceWithRoute()
         val haptics = FakeHaptics()
-        val vm = ShareViewModel(Fixtures.L_ROUTE.routeId, service, haptics)
+        val vm = ShareViewModel(Fixtures.L_ROUTE.routeId, service, haptics, FakeFileSharing())
         advanceUntilIdle()
 
         val offered = vm.ui.value
@@ -96,7 +118,7 @@ class ShareViewModelTest {
     fun downloadMarksSentAndConfirms() = runTest(dispatcher) {
         val (service, transport) = serviceWithRoute()
         val haptics = FakeHaptics()
-        val vm = ShareViewModel(Fixtures.L_ROUTE.routeId, service, haptics)
+        val vm = ShareViewModel(Fixtures.L_ROUTE.routeId, service, haptics, FakeFileSharing())
         advanceUntilIdle()
 
         transport.downloads.emit(Unit)
@@ -110,7 +132,7 @@ class ShareViewModelTest {
     fun relayActionHiddenWithoutRelayAndAddsCodeWhenConfigured() = runTest(dispatcher) {
         // No relay configured: no relay state surfaces.
         val (plainService, _) = serviceWithRoute()
-        val plainVm = ShareViewModel(Fixtures.L_ROUTE.routeId, plainService, FakeHaptics())
+        val plainVm = ShareViewModel(Fixtures.L_ROUTE.routeId, plainService, FakeHaptics(), FakeFileSharing())
         advanceUntilIdle()
         assertTrue(!plainVm.ui.value.relayAvailable)
 
@@ -125,11 +147,12 @@ class ShareViewModelTest {
         val service = TransferService(
             transport = FakeTransport(MutableSharedFlow()),
             routes = routes,
+            store = FileStore(fileSystem, "/relay".toPath()),
             randomBytes = { size -> ByteArray(size) { (it + 1).toByte() } },
             nowMs = { 1_762_000_000_000L },
             relay = relay,
         )
-        val vm = ShareViewModel(Fixtures.L_ROUTE.routeId, service, FakeHaptics())
+        val vm = ShareViewModel(Fixtures.L_ROUTE.routeId, service, FakeHaptics(), FakeFileSharing())
         advanceUntilIdle()
         assertTrue(vm.ui.value.relayAvailable)
         assertNull(QrPayload.parse(vm.ui.value.qrUri ?: error("no QR yet")).getOrThrow().relayCode)
@@ -145,13 +168,80 @@ class ShareViewModelTest {
 
     @Test
     fun offerFailureShowsError() = runTest(dispatcher) {
-        val routes = RouteRepository(FileStore(FakeFileSystem(), "/empty".toPath()))
-        val service = TransferService(FakeTransport(MutableSharedFlow()), routes)
-        val vm = ShareViewModel("no-such-route", service, FakeHaptics())
+        val emptyStore = FileStore(FakeFileSystem(), "/empty".toPath())
+        val routes = RouteRepository(emptyStore)
+        val service = TransferService(
+            FakeTransport(MutableSharedFlow()),
+            routes,
+            store = emptyStore,
+        )
+        val vm = ShareViewModel("no-such-route", service, FakeHaptics(), FakeFileSharing())
         advanceUntilIdle()
 
         val ui = vm.ui.value
         assertNull(ui.qrUri)
         assertNotNull(ui.error)
+    }
+
+    @Test
+    fun fileExportWarnsBeforeWritingAndSharesAfterConfirm() = runTest(dispatcher) {
+        val (service, _, store) = serviceWithRoute()
+        val sharing = FakeFileSharing()
+        val vm = ShareViewModel(Fixtures.L_ROUTE.routeId, service, FakeHaptics(), sharing)
+        advanceUntilIdle()
+
+        // Requesting the share only raises the warning; no file exists yet.
+        vm.requestFileShare()
+        assertTrue(vm.ui.value.fileWarning)
+        assertNull(sharing.sharedPath)
+        assertNull(store.readBytes("exports/${service.echoFileName(Fixtures.L_ROUTE.name)}"))
+
+        // Confirming writes the plain container and opens the sheet with it.
+        vm.confirmFileShare()
+        advanceUntilIdle()
+
+        val expected = store.resolvePath("exports/${service.echoFileName(Fixtures.L_ROUTE.name)}")
+        assertNotNull(store.readBytes("exports/${service.echoFileName(Fixtures.L_ROUTE.name)}"))
+        assertEquals(expected, sharing.sharedPath)
+        assertEquals(ECHO_MIME, sharing.sharedMime)
+        val ui = vm.ui.value
+        assertFalse(ui.fileWarning)
+        assertTrue(ui.fileShared)
+    }
+
+    @Test
+    fun fileWarningDismissWritesNothing() = runTest(dispatcher) {
+        val (service, _, store) = serviceWithRoute()
+        val sharing = FakeFileSharing()
+        val vm = ShareViewModel(Fixtures.L_ROUTE.routeId, service, FakeHaptics(), sharing)
+        advanceUntilIdle()
+
+        vm.requestFileShare()
+        vm.dismissFileShare()
+
+        val ui = vm.ui.value
+        assertFalse(ui.fileWarning)
+        assertFalse(ui.fileShared)
+        assertNull(sharing.sharedPath)
+        assertNull(store.readBytes("exports/${service.echoFileName(Fixtures.L_ROUTE.name)}"))
+    }
+
+    @Test
+    fun fileShareSheetFailureShowsError() = runTest(dispatcher) {
+        val (service, _, store) = serviceWithRoute()
+        val sharing = FakeFileSharing().apply { shareFails = true }
+        val vm = ShareViewModel(Fixtures.L_ROUTE.routeId, service, FakeHaptics(), sharing)
+        advanceUntilIdle()
+
+        vm.requestFileShare()
+        vm.confirmFileShare()
+        advanceUntilIdle()
+
+        val ui = vm.ui.value
+        assertFalse(ui.fileWarning)
+        assertFalse(ui.fileShared)
+        assertNotNull(ui.error)
+        // The file was written before the sheet failed; the error is surfaced.
+        assertNotNull(store.readBytes("exports/${service.echoFileName(Fixtures.L_ROUTE.name)}"))
     }
 }

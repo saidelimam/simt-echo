@@ -65,6 +65,8 @@ kotlin {
         }
         androidMain.dependencies {
             implementation(libs.androidx.activity.compose)
+            // W2-07 FileSharing: FileProvider for the `.echo` share sheet.
+            implementation(libs.androidx.core)
             // W1-02 CameraRecorder (CameraX). ImageCapture ships inside
             // camera-core; preview uses camera-compose's CameraXViewfinder.
             implementation(libs.camerax.core)

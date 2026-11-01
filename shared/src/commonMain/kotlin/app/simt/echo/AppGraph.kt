@@ -42,6 +42,7 @@ class AppGraph(
         TransferService(
             transport = peerTransport,
             routes = routeRepository,
+            store = fileStore,
             nowMs = { currentEpochMs() },
         )
     }
