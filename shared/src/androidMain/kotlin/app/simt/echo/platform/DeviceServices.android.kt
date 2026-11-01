@@ -27,6 +27,8 @@ actual fun rememberCameraRecorder(): CameraRecorder {
 
 actual fun currentEpochMs(): Long = System.currentTimeMillis()
 
+actual fun createPeerTransport(): PeerTransport = KtorLanTransport()
+
 @Composable
 actual fun rememberHaptics(): Haptics {
     val context = LocalContext.current.applicationContext

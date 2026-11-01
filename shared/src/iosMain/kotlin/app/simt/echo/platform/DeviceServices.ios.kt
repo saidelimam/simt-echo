@@ -43,6 +43,16 @@ actual fun rememberCameraRecorder(): CameraRecorder = remember { StubCameraRecor
 actual fun currentEpochMs(): Long =
     platform.posix.time(null) * 1000L
 
+actual fun createPeerTransport(): PeerTransport = object : PeerTransport {
+    override suspend fun offer(payload: ByteArray, token: String): Endpoint =
+        error("LAN transport is Android-only in v1")
+
+    override suspend fun fetch(endpoint: Endpoint, token: String): ByteArray =
+        error("LAN transport is Android-only in v1")
+
+    override fun stopOffer() = Unit
+}
+
 @Composable
 actual fun rememberHaptics(): Haptics = remember {
     object : Haptics {

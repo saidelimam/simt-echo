@@ -69,6 +69,9 @@ kotlin {
             implementation(libs.camerax.video)
             implementation(libs.camerax.compose)
             implementation(libs.cryptography.provider.optimal)
+            // W2-03 KtorLanTransport: CIO server + OkHttp client engine.
+            implementation(libs.ktor.client.okhttp)
+            implementation(libs.ktor.server.cio)
         }
         iosMain.dependencies {
             implementation(libs.cryptography.provider.optimal)

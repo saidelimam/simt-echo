@@ -121,6 +121,17 @@ object BundleCodec {
         }
     }
 
+    /**
+     * First 8 bytes of SHA-256 over the body's JSON bytes, as lowercase
+     * hex — the `s` fingerprint carried in the QR URI (§5.4). Recomputed
+     * from the decoded body on receipt; [EchoJson] encoding is
+     * deterministic for a given body, so the fingerprint is stable.
+     */
+    suspend fun sha8Hex(body: BundleBody): String =
+        sha256(EchoJson.encodeToString(body).encodeToByteArray())
+            .copyOfRange(0, 8)
+            .joinToString("") { (it.toInt() and 0xFF).toString(16).padStart(2, '0') }
+
     private suspend fun sha256(bytes: ByteArray): ByteArray =
         CryptographyProvider.Default.get(SHA256).hasher().hash(bytes)
 

@@ -35,6 +35,18 @@ class RouteRepository(private val store: FileStore) {
         }
     }
 
+    /** Raw bytes of one saved asset, or null (received-bundle import). */
+    fun readAsset(routeId: String, assetId: String): ByteArray? =
+        store.readBytes(assetFile(routeId, assetId))
+
+    /** Saves [route] with asset bytes directly (received-bundle import). */
+    fun saveWithAssetBytes(route: EchoRoute, assetBytes: Map<String, ByteArray>) {
+        store.writeText(routeFile(route.routeId), EchoJson.encodeToString(route))
+        for ((assetId, bytes) in assetBytes) {
+            store.writeBytes(assetFile(route.routeId, assetId), bytes)
+        }
+    }
+
     fun delete(routeId: String) {
         store.deleteRecursively("$ROUTES_DIR/$routeId")
     }

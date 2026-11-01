@@ -19,3 +19,6 @@ expect fun rememberHaptics(): Haptics
 
 /** Wall-clock epoch milliseconds (capture logs store real time). */
 expect fun currentEpochMs(): Long
+
+/** The platform's LAN bundle transport (W2-03), selected once per graph. */
+expect fun createPeerTransport(): PeerTransport
