@@ -76,6 +76,8 @@ kotlin {
             implementation(libs.ktor.server.cio)
             // W2-04 Receive: ML Kit barcode scanner over a CameraX use case.
             implementation(libs.mlkit.barcode.scanning)
+            // W5-04 Wear haptic mirror (MessageClient + CapabilityClient).
+            implementation(libs.play.services.wearable)
         }
         iosMain.dependencies {
             implementation(libs.cryptography.provider.optimal)

@@ -32,7 +32,11 @@ actual fun createPeerTransport(): PeerTransport = KtorLanTransport()
 @Composable
 actual fun rememberHaptics(): Haptics {
     val context = LocalContext.current.applicationContext
-    return remember(context) { AndroidHaptics(context) }
+    return remember(context) {
+        val local = AndroidHaptics(context)
+        val sender = GmsWearHapticSender(context)
+        WearMirroringHaptics(local, sender::send)
+    }
 }
 
 /** Waveforms from plan §8: TICK short, CONFIRM double, WARN long. */
