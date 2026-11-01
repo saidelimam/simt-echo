@@ -4,6 +4,8 @@ import app.simt.echo.Fixtures
 import app.simt.echo.capture.ReplayMotionSource
 import app.simt.echo.data.FileStore
 import app.simt.echo.data.RouteRepository
+import app.simt.echo.data.TrialRepository
+import app.simt.echo.model.TrialMode
 import app.simt.echo.nav.NavPhase
 import app.simt.echo.nav.walkLog
 import app.simt.echo.platform.HapticPattern
@@ -131,6 +133,77 @@ class NavigateViewModelTest {
 
         assertEquals(NavPhase.UNCERTAIN, vm.ui.value?.phase)
         assertTrue(haptics.played.contains(HapticPattern.WARN))
+    }
+
+    /** Replay the two-turn walk to ARRIVED, tapping "I'm here" on the last leg. */
+    private fun kotlinx.coroutines.test.TestScope.driveToArrived(vm: NavigateViewModel): kotlinx.coroutines.Job {
+        val watcher = launch {
+            vm.ui.collect { ui ->
+                if (ui != null && ui.legIndex == 2 && ui.distanceToNextM <= 2.0 &&
+                    ui.phase != NavPhase.ARRIVED
+                ) {
+                    vm.imHere()
+                }
+            }
+        }
+        advanceUntilIdle()
+        watcher.cancel()
+        return watcher
+    }
+
+    @Test
+    fun arrivalWritesTrialWithSessionStats() = runTest(dispatcher) {
+        val store = FileStore(FakeFileSystem(), "/data".toPath())
+        val routes = RouteRepository(store)
+        routes.save(Fixtures.L_ROUTE)
+        val trials = TrialRepository(store)
+        val source = ReplayMotionSource(
+            walkLog(listOf(20.0 to 0.0, 15.0 to 90.0, 10.0 to 0.0)),
+            this,
+        )
+        val vm = NavigateViewModel(
+            Fixtures.L_ROUTE.routeId, routes, source, FakeHaptics(),
+            trials = trials, device = "pixel-8", nowMs = { 5_000L },
+        ) {}
+        runCurrent()
+        vm.start()
+        vm.align()
+        driveToArrived(vm)
+
+        assertEquals(NavPhase.ARRIVED, vm.ui.value?.phase)
+        val trial = trials.list().single()
+        assertEquals(Fixtures.L_ROUTE.routeId, trial.routeId)
+        assertEquals(TrialMode.ECHO, trial.mode)
+        assertEquals("pixel-8", trial.device)
+        assertTrue(trial.arrived)
+        assertTrue(trial.anchors >= 1, "turn anchors counted, got ${trial.anchors}")
+        assertEquals(0, trial.confirmations)
+        assertTrue(trial.distanceM > 0.0)
+    }
+
+    @Test
+    fun baselineRunIsSensorOnlyAndSeeLandmarkDoesNotCount() = runTest(dispatcher) {
+        val store = FileStore(FakeFileSystem(), "/data".toPath())
+        val routes = RouteRepository(store)
+        routes.save(Fixtures.L_ROUTE)
+        val trials = TrialRepository(store)
+        val source = ReplayMotionSource(
+            walkLog(listOf(20.0 to 0.0, 15.0 to 90.0, 10.0 to 0.0)),
+            this,
+        )
+        val vm = NavigateViewModel(
+            Fixtures.L_ROUTE.routeId, routes, source, FakeHaptics(),
+            trials = trials, device = "pixel-8", baselineMode = true, nowMs = { 5_000L },
+        ) {}
+        runCurrent()
+        vm.start()
+        vm.align()
+        vm.seeLandmark()
+        driveToArrived(vm)
+
+        val trial = trials.list().single()
+        assertEquals(TrialMode.SENSOR_ONLY, trial.mode)
+        assertEquals(0, trial.confirmations)
     }
 
     @Test

@@ -146,6 +146,9 @@ fun EchoNavHost(
                 onArrived = { navController.navigateTo(EchoRoute.Arrived(it)) },
                 onBack = { navController.popBackStack() },
                 config = graph.configRepository.get(),
+                trials = graph.trialRepository,
+                device = graph.platform.name,
+                baselineMode = graph.configRepository.get().baselineMode,
             )
         }
         composable<EchoRoute.Arrived> { entry ->
@@ -154,6 +157,7 @@ fun EchoNavHost(
                 routeId = route.routeId,
                 routes = graph.routeRepository,
                 onDone = { navController.popBackStack(EchoRoute.Home, false) },
+                trials = graph.trialRepository,
             )
         }
         composable<EchoRoute.Settings> {
