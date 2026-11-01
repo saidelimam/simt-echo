@@ -99,6 +99,19 @@ data class Landmark(
     val source: LandmarkSource,
     val models: String? = null,
     val confirmation: Confirmation,
+    // Accepted-candidate geometry (plan amendment, review 0004 R3):
+    // optional with null defaults, so bundles written before these
+    // fields decode unchanged. They let Navigate render the SAM mask
+    // over the crop (W5-02); without them the card shows the crop only.
+    /** Candidate box in [frameW]×[frameH] frame pixels, when AI-sourced. */
+    val box: List<Int>? = null,
+    val frameW: Int? = null,
+    val frameH: Int? = null,
+    val maskSvgPath: String? = null,
+    val maskW: Int? = null,
+    val maskH: Int? = null,
+    /** Keyframe the candidate was grounded on, when known. */
+    val keyframeId: String? = null,
 )
 
 @Serializable

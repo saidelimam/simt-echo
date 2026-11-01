@@ -11,9 +11,12 @@ import kotlin.math.roundToInt
 /**
  * One worker candidate (frozen `result.json` shape, plan §5.5). Parsed with
  * [EchoJson] (`ignoreUnknownKeys`), so the worker may add fields without
- * breaking Review. [box] is the 0–1000 grid of a [frameW]×[frameH] frame;
- * [source] stays a raw string so an unknown future source degrades to
- * box-only instead of failing the whole parse.
+ * breaking Review. [box] is in pixels of the [frameW]×[frameH] frame the
+ * worker grounded against (for box-only candidates that frame is the
+ * 0–1000 scout grid, frameW = frameH = 1000 — one normalisation by the
+ * declared frame covers both; review 0004 R3). [source] stays a raw
+ * string so an unknown future source degrades to box-only instead of
+ * failing the whole parse.
  */
 @Serializable
 data class AiCandidate(
@@ -82,6 +85,11 @@ object CandidateMerger {
     /**
      * Node id → candidates, rank-descending. Drops candidates for unknown
      * nodes and malformed boxes; nodes without candidates are absent.
+     *
+     * `privacyRisk` candidates never enter the list: they must not be
+     * preselected or one tap from creator-verified export (reviews
+     * 0001/0002 flagged this; the privacy surface is W3-08's, and the
+     * Landmark shape carries no privacy flag to protect them later).
      */
     fun merge(route: EchoRoute, result: AiJobResult): Map<String, List<AiCandidate>> {
         val known = route.nodes.map { it.id }.toSet()
@@ -89,7 +97,8 @@ object CandidateMerger {
             .filter { it.nodeId in known }
             .associate { checkpoint ->
                 checkpoint.nodeId to checkpoint.candidates
-                    .filter { it.box.size == 4 }
+                    .filter { it.box.size == 4 && it.box[2] > it.box[0] && it.box[3] > it.box[1] }
+                    .filter { !it.privacyRisk }
                     .sortedByDescending { it.rank }
             }
             .filterValues { it.isNotEmpty() }
@@ -97,26 +106,19 @@ object CandidateMerger {
 
     /**
      * Candidate box → normalised [CropBox] for [MediaTools.cropJpeg].
-     * Converts through pixel space (`kfW/frameW`, `kfH/frameH` — never
-     * assumes keyframe and SAM frame share a size), then normalises by the
-     * keyframe dims and clamps to 0..1.
+     * The box already lives in the candidate's declared frame, so
+     * normalising is `box / frame` per axis (this is the spec's
+     * `kfW/frameW` conversion with the keyframe dims cancelled honestly
+     * — the previous roundtrip divided the scout grid by 1000 for SAM
+     * pixel boxes too and shifted every grounded crop; review 0004).
      */
-    fun candidateCropBox(candidate: AiCandidate, kfW: Int, kfH: Int): CropBox {
-        val frameW = candidate.frameW.coerceAtLeast(1)
-        val frameH = candidate.frameH.coerceAtLeast(1)
-        val width = kfW.coerceAtLeast(1).toFloat()
-        val height = kfH.coerceAtLeast(1).toFloat()
-        // Pixel roundtrip, written out so the size mapping stays explicit:
-        // frame px → keyframe px → normalised.
-        fun norm(grid: Int, frame: Int, kf: Float, dim: Float): Float {
-            val framePx = grid / 1000f * frame
-            val kfPx = framePx * kf / frame
-            return (kfPx / dim).coerceIn(0f, 1f)
-        }
-        val l = norm(candidate.box[0], frameW, width, width)
-        val t = norm(candidate.box[1], frameH, height, height)
-        val r = norm(candidate.box[2], frameW, width, width)
-        val b = norm(candidate.box[3], frameH, height, height)
+    fun candidateCropBox(candidate: AiCandidate): CropBox {
+        val frameW = candidate.frameW.coerceAtLeast(1).toFloat()
+        val frameH = candidate.frameH.coerceAtLeast(1).toFloat()
+        val l = (candidate.box[0] / frameW).coerceIn(0f, 1f)
+        val t = (candidate.box[1] / frameH).coerceIn(0f, 1f)
+        val r = (candidate.box[2] / frameW).coerceIn(0f, 1f)
+        val b = (candidate.box[3] / frameH).coerceIn(0f, 1f)
         return CropBox(
             left = minOf(l, r),
             top = minOf(t, b),

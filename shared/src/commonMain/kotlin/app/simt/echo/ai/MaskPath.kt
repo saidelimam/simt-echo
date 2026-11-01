@@ -45,6 +45,10 @@ object MaskPath {
             }
             val cmd = command ?: return null
             fun number(): Float {
+                // Bounds-checked: an EOF-truncated path ("M 10 20 L 30")
+                // degrades to null like any other unreadable mask, never
+                // throws out of composition (review 0004 R3).
+                if (i >= tokens.size) return Float.NaN
                 val value = (tokens[i] as? Token.Number ?: return Float.NaN)
                 i++
                 return value.value
@@ -87,6 +91,10 @@ object MaskPath {
                 else -> return null
             }
         }
+        // A path ending on a dangling command letter ("… L") is truncated
+        // too: its arguments never arrived, so it is unreadable, not short.
+        val last = tokens.lastOrNull()
+        if (last is Token.Command && last.command != 'Z' && last.command != 'z') return null
         if (points.isNotEmpty()) subpaths += MaskSubpath(points.toList(), closed)
         return subpaths.takeIf { it.isNotEmpty() }
     }

@@ -42,6 +42,13 @@ class MaskPathTest {
     }
 
     @Test
+    fun truncatedPathDegradesToNullInsteadOfThrowing() {
+        assertNull(MaskPath.parseSvgPath("M 10 20 L 30"))
+        assertNull(MaskPath.parseSvgPath("M 10"))
+        assertNull(MaskPath.parseSvgPath("M 10 20 L"))
+    }
+
+    @Test
     fun rejectsCurvesGarbageAndEmpty() {
         assertNull(MaskPath.parseSvgPath(""))
         assertNull(MaskPath.parseSvgPath("not a path"))

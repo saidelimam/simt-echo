@@ -113,6 +113,7 @@ fun ReviewScreen(
             val nodeSuggestions = ui.suggestions[reviewNode.node.id].orEmpty()
             val selected = nodeSuggestions.getOrNull(ui.suggestionIndex[reviewNode.node.id] ?: 0)
             NodeCard(
+                suggestionImage = selected?.let { ui.suggestionImages[it.candidateId] },
                 reviewNode = reviewNode,
                 suggestion = selected,
                 suggestionPosition = (ui.suggestionIndex[reviewNode.node.id] ?: 0) + 1,
@@ -169,6 +170,7 @@ private fun StartCard(
 private fun NodeCard(
     reviewNode: ReviewNode,
     suggestion: AiCandidate?,
+    suggestionImage: ByteArray? = null,
     suggestionPosition: Int,
     suggestionCount: Int,
     aiModels: String?,
@@ -204,7 +206,7 @@ private fun NodeCard(
         if (suggestion != null) {
             SuggestionCard(
                 candidate = suggestion,
-                heroBytes = reviewNode.heroBytes,
+                heroBytes = suggestionImage ?: reviewNode.heroBytes,
                 position = suggestionPosition,
                 count = suggestionCount,
                 aiModels = aiModels,
@@ -249,7 +251,7 @@ private fun SuggestionCard(
         val accentFill = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
         val strokePx = with(LocalDensity.current) { 2.dp.toPx() }
         if (bitmap != null) {
-            val box = CandidateMerger.candidateCropBox(candidate, bitmap.width, bitmap.height)
+            val box = CandidateMerger.candidateCropBox(candidate)
             val mask = candidate.maskSvgPath
                 ?.takeIf { candidate.maskW != null && candidate.maskH != null }
                 ?.let { MaskPath.parseSvgPath(it) }
@@ -281,8 +283,10 @@ private fun SuggestionCard(
                     for (subpath in mask) {
                         val path = Path()
                         subpath.points.forEachIndexed { i, point ->
-                            val x = point.x * (bitmap.width / maskW) * (size.width / bitmap.width)
-                            val y = point.y * (bitmap.height / maskH) * (size.height / bitmap.height)
+                            // Float scaling: mask raster → canvas directly
+                            // (the raster covers the frame the canvas shows).
+                            val x = point.x * (size.width / maskW.toFloat())
+                            val y = point.y * (size.height / maskH.toFloat())
                             if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
                         }
                         if (subpath.closed) path.close()

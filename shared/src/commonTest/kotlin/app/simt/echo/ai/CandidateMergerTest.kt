@@ -103,16 +103,41 @@ class CandidateMergerTest {
     }
 
     @Test
-    fun cropBoxConvertsThroughPixelSpaceWithoutAssumingEqualSizes() {
-        // Non-square SAM frame vs smaller keyframe: normalised output matches
-        // the grid either way, proving the sizes cancel instead of being assumed.
-        val box = CandidateMerger.candidateCropBox(candidate(box = listOf(0, 0, 1000, 1000)), kfW = 360, kfH = 640)
-        assertEquals(CropBox(0f, 0f, 1f, 1f), box)
-        val partial = CandidateMerger.candidateCropBox(candidate(), kfW = 360, kfH = 640)
-        assertEquals(0.412f, partial.left, 0.001f)
-        assertEquals(0.9f, partial.bottom, 0.001f)
-        // Same grid through different keyframe dims: identical output.
-        assertEquals(partial, CandidateMerger.candidateCropBox(candidate(), kfW = 720, kfH = 1280))
+    fun cropBoxNormalisesSamPixelBoxesByTheirDeclaredFrame() {
+        // SAM pixel box [412,230,590,900] on a 720x1280 frame: the spec
+        // example. The old grid roundtrip returned box/1000 here.
+        val partial = CandidateMerger.candidateCropBox(candidate())
+        assertEquals(412f / 720f, partial.left, 0.001f)
+        assertEquals(230f / 1280f, partial.top, 0.001f)
+        assertEquals(590f / 720f, partial.right, 0.001f)
+        assertEquals(900f / 1280f, partial.bottom, 0.001f)
+        // Full frame in frame pixels covers the whole keyframe.
+        val full = CandidateMerger.candidateCropBox(candidate(box = listOf(0, 0, 720, 1280)))
+        assertEquals(CropBox(0f, 0f, 1f, 1f), full)
+        // Box-only candidates carry the 0-1000 grid as their frame.
+        val grid = CandidateMerger.candidateCropBox(
+            candidate(box = listOf(412, 230, 590, 900)).copy(frameW = 1000, frameH = 1000),
+        )
+        assertEquals(0.412f, grid.left, 0.001f)
+        assertEquals(0.9f, grid.bottom, 0.001f)
+    }
+
+    @Test
+    fun mergeNeverOffersPrivacyRiskCandidates() {
+        val merged = CandidateMerger.merge(
+            route(),
+            result(
+                AiCheckpoint(
+                    "n1",
+                    listOf(
+                        candidate(rank = 0.99).copy(candidateId = "risky", privacyRisk = true),
+                        candidate(rank = 0.5).copy(candidateId = "safe"),
+                    ),
+                ),
+            ),
+        )
+        // Even top-ranked, a privacy-risk crop is not preselectable.
+        assertEquals(listOf("safe"), merged.getValue("n1").map { it.candidateId })
     }
 
     @Test

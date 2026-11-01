@@ -12,6 +12,8 @@ import app.simt.echo.media.KEYFRAME_MAX_SIDE
 import app.simt.echo.media.MediaTools
 import app.simt.echo.media.ensureKeyframes
 import app.simt.echo.media.keyframeFileName
+import app.simt.echo.media.keyframeFiles
+import app.simt.echo.media.keyframeSpecs
 import app.simt.echo.model.AiProvenance
 import app.simt.echo.model.Confirmation
 import app.simt.echo.model.EchoRoute
@@ -52,6 +54,10 @@ data class ReviewUiState(
     val suggestions: Map<String, List<AiCandidate>> = emptyMap(),
     /** Preselected suggestion index per node (top candidate first). */
     val suggestionIndex: Map<String, Int> = emptyMap(),
+    /** Candidate id → bytes of the keyframe that candidate was grounded
+     * on (may differ from the node's hero; overlay and crop must use the
+     * frame the box actually belongs to — review 0004 R3). */
+    val suggestionImages: Map<String, ByteArray> = emptyMap(),
     /** Provenance footnote: the models that ran, or null when no AI result. */
     val aiModels: String? = null,
     val saving: Boolean = false,
@@ -142,10 +148,21 @@ class ReviewViewModel(
                 val current = route ?: return@launch
                 val merged = CandidateMerger.merge(current, parsed)
                 aiResult = parsed
+                // Load each candidate's own keyframe bytes for the card:
+                // the box belongs to that frame, not necessarily the hero.
+                val images = mutableMapOf<String, ByteArray>()
+                for ((nodeId, candidates) in merged) {
+                    val node = current.nodes.firstOrNull { it.id == nodeId } ?: continue
+                    for (candidate in candidates) {
+                        val name = candidateFileName(current, node, candidate) ?: continue
+                        drafts.readDraftFile(draftId, name)?.let { images[candidate.candidateId] = it }
+                    }
+                }
                 _ui.update {
                     it.copy(
                         suggestions = merged,
                         suggestionIndex = merged.mapValues { 0 },
+                        suggestionImages = images,
                         aiModels = CandidateMerger.modelsLine(parsed),
                     )
                 }
@@ -155,11 +172,18 @@ class ReviewViewModel(
         }
     }
 
+    /** The draft file holding [candidate]'s own keyframe (its box's frame). */
+    private fun candidateFileName(route: EchoRoute, node: RouteNode, candidate: AiCandidate): String? {
+        val byId = keyframeFiles(keyframeSpecs(listOf(node)))
+        return byId[candidate.keyframeId] ?: keyframeFileName(route, node)
+    }
+
     /**
-     * Use the preselected suggestion: crops its box out of the node's hero
-     * and attaches a creator-verified landmark. The candidate's source and
-     * models travel onto the landmark and the route gains AI provenance;
-     * nodes, legs and path are copied untouched.
+     * Use the preselected suggestion: crops its box out of the keyframe
+     * the candidate was grounded on and attaches a creator-verified
+     * landmark. The candidate's source, models and geometry travel onto
+     * the landmark and the route gains AI provenance; nodes, legs and
+     * path are copied untouched.
      */
     fun useSuggestion(nodeId: String) {
         viewModelScope.launch {
@@ -169,18 +193,9 @@ class ReviewViewModel(
                 val list = _ui.value.suggestions[nodeId] ?: return@launch
                 val index = _ui.value.suggestionIndex[nodeId] ?: 0
                 val candidate = list.getOrNull(index) ?: return@launch
-                val heroName = keyframeFileName(current, node)
+                val heroName = candidateFileName(current, node, candidate)
                     ?: throw IllegalStateException("No keyframe for this node yet.")
-                val heroBytes = drafts.readDraftFile(draftId, heroName)
-                // Decoding must never break the Use path: on a host unit
-                // test (or an undecodable hero) this falls back to the SAM
-                // frame dims, which normalise to the same crop.
-                val bitmap = heroBytes?.let { runCatching { decodeImage(it) }.getOrNull() }
-                val box = CandidateMerger.candidateCropBox(
-                    candidate,
-                    kfW = bitmap?.width ?: candidate.frameW,
-                    kfH = bitmap?.height ?: candidate.frameH,
-                )
+                val box = CandidateMerger.candidateCropBox(candidate)
                 val landmarkId = newId()
                 val cropName = "kf/ai_$landmarkId.jpg"
                 media.cropJpeg(
@@ -204,6 +219,15 @@ class ReviewViewModel(
                     source = CandidateMerger.landmarkSourceOf(candidate),
                     models = candidate.models.ifEmpty { null },
                     confirmation = Confirmation.CREATOR_VERIFIED,
+                    // Geometry persists so Navigate can render the mask
+                    // over the crop (W5-02); scalars above are not enough.
+                    box = candidate.box.takeIf { it.size == 4 },
+                    frameW = candidate.frameW,
+                    frameH = candidate.frameH,
+                    maskSvgPath = candidate.maskSvgPath,
+                    maskW = candidate.maskW,
+                    maskH = candidate.maskH,
+                    keyframeId = candidate.keyframeId.ifEmpty { null },
                 )
                 val result = aiResult
                 mutate { r ->
