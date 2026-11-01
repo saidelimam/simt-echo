@@ -19,12 +19,15 @@ import app.simt.echo.ui.components.EchoButton
 
 /**
  * Home: route cards land with W2-01; until then one button per §8.2
- * destination proves every route is reachable (W0-03 done-when).
+ * destination proves every route is reachable (W0-03 done-when), and
+ * unfinished captures are listed with a Draft badge (W1-03 done-when).
  */
 @Composable
 fun HomeScreen(
     onOpen: (EchoRoute) -> Unit,
     modifier: Modifier = Modifier,
+    draftIds: List<String> = emptyList(),
+    onOpenDraft: (String) -> Unit = { onOpen(EchoRoute.Review(it)) },
 ) {
     Column(
         modifier = modifier
@@ -35,6 +38,12 @@ fun HomeScreen(
     ) {
         Text(text = "ECHO", style = MaterialTheme.typography.displayLarge)
         Text(text = "Walk it once. Share the way.")
+        draftIds.forEach { draftId ->
+            EchoButton(
+                text = "$draftId · Draft",
+                onClick = { onOpenDraft(draftId) },
+            )
+        }
         EchoButton(text = "Record", onClick = { onOpen(EchoRoute.Record) })
         EchoButton(text = "Receive", onClick = { onOpen(EchoRoute.Receive) })
         EchoButton(text = "Review demo draft", onClick = { onOpen(EchoRoute.Review("demo-draft")) })

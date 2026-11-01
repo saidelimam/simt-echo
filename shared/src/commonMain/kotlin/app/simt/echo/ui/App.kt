@@ -15,6 +15,6 @@ fun EchoApp(
     modifier: Modifier = Modifier,
 ) {
     EchoTheme {
-        EchoNavHost(modifier = modifier)
+        EchoNavHost(graph = graph, modifier = modifier)
     }
 }

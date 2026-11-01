@@ -1,7 +1,12 @@
 package app.simt.echo
 
+import app.simt.echo.data.DraftRepository
+import app.simt.echo.data.FileStore
+import app.simt.echo.data.RouteRepository
 import app.simt.echo.platform.Platform
 import app.simt.echo.platform.createPlatform
+import okio.FileSystem
+import okio.Path.Companion.toPath
 
 /**
  * Manual dependency graph for the shared module.
@@ -9,9 +14,16 @@ import app.simt.echo.platform.createPlatform
  * One graph per process, created by the platform entry point
  * (`EchoApplication` on Android). Slices register their stores, sources and
  * transports here as they land; `shared` deliberately has no DI framework —
- * Hilt, where used, stays inside `androidApp` actuals and never crosses the
- * KMP boundary (see `docs/plans/0001-agentic-flow.md` §4).
+ * no DI code is vendored in either (see `docs/plans/0001-agentic-flow.md` §4).
  */
 class AppGraph(
     val platform: Platform = createPlatform(),
-)
+) {
+    /** Root of all on-disk state (plan §5.3). Empty only in previews/tests. */
+    val fileStore: FileStore by lazy {
+        FileStore(FileSystem.SYSTEM, platform.dataDir.toPath())
+    }
+
+    val routeRepository: RouteRepository by lazy { RouteRepository(fileStore) }
+    val draftRepository: DraftRepository by lazy { DraftRepository(fileStore) }
+}

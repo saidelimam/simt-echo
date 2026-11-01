@@ -8,9 +8,11 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
+import app.simt.echo.AppGraph
 import app.simt.echo.ui.screens.HomeScreen
 import app.simt.echo.ui.screens.PlaceholderScreen
 import app.simt.echo.ui.screens.PlaceholderViewModel
+import app.simt.echo.ui.screens.record.RecordScreen
 
 /**
  * Navigation shell (plan §8.2). This file is owned by Lane A: screens
@@ -19,6 +21,7 @@ import app.simt.echo.ui.screens.PlaceholderViewModel
  */
 @Composable
 fun EchoNavHost(
+    graph: AppGraph,
     modifier: Modifier = Modifier,
     navController: NavHostController = rememberNavController(),
 ) {
@@ -28,11 +31,16 @@ fun EchoNavHost(
         modifier = modifier,
     ) {
         composable<EchoRoute.Home> {
-            HomeScreen(onOpen = navController::navigateTo)
+            HomeScreen(
+                draftIds = graph.draftRepository.listDraftIds(),
+                onOpen = navController::navigateTo,
+            )
         }
         composable<EchoRoute.Record> {
-            val vm = remember { PlaceholderViewModel("Record", "Capture lands in W1-03.") }
-            PlaceholderScreen(vm, "Back home", { navController.popBackStack() })
+            RecordScreen(
+                drafts = graph.draftRepository,
+                onSaved = { navController.popBackStack() },
+            )
         }
         composable<EchoRoute.Review> { entry ->
             val route = entry.toRoute<EchoRoute.Review>()

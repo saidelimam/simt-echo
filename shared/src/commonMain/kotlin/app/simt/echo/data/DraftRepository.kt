@@ -8,6 +8,10 @@ import kotlinx.serialization.encodeToString
 /** In-progress captures under `drafts/<draftId>/` (plan §5.3). */
 class DraftRepository(private val store: FileStore) {
 
+    /** Absolute path of [fileName] inside draft [draftId]'s directory. */
+    fun draftFilePath(draftId: String, fileName: String): okio.Path =
+        store.resolvePath("$DRAFTS_DIR/$draftId/$fileName")
+
     fun saveCapture(log: CaptureLog) {
         store.writeText(captureFile(log.draftId), EchoJson.encodeToString(log))
     }

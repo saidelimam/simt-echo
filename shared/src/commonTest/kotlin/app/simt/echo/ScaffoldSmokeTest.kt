@@ -10,6 +10,7 @@ class ScaffoldSmokeTest {
 
     private class FakePlatform : Platform {
         override val name: String = "test"
+        override val dataDir: String = "/tmp"
     }
 
     @Test

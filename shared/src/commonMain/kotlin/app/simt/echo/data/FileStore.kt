@@ -18,6 +18,9 @@ class FileStore(
         return if (relative.isAbsolute) relative else dataDir / relative
     }
 
+    /** Absolute path for a store-relative [path] (camera/media writers). */
+    fun resolvePath(path: String): Path = resolve(path)
+
     fun readText(path: String): String? {
         val target = resolve(path)
         if (!fileSystem.exists(target)) return null
