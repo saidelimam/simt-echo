@@ -175,9 +175,9 @@ class TransferService(
 
     /** Deletes pending plaintext exports for one route only (`*-<routeId>.echo`). */
     fun deletePlainExportsFor(routeId: String) {
-        store.list(EXPORTS_DIR)
+        store.list(FileStore.EXPORTS_DIR)
             .filter { it.name.endsWith("-$routeId.echo") }
-            .forEach { store.deleteRecursively("$EXPORTS_DIR/${it.name}") }
+            .forEach { store.deleteRecursively("${FileStore.EXPORTS_DIR}/${it.name}") }
     }
 
     /**
