@@ -192,7 +192,7 @@ slices. A slice is `done` only with its evidence recorded, per Plan §0.
 | W0-05 | In progress | Worker scaffold: Hono, auth, rate limit, R2, deploy | F (S) | D | — | — |
 | W1-01 | Complete | `MotionSource`: built-in PDR engine (§6.1–6.2) + Android IMU source | S | B | W0-04 | 4889f9a72fe58901753f3a4d582fa562ac53384a · test: :shared:testAndroidHostTest (PdrEngineTest 7/7, suite 40/40), :androidApp:assembleDebug, :shared:compileKotlinIosArm64, :shared:compileKotlinIosSimulatorArm64 — BUILD SUCCESSFUL |
 | W1-02 | Complete | `CameraRecorder`: CameraX silent video, `core/ui-camera` where it fits | F | B | W0-03 | 00db42bf4c39d913c645aad319233a693206fbb8 · test: :shared:testAndroidHostTest (RecorderLogicTest 7/7, suite 18/18), :androidApp:assembleDebug, :shared:compileKotlinIosArm64, :shared:compileKotlinIosSimulatorArm64 — BUILD SUCCESSFUL |
-| W1-03 | Queued | Record screen + `CaptureSession` + Finish | F | B | W1-01, W1-02 | — |
+| W1-03 | Complete | Record screen + `CaptureSession` + Finish | F | B | W1-01, W1-02 | d655775cd1f2bb8f34c800a64bdc926881ae9ead · test: :shared:testAndroidHostTest (CaptureSessionTest 3/3, suite 43/43), :androidApp:assembleDebug, :shared:compileKotlinIosArm64, :shared:compileKotlinIosSimulatorArm64 — BUILD SUCCESSFUL |
 | W1-04 | Queued | `Segmenter` → draft `EchoRoute` + minimap | L (S) | B | W1-03 | — |
 | W1-05 | Queued | `MediaTools`: keyframes + crop | L (F) | B | W1-02 | — |
 | W2-01 | Queued | Review screen + manual landmark editor + Save | F (S) | E | W1-04, W1-05 | — |
