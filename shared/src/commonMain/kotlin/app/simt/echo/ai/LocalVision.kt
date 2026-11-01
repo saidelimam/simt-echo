@@ -51,6 +51,42 @@ const val LOCAL_SYSTEM_PROMPT: String =
         "cue: one short instruction combining the given direction and the landmark. If nothing " +
         "suitable is visible, return an empty candidates list. Answer with JSON only."
 
+/** First balanced `{…}` block in [text] (models wrap JSON in prose). */
+fun extractJsonObject(text: String): String? {
+    val start = text.indexOf('{')
+    if (start < 0) return null
+    var depth = 0
+    var inString = false
+    var escaped = false
+    for (i in start until text.length) {
+        val c = text[i]
+        when {
+            escaped -> escaped = false
+            c == '\\' && inString -> escaped = true
+            c == '"' -> inString = !inString
+            inString -> Unit
+            c == '{' -> depth++
+            c == '}' -> {
+                depth--
+                if (depth == 0) return text.substring(start, i + 1)
+            }
+        }
+    }
+    return null
+}
+
+/** Parses one checkpoint reply into a DTO, or throws typed. */
+fun parseLocalCheckpoint(text: String): LocalCheckpointDto {
+    val json = extractJsonObject(text)
+        ?: throw LocalModelException("Local model did not answer with JSON.")
+    return runCatching {
+        kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+            .decodeFromString<LocalCheckpointDto>(json)
+    }.getOrElse {
+        throw LocalModelException("Local model JSON did not match the landmark schema.")
+    }
+}
+
 /** One candidate as a local model returns it (worker SCHEMA candidate). */
 @Serializable
 data class LocalCandidateDto(

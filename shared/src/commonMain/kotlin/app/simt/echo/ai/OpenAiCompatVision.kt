@@ -56,10 +56,7 @@ class OpenAiCompatVision(
         }
         val content = extractContent(text)
             ?: throw LocalModelException("Local model reply had no message content.")
-        val json = extractJsonObject(content)
-            ?: throw LocalModelException("Local model did not answer with JSON.")
-        val dto = runCatching { jsonParser.decodeFromString<LocalCheckpointDto>(json) }
-            .getOrElse { throw LocalModelException("Local model JSON did not match the landmark schema.") }
+        val dto = parseLocalCheckpoint(content)
         if (dto.nodeId.isNotEmpty() && dto.nodeId != checkpoint.nodeId) {
             throw LocalModelException("Local model answered for a different checkpoint.")
         }
@@ -113,30 +110,6 @@ class OpenAiCompatVision(
         val message = choices.firstOrNull()?.jsonObject?.get("message")?.jsonObject ?: return null
         message["content"]?.jsonPrimitive?.content
     }.getOrNull()
-
-    /** First balanced `{…}` block — models wrap JSON in prose/fences. */
-    private fun extractJsonObject(text: String): String? {
-        val start = text.indexOf('{')
-        if (start < 0) return null
-        var depth = 0
-        var inString = false
-        var escaped = false
-        for (i in start until text.length) {
-            val c = text[i]
-            when {
-                escaped -> escaped = false
-                c == '\\' && inString -> escaped = true
-                c == '"' -> inString = !inString
-                inString -> Unit
-                c == '{' -> depth++
-                c == '}' -> {
-                    depth--
-                    if (depth == 0) return text.substring(start, i + 1)
-                }
-            }
-        }
-        return null
-    }
 
     private companion object {
         val jsonParser = Json { ignoreUnknownKeys = true }
