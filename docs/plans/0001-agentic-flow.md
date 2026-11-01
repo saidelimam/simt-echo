@@ -220,7 +220,7 @@ slices. A slice is `done` only with its evidence recorded, per Plan §0.
 | W5-01 | Queued | Local-model provider (P2) | S | D | W3-07 | — |
 | W5-02 | Queued | Camera overlay: copied projection/HUD components (P2) | F (S) | E | W2-06 | — |
 | W5-03 | Accepted | iOS actuals (P2) | S | A | wave P0, W4-06 | Postponed — iOS is out of v1 scope; not to implement |
-| W5-04 | Complete | Wear OS haptic bridge on `data/wear` (P2) | F | F | W0-01 | ec654489ef5024e99ab2924081827c7f0c8f215e |
+| W5-04 | Complete | Wear OS haptic bridge on `data/wear` (P2) | F | F | W0-01 | ec654489ef5024e99ab2924081827c7f0c8f215e · test: :shared:testAndroidHostTest --tests app.simt.echo.platform.WearHapticsTest (5/5), :shared:compileKotlinIosArm64, :shared:compileKotlinIosSimulatorArm64, :androidApp:assembleDebug — BUILD SUCCESSFUL |
 
 ## 7. Slice sections
 
