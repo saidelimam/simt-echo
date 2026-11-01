@@ -3,6 +3,7 @@ package app.simt.echo.media
 import app.simt.echo.model.NodeType
 import app.simt.echo.model.RouteNode
 import app.simt.echo.model.TurnDir
+import androidx.compose.ui.geometry.Rect
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -195,5 +196,63 @@ class MediaToolsTest {
         // width = 0.4, pad = 0.04 on each side
         assertEquals(0.26f, padded.left, 0.001f)
         assertEquals(0.74f, padded.right, 0.001f)
+    }
+
+    // ── cropBoxFromRect ────────────────────────────────────────────────────
+
+    @Test
+    fun cropBoxNormalisesATopLeftToBottomRightDrag() {
+        // 1000 × 500 px canvas; the drag runs (100, 50) → (300, 150).
+        val box = cropBoxFromRect(Rect(100f, 50f, 300f, 150f), 1000f, 500f)
+        assertEquals(0.1f, box.left, 0.001f)
+        assertEquals(0.1f, box.top, 0.001f)
+        assertEquals(0.3f, box.right, 0.001f)
+        assertEquals(0.3f, box.bottom, 0.001f)
+    }
+
+    @Test
+    fun cropBoxHandlesInvertedDrags() {
+        // The same box dragged right→left / bottom→top must map identically.
+        val normal = cropBoxFromRect(Rect(100f, 50f, 300f, 150f), 1000f, 500f)
+        val inverted = cropBoxFromRect(Rect(300f, 150f, 100f, 50f), 1000f, 500f)
+        assertEquals(normal, inverted)
+    }
+
+    @Test
+    fun cropBoxClampsDragsPastTheCanvasEdges() {
+        // Overshooting the canvas on every side yields a full-frame crop.
+        val box = cropBoxFromRect(Rect(-50f, -100f, 1100f, 600f), 1000f, 500f)
+        assertEquals(0f, box.left, 0.001f)
+        assertEquals(0f, box.top, 0.001f)
+        assertEquals(1f, box.right, 0.001f)
+        assertEquals(1f, box.bottom, 0.001f)
+    }
+
+    @Test
+    fun cropBoxDegenerateZeroAreaDrag() {
+        // A tap with no movement is a zero-area box at the tap position —
+        // the current overlay accepts it; the mapping must stay stable.
+        val box = cropBoxFromRect(Rect(250f, 250f, 250f, 250f), 1000f, 500f)
+        assertEquals(0.25f, box.left, 0.001f)
+        assertEquals(0.25f, box.right, 0.001f)
+        assertEquals(0.5f, box.top, 0.001f)
+        assertEquals(0.5f, box.bottom, 0.001f)
+    }
+
+    @Test
+    fun cropBoxFullFrameDrag() {
+        val box = cropBoxFromRect(Rect(0f, 0f, 1000f, 500f), 1000f, 500f)
+        assertEquals(CropBox(0f, 0f, 1f, 1f), box)
+    }
+
+    @Test
+    fun cropBoxSurvivesAZeroSizeCanvas() {
+        // Before first layout the canvas can measure 0 × 0; the 1 px floor
+        // keeps the division finite.
+        val box = cropBoxFromRect(Rect(0f, 0f, 1f, 1f), 0f, 0f)
+        assertEquals(0f, box.left, 0.001f)
+        assertEquals(1f, box.right, 0.001f)
+        assertEquals(0f, box.top, 0.001f)
+        assertEquals(1f, box.bottom, 0.001f)
     }
 }
