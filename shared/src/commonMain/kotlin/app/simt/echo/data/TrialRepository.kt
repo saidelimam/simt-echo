@@ -3,6 +3,7 @@ package app.simt.echo.data
 import app.simt.echo.model.EchoJson
 import app.simt.echo.model.Trial
 import kotlinx.serialization.encodeToString
+import okio.Path
 
 /**
  * Field-protocol trials under `trials/<trialId>.json` (plan §5.3, §10 W4-01).
@@ -10,8 +11,8 @@ import kotlinx.serialization.encodeToString
  * Same seam as [RouteRepository]: JSON on [FileStore], FakeFileSystem in
  * tests. The CSV export transcribes every trial field plus per-marker drift
  * rows, so the §11 protocol (5 + 5 runs) lands in one file with no
- * hand-editing. `shareFile` (platform share sheet) consumes the returned
- * text; this repository never touches platform APIs.
+ * hand-editing. [exportCsvFile] writes the same CSV to `exports/` for
+ * the platform share sheet; this repository never touches platform APIs.
  */
 class TrialRepository(private val store: FileStore) {
 
@@ -68,6 +69,22 @@ class TrialRepository(private val store: FileStore) {
             { t -> t.markers.map { m -> kotlin.math.abs(m.errorM) }.takeIf { it.isNotEmpty() }?.maxOrNull() },
         )
         return Csv.table(RUN_HEADERS, runRows)
+    }
+
+    /**
+     * CSV export file (W6-01, closes the W4-01 residual): writes
+     * `exports/trials.csv` and returns its absolute path for
+     * `FileSharing.shareFile`. Fixed name: each export replaces the
+     * previous plaintext copy, so no purge dance is needed. Null when
+     * there are no trials — the caller shows an honest no-op instead of
+     * opening a share sheet with nothing in it.
+     */
+    fun exportCsvFile(): Path? {
+        val trials = list()
+        if (trials.isEmpty()) return null
+        val relative = "${FileStore.EXPORTS_DIR}/trials.csv"
+        store.writeText(relative, exportCsv(trials))
+        return store.resolvePath(relative)
     }
 
     private fun trialFile(trialId: String) = "$TRIALS_DIR/$trialId.json"

@@ -13,6 +13,12 @@ class FileStore(
     val fileSystem: FileSystem,
     val dataDir: Path,
 ) {
+    companion object {
+        /** Pending plaintext exports (W2-07 `.echo`, W6-01 `trials.csv`):
+         *  app-visible, share-sheet-bound, bounded lifetime. */
+        const val EXPORTS_DIR = "exports"
+    }
+
     private fun resolve(path: String): Path {
         val relative = path.toPath()
         return if (relative.isAbsolute) relative else dataDir / relative

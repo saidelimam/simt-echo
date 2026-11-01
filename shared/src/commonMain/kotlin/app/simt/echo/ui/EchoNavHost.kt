@@ -169,12 +169,17 @@ fun EchoNavHost(
             )
         }
         composable<EchoRoute.Settings> {
+            val sharing = rememberFileSharing()
             // Back-stack-scoped like every other screen ViewModel
             // (review 0001 pattern; review 0002 R2 for this regression).
             val vm: SettingsViewModel = viewModel(
                 factory = viewModelFactory {
                     addInitializer(SettingsViewModel::class) {
-                        SettingsViewModel(graph.configRepository)
+                        SettingsViewModel(
+                            configs = graph.configRepository,
+                            trials = graph.trialRepository,
+                            sharing = sharing,
+                        )
                     }
                 },
             )

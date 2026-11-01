@@ -4,10 +4,15 @@ import androidx.lifecycle.ViewModel
 import app.simt.echo.capture.calibrateK
 import app.simt.echo.capture.calibrationWalkError
 import app.simt.echo.data.ConfigRepository
+import app.simt.echo.data.TrialRepository
+import app.simt.echo.platform.CSV_MIME
+import app.simt.echo.platform.FileSharing
+import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlin.math.round
 
 /** Calibrated step-length state (plan §10 W4-02). */
@@ -22,6 +27,8 @@ data class SettingsUi(
     val measuredM: String = "",
     /** Result line after calibrating, or null before the first run. */
     val calibrationNote: String? = null,
+    /** Result line after exporting the trials CSV, or null before any. */
+    val exportNote: String? = null,
 )
 
 private const val CALIBRATION_WALK_M = 10.0
@@ -34,7 +41,11 @@ private const val CALIBRATION_WALK_M = 10.0
  * `capture/Calibration.kt`; this ViewModel only transcribes input and
  * stores the result.
  */
-class SettingsViewModel(private val configs: ConfigRepository) : ViewModel() {
+class SettingsViewModel(
+    private val configs: ConfigRepository,
+    private val trials: TrialRepository,
+    private val sharing: FileSharing,
+) : ViewModel() {
 
     private val _ui = MutableStateFlow(
         configs.get().let {
@@ -87,6 +98,34 @@ class SettingsViewModel(private val configs: ConfigRepository) : ViewModel() {
     fun setCameraOverlay(enabled: Boolean) {
         configs.update { it.copy(cameraOverlayEnabled = enabled) }
         _ui.update { it.copy(cameraOverlayEnabled = enabled) }
+    }
+
+    /**
+     * Exports the whole trial protocol as one CSV through the system
+     * share sheet (W6-01, closing W4-01's residual). The file is
+     * plaintext like the W2-07 `.echo` fallback: it lives in
+     * `exports/` until the next export replaces it. An empty trial set
+     * is an honest no-op — no share sheet with nothing in it.
+     */
+    fun exportTrials() {
+        viewModelScope.launch {
+            try {
+                val path = trials.exportCsvFile()
+                if (path == null) {
+                    _ui.update { it.copy(exportNote = "No trials to export yet.") }
+                    return@launch
+                }
+                val shared = sharing.shareFile(path, "ECHO trials", CSV_MIME)
+                _ui.update {
+                    it.copy(
+                        exportNote = if (shared) "Trials exported ✓"
+                        else "Could not open the share sheet",
+                    )
+                }
+            } catch (e: Exception) {
+                _ui.update { it.copy(exportNote = e.message ?: "Could not export the trials") }
+            }
+        }
     }
 }
 
