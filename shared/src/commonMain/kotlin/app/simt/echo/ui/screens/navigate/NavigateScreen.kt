@@ -15,6 +15,9 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import app.simt.echo.data.RouteRepository
@@ -52,9 +55,17 @@ fun NavigateScreen(
     val haptics = rememberHaptics()
     val online = rememberOnline()
     KeepScreenOn()
-    val viewModel = remember(routeId) {
-        NavigateViewModel(routeId, routes, motion, haptics, onArrived)
-    }
+    // Scoped to this navigation back-stack entry, not `remember`: popping
+    // the destination must call onCleared() so motion stops and the
+    // collectors die with the screen (review 0001 R2).
+    val viewModel: NavigateViewModel = viewModel(
+        key = routeId,
+        factory = viewModelFactory {
+            addInitializer(NavigateViewModel::class) {
+                NavigateViewModel(routeId, routes, motion, haptics, onArrived)
+            }
+        },
+    )
     val ui by viewModel.ui.collectAsState()
     LaunchedEffect(Unit) {
         viewModel.start()

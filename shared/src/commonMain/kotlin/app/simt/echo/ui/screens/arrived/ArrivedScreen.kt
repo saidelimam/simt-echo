@@ -13,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import app.simt.echo.data.RouteRepository
+import app.simt.echo.model.NodeType
 import app.simt.echo.ui.components.EchoButton
 import app.simt.echo.ui.components.oneDecimal
 
@@ -41,10 +42,14 @@ fun ArrivedScreen(
         if (route == null) {
             Text(text = "Arrived", style = MaterialTheme.typography.titleLarge)
         } else {
-            Text(text = route.name.ifEmpty { routeId }, style = MaterialTheme.typography.titleLarge)
+            val destination = route.nodes.lastOrNull { it.type == NodeType.DESTINATION }
+                ?.label?.takeIf { it.isNotEmpty() } ?: route.name.ifEmpty { routeId }
+            Text(text = destination, style = MaterialTheme.typography.titleLarge)
+            // Route facts only: this screen observes no confirmations, so it
+            // must not claim any (review 0001 R2).
             Text(
                 text = "${oneDecimal(route.totalLengthM)} m · " +
-                    "${route.landmarks.size} landmarks confirmed",
+                    "${route.landmarks.size} landmarks on route",
                 style = MaterialTheme.typography.bodyLarge,
             )
         }

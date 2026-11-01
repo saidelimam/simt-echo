@@ -87,8 +87,36 @@ class NavigateViewModelTest {
 
         assertEquals(NavPhase.ARRIVED, vm.ui.value?.phase)
         assertEquals(Fixtures.L_ROUTE.routeId, arrived)
-        assertTrue(haptics.played.contains(HapticPattern.CONFIRM), "turn anchors should confirm")
-        assertTrue(haptics.played.contains(HapticPattern.ARRIVE))
+        // The acceptance criterion is the sequence, not its members. This
+        // walk turns twice (0° → 90° → 0°): each turn is approached (TICK,
+        // once per leg) and anchored (CONFIRM), then ARRIVE — nothing else.
+        assertEquals(
+            listOf(
+                HapticPattern.TICK,
+                HapticPattern.CONFIRM,
+                HapticPattern.TICK,
+                HapticPattern.CONFIRM,
+                HapticPattern.ARRIVE,
+            ),
+            haptics.played,
+        )
+    }
+
+    @Test
+    fun lostSurfacesOffRouteWithWarn() = runTest(dispatcher) {
+        val haptics = FakeHaptics()
+        val source = ReplayMotionSource(walkLog(listOf(5.0 to 0.0)), this)
+        val vm = NavigateViewModel(Fixtures.L_ROUTE.routeId, routesWithLRoute(), source, haptics) {}
+        runCurrent()
+        vm.start()
+        vm.align()
+        runCurrent()
+
+        vm.lost()
+        runCurrent()
+
+        assertEquals(NavPhase.OFF_ROUTE, vm.ui.value?.phase)
+        assertEquals(listOf(HapticPattern.WARN), haptics.played)
     }
 
     @Test
