@@ -9,6 +9,7 @@ import app.simt.echo.platform.FileSharing
 import app.simt.echo.platform.HapticPattern
 import app.simt.echo.platform.Haptics
 import app.simt.echo.platform.PeerTransport
+import app.simt.echo.transfer.ExpiryOption
 import app.simt.echo.transfer.QrPayload
 import app.simt.echo.transfer.RelayClient
 import app.simt.echo.transfer.TransferService
@@ -224,6 +225,41 @@ class ShareViewModelTest {
         assertFalse(ui.fileShared)
         assertNull(sharing.sharedPath)
         assertNull(store.readBytes("exports/${service.echoFileName(Fixtures.L_ROUTE.name).removeSuffix(".echo")}-${Fixtures.L_ROUTE.routeId}.echo"))
+    }
+
+    @Test
+    fun previewDefaultsStartPhotoOnAndToggleReoffers() = runTest(dispatcher) {
+        val (service, _) = serviceWithRoute()
+        val vm = ShareViewModel(Fixtures.L_ROUTE.routeId, service, FakeHaptics(), FakeFileSharing())
+        advanceUntilIdle()
+
+        // L fixture: start photo only, default ON.
+        assertEquals(1, vm.ui.value.exportItems.size)
+        assertTrue(vm.ui.value.selection.includeStartPhoto)
+        assertNotNull(vm.ui.value.qrUri)
+
+        vm.toggleAsset("start", false)
+        advanceUntilIdle()
+
+        assertFalse(vm.ui.value.selection.includeStartPhoto)
+        // Re-offered: still a live QR, now encoding the exclusion.
+        assertNotNull(vm.ui.value.qrUri)
+        assertNull(vm.ui.value.error)
+    }
+
+    @Test
+    fun expirySelectorUpdatesSelectionAndReoffers() = runTest(dispatcher) {
+        val (service, _) = serviceWithRoute()
+        val vm = ShareViewModel(Fixtures.L_ROUTE.routeId, service, FakeHaptics(), FakeFileSharing())
+        advanceUntilIdle()
+        assertEquals(ExpiryOption.NONE, vm.ui.value.selection.expiry)
+
+        vm.setExpiry(ExpiryOption.HOURS_24)
+        advanceUntilIdle()
+
+        assertEquals(ExpiryOption.HOURS_24, vm.ui.value.selection.expiry)
+        assertNotNull(vm.ui.value.qrUri)
+        assertNull(vm.ui.value.error)
     }
 
     @Test

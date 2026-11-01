@@ -15,6 +15,7 @@ import app.simt.echo.model.RouteLeg
 import app.simt.echo.model.RouteNode
 import app.simt.echo.model.StartAnchor
 import app.simt.echo.model.TurnDir
+import app.simt.echo.transfer.JobRecord
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -267,6 +268,36 @@ class ReviewViewModelTest {
         assertNotNull(h.routes.readAsset("draft-1", exported.landmarks.single().cropAssetId!!))
         // The consumed draft is gone.
         assertNull(h.drafts.loadDraftRoute("draft-1"))
+    }
+
+    @Test
+    fun saveCapturesJobIdForPostSaveDeleteOffer() = runTest(dispatcher) {
+        val h = harness()
+        h.drafts.saveJobRecord("draft-1", JobRecord("job-1", "complete", 1_762_000_000_000L))
+        val vm = h.vm()
+        advanceUntilIdle()
+
+        var saved: String? = null
+        vm.save { saved = it }
+        advanceUntilIdle()
+
+        assertEquals("draft-1", saved)
+        assertEquals("job-1", vm.ui.value.savedJobId)
+        // The draft (with its job record) is consumed; the route is saved.
+        assertNull(h.drafts.loadJobRecord("draft-1"))
+        assertNotNull(h.routes.get("draft-1"))
+    }
+
+    @Test
+    fun saveWithoutJobLeavesNoDeleteOffer() = runTest(dispatcher) {
+        val h = harness()
+        val vm = h.vm()
+        advanceUntilIdle()
+
+        vm.save { }
+        advanceUntilIdle()
+
+        assertNull(vm.ui.value.savedJobId)
     }
 
     @Test

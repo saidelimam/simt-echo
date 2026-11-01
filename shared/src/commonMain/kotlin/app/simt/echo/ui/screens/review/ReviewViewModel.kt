@@ -42,6 +42,8 @@ data class ReviewUiState(
     val drawTitle: String = "",
     val saving: Boolean = false,
     val savedRouteId: String? = null,
+    /** Server job whose files outlived the draft (W3-08 delete offer). */
+    val savedJobId: String? = null,
     val error: String? = null,
 )
 
@@ -218,8 +220,12 @@ class ReviewViewModel(
                     },
                 )
                 routes.save(export, assets)
+                // The draft (with its job record) is consumed here, so
+                // capture the server job first: its files may still need
+                // the W3-08 "delete uploaded media now" offer after save.
+                val jobId = drafts.loadJobRecord(draftId)?.jobId
                 drafts.delete(draftId)
-                _ui.update { it.copy(saving = false, savedRouteId = export.routeId) }
+                _ui.update { it.copy(saving = false, savedRouteId = export.routeId, savedJobId = jobId) }
                 onSaved(export.routeId)
             } catch (e: Exception) {
                 _ui.update { it.copy(saving = false, error = e.message ?: "Could not save the route.") }

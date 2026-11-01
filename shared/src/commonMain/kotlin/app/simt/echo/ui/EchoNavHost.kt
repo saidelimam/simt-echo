@@ -81,7 +81,11 @@ fun EchoNavHost(
             }
             ReviewScreen(
                 viewModel = viewModel,
-                onSaved = { navController.navigateTo(EchoRoute.RouteDetail(it)) },
+                onSaved = {
+                    navController.navigateTo(
+                        EchoRoute.RouteDetail(it, savedJobId = viewModel.ui.value.savedJobId),
+                    )
+                },
                 onBack = { navController.popBackStack() },
                 onFindLandmarks = { navController.navigateTo(EchoRoute.Processing(route.draftId)) },
             )
@@ -117,6 +121,9 @@ fun EchoNavHost(
                 routes = graph.routeRepository,
                 onShare = { navController.navigateTo(EchoRoute.Share(it)) },
                 onBack = { navController.popBackStack() },
+                onDeleted = { navController.popBackStack() },
+                api = graph.apiClient,
+                savedJobId = route.savedJobId,
             )
         }
         composable<EchoRoute.Share> { entry ->
