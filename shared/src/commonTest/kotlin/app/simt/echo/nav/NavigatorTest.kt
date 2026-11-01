@@ -3,7 +3,6 @@ package app.simt.echo.nav
 import app.simt.echo.Fixtures
 import app.simt.echo.capture.ReplayMotionSource
 import app.simt.echo.model.CaptureLog
-import app.simt.echo.model.CaptureSample
 import app.simt.echo.platform.MotionUpdate
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
@@ -11,7 +10,6 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
-import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -24,49 +22,6 @@ import kotlin.test.assertTrue
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class NavigatorTest {
-
-    private companion object {
-        const val T0_NS = 1_000_000_000L
-        const val TICK_NS = 50_000_000L // 20 Hz
-        const val STEP_M = 0.05 // 1 m/s at 20 Hz
-    }
-
-    /**
-     * Builds a capture from (lengthM, headingDeg) segments walked at 1 m/s.
-     * [startYawDeg] is the heading of the very first sample (the aligned
-     * pose); later samples follow their segment heading, so a wrong-start
-     * walk is a segment whose heading differs from [startYawDeg].
-     */
-    private fun log(
-        segments: List<Pair<Double, Double>>,
-        startYawDeg: Double = segments.first().second,
-    ): CaptureLog {
-        val samples = mutableListOf<CaptureSample>()
-        var t = T0_NS
-        var d = 0.0
-        samples += CaptureSample(tNs = t, d = d, yaw = deg(startYawDeg))
-        for ((length, headingDeg) in segments) {
-            var walked = 0.0
-            while (walked < length - 1e-9) {
-                val step = minOf(STEP_M, length - walked)
-                walked += step
-                d += step
-                t += TICK_NS
-                samples += CaptureSample(tNs = t, d = d, yaw = deg(headingDeg))
-            }
-        }
-        return CaptureLog(
-            draftId = "nav-test",
-            startedAtEpochMs = 0L,
-            motionSource = "echo_builtin_pdr",
-            videoStartNs = T0_NS,
-            samples = samples,
-            marks = emptyList(),
-            startPhoto = "start.jpg",
-        )
-    }
-
-    private fun deg(v: Double) = v * PI / 180.0
 
     private class Run(val nav: Navigator, val events: List<NavEvent>)
 
@@ -120,7 +75,7 @@ class NavigatorTest {
     @Test
     fun happyPathArrivesWithTwoAnchors() = runTest {
         val align = alignFirst()
-        val run = runReplay(log(listOf(20.0 to 0.0, 15.0 to 90.0, 10.0 to 0.0))) { nav, update ->
+        val run = runReplay(walkLog(listOf(20.0 to 0.0, 15.0 to 90.0, 10.0 to 0.0))) { nav, update ->
             align(nav, update)
             // "I'm here" once the last leg is within the arrival prompt.
             if (nav.ui.value.legIndex == 2 && nav.ui.value.distanceToNextM <= 2.0 &&
@@ -146,7 +101,7 @@ class NavigatorTest {
     @Test
     fun wrongDirectionTurnGoesOffRoute() = runTest {
         val run = runReplay(
-            log(listOf(20.0 to 0.0, 8.0 to -90.0)),
+            walkLog(listOf(20.0 to 0.0, 8.0 to -90.0)),
             alignFirst(),
         )
         assertEquals(NavPhase.OFF_ROUTE, run.nav.ui.value.phase)
@@ -156,7 +111,7 @@ class NavigatorTest {
     @Test
     fun earlyTurnGoesUncertain() = runTest {
         val run = runReplay(
-            log(listOf(8.0 to 0.0, 10.0 to 90.0)),
+            walkLog(listOf(8.0 to 0.0, 10.0 to 90.0)),
             alignFirst(),
         )
         assertEquals(NavPhase.UNCERTAIN, run.nav.ui.value.phase)
@@ -169,7 +124,7 @@ class NavigatorTest {
     @Test
     fun overshootThirtyPercentGoesUncertain() = runTest {
         // Leg 1 is 20 m; UNCERTAIN at 20 + max(5, 30% of 20) = 26 m.
-        val run = runReplay(log(listOf(27.0 to 0.0)), alignFirst())
+        val run = runReplay(walkLog(listOf(27.0 to 0.0)), alignFirst())
         assertEquals(NavPhase.UNCERTAIN, run.nav.ui.value.phase)
         assertTrue(run.nav.ui.value.instruction.contains("uncertain"))
     }
@@ -181,7 +136,7 @@ class NavigatorTest {
         val events = mutableListOf<NavEvent>()
         var snapped = false
         val align = alignFirst()
-        val run = runReplay(log(listOf(20.0 to 0.0, 5.0 to 90.0))) { nav, update ->
+        val run = runReplay(walkLog(listOf(20.0 to 0.0, 5.0 to 90.0))) { nav, update ->
             align(nav, update)
             if (!snapped && update.distanceM >= 12.0) {
                 snapped = true
@@ -204,7 +159,7 @@ class NavigatorTest {
     fun wrongStartGoesOffRoute() = runTest {
         // Aligned facing 0°, then walks the first leg 70° off heading.
         val run = runReplay(
-            log(listOf(7.0 to 70.0), startYawDeg = 0.0),
+            walkLog(listOf(7.0 to 70.0), startYawDeg = 0.0),
             alignFirst(),
         )
         assertEquals(NavPhase.OFF_ROUTE, run.nav.ui.value.phase)
@@ -218,7 +173,7 @@ class NavigatorTest {
     fun corridorSnappingReducesOffsetWithin10m() = runTest {
         // Aligned at 0°, then walks straight with a steady 15° yaw offset.
         val run = runReplay(
-            log(listOf(10.0 to 15.0), startYawDeg = 0.0),
+            walkLog(listOf(10.0 to 15.0), startYawDeg = 0.0),
             alignFirst(),
         )
         assertEquals(NavPhase.WALK, run.nav.ui.value.phase)

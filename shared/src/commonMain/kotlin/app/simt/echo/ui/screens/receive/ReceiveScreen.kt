@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import app.simt.echo.platform.QrScannerView
 import app.simt.echo.transfer.TransferService
 import app.simt.echo.ui.components.EchoButton
+import app.simt.echo.ui.components.oneDecimal
 
 /**
  * Receive screen (plan §8.3 / W2-04): scanner with a rounded cutout, fetch
@@ -138,9 +139,4 @@ private fun ImportSheet(
         EchoButton(text = "Save", onClick = onSave, modifier = Modifier.fillMaxWidth())
         EchoButton(text = "Scan again", onClick = onRescan, modifier = Modifier.fillMaxWidth())
     }
-}
-
-private fun oneDecimal(value: Double): String {
-    val tenths = (value * 10).toLong()
-    return "${tenths / 10}.${tenths % 10}"
 }

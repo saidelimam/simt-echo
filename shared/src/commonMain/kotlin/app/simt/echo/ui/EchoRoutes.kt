@@ -38,7 +38,7 @@ sealed interface EchoRoute {
     data class Navigate(val routeId: String, val simulate: Boolean) : EchoRoute
 
     @Serializable
-    data class Arrived(val trialId: String) : EchoRoute
+    data class Arrived(val routeId: String) : EchoRoute
 
     @Serializable
     data object Settings : EchoRoute

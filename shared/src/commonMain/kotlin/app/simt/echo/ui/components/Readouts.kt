@@ -76,6 +76,16 @@ fun LandmarkCard(
 }
 
 /**
+ * One-decimal metre formatting shared by Record, Receive and Navigate
+ * ("23.4 m"). Truncates rather than rounds so the readout never shows
+ * distance the walker has not covered yet.
+ */
+fun oneDecimal(value: Double): String {
+    val tenths = (value * 10).toLong()
+    return "${tenths / 10}.${tenths % 10}"
+}
+
+/**
  * Vertical route timeline (plan Review screen): one row per node chip,
  * e.g. "Turn left · 23 m". Stateless; progress highlighting is W2-06.
  */
