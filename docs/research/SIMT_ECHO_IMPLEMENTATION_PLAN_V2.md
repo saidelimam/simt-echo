@@ -73,14 +73,22 @@ screens in §8.
 
 | Need | Found in track/link? (class, API) | ECHO adapter | Fallback (spec'd here) |
 |---|---|---|---|
-| Per-step distance + relative heading stream | _tbd_ | `TrackPlusMotionSource` | `BuiltInPdrMotionSource` (§6.1–6.2) |
-| Barometric pressure / altitude | _tbd_ | same | `TYPE_PRESSURE` in `AndroidImuSource` |
-| Camera-motion fusion (VO) | _tbd_ | bonus, only if exposed | none |
-| Peer discovery / pairing | _tbd_ | `LinkPeerTransport` | QR with IP:port (§5.4) |
-| Send arbitrary bytes to a peer | _tbd_ | same | `KtorLanTransport` (W2-03) |
-| Wear OS haptic channel | _tbd_ | W5-04 | phone haptics |
-| SIMT design tokens / fonts | _tbd_ | map into `EchoTheme` | tokens in §8.1 |
-| Build setup (AGP/Kotlin versions of root) | _tbd_ | decides Option A/B in W0-02 | standalone build |
+| Per-step distance + relative heading stream | Yes — `feature/track` `pdr/PdrEngine.kt`: `steps: StateFlow<Int>`, `currentPosition: StateFlow<Position>`, `headingDegrees: StateFlow<Float>`, `accuracy: StateFlow<TrackAccuracy>`, step events at sensor cadence — satisfies the plan decision rule (per-step + relative yaw, ≤ 2 h adapter). But `PdrEngine` is Android-only, driven by `TrackViewModel` in `simt-app`, and composing it into ECHO's KMP `shared` is not possible (see §4 architecture limit) | `TrackPlusMotionSource` (W1-01): consumes `PdrEngine` flows from `androidApp` behind the `MotionSource` seam, OR re-implements §6.1–6.2 natively where the app cannot be composed in | `BuiltInPdrMotionSource` (§6.1–6.2, specified in this document §6) — the only ECHO-owned implementation, and the one W1-01 ships |
+| Barometric pressure / altitude | Yes — `PdrEngine` consumes `TYPE_PRESSURE` internally; ECHO reads the sensor directly | Direct `TYPE_PRESSURE` listener in `AndroidImuSource` (W1-01), no dependency on `simt-app` internals | Same — this *is* the fallback; null pressure degrades `LEVEL_CHANGE` only |
+| Camera-motion fusion (VO) | Yes — `feature/track` `vio/` (`VioProvider`, `ArCorePositionProvider`, `VioFusionManager`) | None in v1: ARCore's exclusive camera would starve `CameraXRecorder` (W1-02), which records video concurrently | None (spec §12 keeps VIO out of the MVP) |
+| Peer discovery / pairing | Yes — `feature/link` `offline/OfflineTransport` + `OfflineTransportRouter` (Wi-Fi Aware → Wi-Fi Direct), NSD helpers, `LinkForegroundService`, TLS via `network/SecurityManager` | `LinkPeerTransport` (W2-03): discovery + transport-up-to-IP/SecurityManager TLS behind ECHO's `PeerTransport` seam, Launched from `androidApp` | QR with IP:port (§5.4) + `KtorLanTransport` (W2-03) |
+| Send arbitrary bytes to a peer | **No** — `LinkRepository`/`LinkRuntime` offer only `sendPulse`, `sendMessageToPeer` (validated short text), `sendLocationToPeer`; `LinkPeerMessageController` sends `String`. No file/blob/binary API exists | New byte path in `simt-app` (producer-first change) OR ECHO's own transport — envelope/chunking not available as-is | `KtorLanTransport` (W2-03): Ktor HTTP offer/fetch over LAN, the ECHO-owned path |
+| Wear OS haptic channel | Yes — `data/wear` `WearDataLayerManager`, `WearSyncProtocol` | W5-04 reuses the Data Layer transport; ECHO contributes `HapticPattern` messages | Phone haptics (`AndroidHaptics`, owned by ECHO — no helper exists in `simt-app` core) |
+| SIMT design tokens / fonts | Yes — `core/ui` theme (`Color`, `Theme`, `Type`, `Shape`, `Motion`) | Port dark-first tokens onto `core/ui` conventions into `EchoTheme` (done in W0-03); no linked dependency | Tokens in §8.1 (implemented in W0-03) |
+| Build setup (AGP/Kotlin versions of root) | `simt-app`: AGP 9.5.0 / Kotlin 2.4.21. `simt-echo` aligned to AGP 9.5.0 / Kotlin 2.4.21 / CMP 1.12.0 in W0-02 | Standalone `simt-echo` build (Option B); version alignment is by pin, not by linked module | Same — the standalone build *is* the shipped path |
+
+> **Architecture limit that governs every row above:** `simt-app` is an
+> Android-library + Hilt codebase; ECHO's `shared/` is KMP. Code is *linked*
+> only where `androidApp` is the consumer; everywhere else ECHO *ports the
+> pattern* into `shared/`. Copying Track's PDR wholesale into ECHO would fork
+> a tested sensor stack three days before the deadline, so W1-01 implements
+> §6.1–6.2 natively and uses `PdrEngine`'s conventions (per-step flows,
+> tracker accuracy states) as the reference, not a binary dependency.
 
 ## 3. Architecture
 
