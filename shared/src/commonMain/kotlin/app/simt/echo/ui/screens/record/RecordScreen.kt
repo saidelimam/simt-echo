@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import app.simt.echo.capture.CaptureSession
 import app.simt.echo.capture.CaptureState
 import app.simt.echo.data.DraftRepository
+import app.simt.echo.model.EchoConfig
 import app.simt.echo.platform.currentEpochMs
 import app.simt.echo.platform.rememberCameraRecorder
 import app.simt.echo.platform.rememberHaptics
@@ -49,11 +50,12 @@ fun RecordScreen(
     drafts: DraftRepository,
     onSaved: () -> Unit,
     modifier: Modifier = Modifier,
+    config: EchoConfig = EchoConfig(),
 ) {
     val motion = rememberMotionSource()
     val camera = rememberCameraRecorder()
     val haptics = rememberHaptics()
-    val session = remember(motion, camera, haptics, drafts) {
+    val session = remember(motion, camera, haptics, drafts, config) {
         CaptureSession(
             motion = motion,
             camera = camera,
@@ -62,6 +64,7 @@ fun RecordScreen(
             scope = CoroutineScope(Dispatchers.Default),
             nowMs = { currentEpochMs() },
             newDraftId = { "draft-${Random.nextInt(1_000_000)}" },
+            config = config,
         )
     }
     val viewModel = remember(session) { RecordViewModel(session) }

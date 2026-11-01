@@ -25,15 +25,16 @@ data class PressureSample(val tNs: Long, val hPa: Double)
  * scalar distance smoothing) follows the problem as already solved in
  * `simt-app`'s track module — copied conventions, vendored here as
  * ECHO-owned code with no dependency on that repo. Thresholds are spec
- * constants; calibration (step K) lands in W4-02 and only touches [k].
+ * constants; calibration (step K) lands in W4-02 and only touches [stepK].
  *
  * The engine is pure: feed samples in, read [updates] out. Android
  * supplies samples from `SensorManager` (see `AndroidImuSource`).
  */
 class PdrEngine(
     /** Weinberg step-length constant, calibratable (W4-02). */
-    var k: Double = 0.48,
-) : MotionSource {
+    k: Double = 0.48,
+) : MotionSource, StepCalibratable {
+    override var stepK: Double = k
 
     private val _updates = MutableSharedFlow<MotionUpdate>(extraBufferCapacity = 128)
     override val updates: Flow<MotionUpdate> = _updates.asSharedFlow()
@@ -142,7 +143,7 @@ class PdrEngine(
 
     private fun acceptStep(tNs: Long) {
         val range = (amax - amin).coerceAtLeast(0.0)
-        val length = (k * range.pow(0.25)).coerceIn(0.35, 0.95)
+        val length = (stepK * range.pow(0.25)).coerceIn(0.35, 0.95)
         stepCount += 1
         distanceM += length
         lastStepNs = tNs

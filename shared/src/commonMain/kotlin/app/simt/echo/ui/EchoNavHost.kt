@@ -23,12 +23,12 @@ import app.simt.echo.ui.screens.detail.RouteDetailScreen
 import app.simt.echo.ui.screens.navigate.NavigateScreen
 import app.simt.echo.ui.screens.processing.ProcessingScreen
 import app.simt.echo.ui.screens.processing.ProcessingViewModel
-import app.simt.echo.ui.screens.PlaceholderScreen
-import app.simt.echo.ui.screens.PlaceholderViewModel
 import app.simt.echo.ui.screens.receive.ReceiveScreen
 import app.simt.echo.ui.screens.record.RecordScreen
 import app.simt.echo.ui.screens.review.ReviewScreen
 import app.simt.echo.ui.screens.review.ReviewViewModel
+import app.simt.echo.ui.screens.settings.SettingsScreen
+import app.simt.echo.ui.screens.settings.SettingsViewModel
 import app.simt.echo.ui.screens.share.ShareScreen
 
 /**
@@ -58,6 +58,7 @@ fun EchoNavHost(
             RecordScreen(
                 drafts = graph.draftRepository,
                 onSaved = { navController.popBackStack() },
+                config = graph.configRepository.get(),
             )
         }
         composable<EchoRoute.Review> { entry ->
@@ -144,6 +145,7 @@ fun EchoNavHost(
                 routes = graph.routeRepository,
                 onArrived = { navController.navigateTo(EchoRoute.Arrived(it)) },
                 onBack = { navController.popBackStack() },
+                config = graph.configRepository.get(),
             )
         }
         composable<EchoRoute.Arrived> { entry ->
@@ -155,8 +157,19 @@ fun EchoNavHost(
             )
         }
         composable<EchoRoute.Settings> {
-            val vm = remember { PlaceholderViewModel("Settings", "Calibration lands in W4-02.") }
-            PlaceholderScreen(vm, "Back home", { navController.popBackStack() })
+            // Back-stack-scoped like every other screen ViewModel
+            // (review 0001 pattern; review 0002 R2 for this regression).
+            val vm: SettingsViewModel = viewModel(
+                factory = viewModelFactory {
+                    addInitializer(SettingsViewModel::class) {
+                        SettingsViewModel(graph.configRepository)
+                    }
+                },
+            )
+            SettingsScreen(
+                viewModel = vm,
+                onBack = { navController.popBackStack() },
+            )
         }
     }
 }

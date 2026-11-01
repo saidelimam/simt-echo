@@ -89,6 +89,9 @@ class CaptureSession(
         val id = newDraftId()
         draftId = id
         startedAtEpochMs = nowMs()
+        // Calibrated geometry in, raw sensors out: the configured step K
+        // reaches any calibratable source (W4-02); others ignore it.
+        (motion as? StepCalibratable)?.stepK = config.stepK
         // Subscribe before motion starts so no early step is lost.
         collectJob = scope.launch { motion.updates.collect(::onUpdate) }
         camera.takePhoto(drafts.draftFilePath(id, START_PHOTO))

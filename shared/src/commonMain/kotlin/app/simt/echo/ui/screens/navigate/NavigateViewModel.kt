@@ -3,6 +3,7 @@ package app.simt.echo.ui.screens.navigate
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.simt.echo.data.RouteRepository
+import app.simt.echo.model.EchoConfig
 import app.simt.echo.nav.NavEvent
 import app.simt.echo.nav.NavInput
 import app.simt.echo.nav.NavUi
@@ -25,11 +26,12 @@ class NavigateViewModel(
     routes: RouteRepository,
     private val motion: MotionSource,
     private val haptics: Haptics,
+    config: EchoConfig = EchoConfig(),
     private val onArrived: (String) -> Unit,
 ) : ViewModel() {
 
     private val route = routes.get(routeId)
-    private val navigator = route?.let(::Navigator)
+    private val navigator = route?.let { Navigator(it, config) }
 
     val ui: StateFlow<NavUi?> =
         navigator?.ui ?: MutableStateFlow<NavUi?>(null).asStateFlow()
