@@ -5,9 +5,11 @@ import app.simt.echo.data.FileStore
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.platform.PeerTransport
 import app.simt.echo.platform.Platform
+import app.simt.echo.platform.createHttpClient
 import app.simt.echo.platform.createPeerTransport
 import app.simt.echo.platform.createPlatform
 import app.simt.echo.platform.currentEpochMs
+import app.simt.echo.transfer.EchoApiClient
 import app.simt.echo.transfer.TransferService
 import okio.FileSystem
 import okio.Path.Companion.toPath
@@ -22,6 +24,13 @@ import okio.Path.Companion.toPath
  */
 class AppGraph(
     val platform: Platform = createPlatform(),
+    /**
+     * Cloud API base URL + app token (plan §0.6: secrets never ship in
+     * git). Empty in previews/tests; `EchoApiClient` fails closed then.
+     * Production passes androidApp BuildConfig values (local.properties).
+     */
+    val apiBaseUrl: String = "",
+    val appToken: String = "",
 ) {
     /** Root of all on-disk state (plan §5.3). Empty only in previews/tests. */
     val fileStore: FileStore by lazy {
@@ -30,6 +39,11 @@ class AppGraph(
 
     val routeRepository: RouteRepository by lazy { RouteRepository(fileStore) }
     val draftRepository: DraftRepository by lazy { DraftRepository(fileStore) }
+
+    /** Cloud API client (W3-02): consent upload, job polling, deletion. */
+    val apiClient: EchoApiClient by lazy {
+        EchoApiClient(createHttpClient(), apiBaseUrl, appToken)
+    }
 
     /** LAN bundle transport + offer/receive service (W2-03). */
     val peerTransport: PeerTransport by lazy { createPeerTransport() }

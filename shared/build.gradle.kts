@@ -58,6 +58,9 @@ kotlin {
             implementation(libs.androidx.lifecycle.viewmodel.compose)
             // W2-02 BundleCodec: SHA-256 + AES-GCM (provider actual below).
             implementation(libs.cryptography.core)
+            // W3-02 EchoApiClient: Ktor client in commonMain (all targets,
+            // incl. iOS); engines stay platform-specific (OkHttp/Darwin).
+            implementation(libs.ktor.client.core)
             // W2-04 Share: QR generation (Compose Multiplatform painter).
             implementation(libs.qrose)
             // W4-05 relay client: core only; engines stay platform-side.
@@ -86,6 +89,8 @@ kotlin {
         }
         iosMain.dependencies {
             implementation(libs.cryptography.provider.optimal)
+            // W3-02: Darwin engine for the cloud API client.
+            implementation(libs.ktor.client.darwin)
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
@@ -94,6 +99,8 @@ kotlin {
             implementation(libs.okio.fakefilesystem)
             // runTest for flow-collecting engine tests (W1-01).
             implementation(libs.kotlinx.coroutines.test)
+            // MockEngine for the cloud API client tests (W3-02).
+            implementation(libs.ktor.client.mock)
         }
     }
 }

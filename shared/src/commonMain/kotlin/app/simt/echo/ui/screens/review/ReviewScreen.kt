@@ -52,6 +52,7 @@ fun ReviewScreen(
     viewModel: ReviewViewModel,
     onSaved: (String) -> Unit,
     onBack: () -> Unit,
+    onFindLandmarks: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val ui by viewModel.ui.collectAsState()
@@ -114,6 +115,11 @@ fun ReviewScreen(
         ui.error?.let {
             Text(text = it, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.error)
         }
+        EchoButton(
+            text = "Find landmarks",
+            onClick = onFindLandmarks,
+            modifier = Modifier.fillMaxWidth(),
+        )
         EchoButton(
             text = if (ui.saving) "Saving…" else "Save ECHO",
             onClick = { viewModel.save(onSaved) },

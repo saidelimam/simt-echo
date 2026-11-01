@@ -2,18 +2,18 @@ package app.simt.echo.ui.screens.review
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import app.simt.echo.capture.CaptureSession
 import app.simt.echo.data.DraftRepository
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.media.CropBox
+import app.simt.echo.media.KEYFRAME_MAX_SIDE
 import app.simt.echo.media.MediaTools
-import app.simt.echo.media.keyframeSpecs
+import app.simt.echo.media.ensureKeyframes
+import app.simt.echo.media.keyframeFileName
 import app.simt.echo.model.Confirmation
 import app.simt.echo.model.EchoRoute
 import app.simt.echo.model.Landmark
 import app.simt.echo.model.LandmarkSource
 import app.simt.echo.model.defaultCue
-import app.simt.echo.model.NodeType
 import app.simt.echo.model.PathPoint
 import app.simt.echo.model.RouteNode
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -44,9 +44,6 @@ data class ReviewUiState(
     val savedRouteId: String? = null,
     val error: String? = null,
 )
-
-/** Keyframes are extracted at most this wide (plan W1-05: ≤ 1280 px). */
-const val REVIEW_MAX_SIDE = 1280
 
 /**
  * Review + manual landmark editor (plan W2-01). Pure orchestration over
@@ -86,7 +83,7 @@ class ReviewViewModel(
                     _ui.update { it.copy(loading = false, missing = true) }
                     return@launch
                 }
-                ensureKeyframes(loaded)
+                ensureKeyframes(drafts, media, draftId, loaded)
                 route = loaded
                 publish(loaded)
             } catch (e: Exception) {
@@ -141,14 +138,14 @@ class ReviewViewModel(
             try {
                 val current = route ?: return@launch
                 val node = current.nodes.firstOrNull { it.id == nodeId } ?: return@launch
-                val heroName = heroFileName(current, node)
+                val heroName = keyframeFileName(current, node)
                     ?: throw IllegalStateException("No keyframe for this node yet.")
                 val landmarkId = newId()
                 val cropName = "kf/manual_$landmarkId.jpg"
                 media.cropJpeg(
                     drafts.draftFilePath(draftId, heroName),
                     box,
-                    REVIEW_MAX_SIDE,
+                    KEYFRAME_MAX_SIDE,
                     drafts.draftFilePath(draftId, cropName),
                 )
                 val landmark = Landmark(
@@ -253,40 +250,12 @@ class ReviewViewModel(
                 nodes = loaded.nodes.map { node ->
                     ReviewNode(
                         node = node,
-                        heroBytes = heroFileName(loaded, node)
+                        heroBytes = keyframeFileName(loaded, node)
                             ?.let { drafts.readDraftFile(draftId, it) },
                         landmarks = loaded.landmarks.filter { landmark -> landmark.nodeId == node.id },
                     )
                 },
             )
-        }
-    }
-
-    /** File inside the draft dir holding [node]'s hero, or null when none yet. */
-    private fun heroFileName(route: EchoRoute, node: RouteNode): String? {
-        if (node.type == NodeType.START) return CaptureSession.START_PHOTO
-        val spec = keyframeSpecs(listOf(node)).firstOrNull() ?: return null
-        if (spec.timesMs.isEmpty()) return null
-        return spec.fileName(spec.heroIndex)
-    }
-
-    /** Extracts any keyframe file missing from the draft (idempotent). */
-    private suspend fun ensureKeyframes(route: EchoRoute) {
-        val videoMissing = drafts.readDraftFile(draftId, CaptureSession.VIDEO_FILE) == null
-        for (node in route.nodes) {
-            if (node.type == NodeType.START) continue
-            val spec = keyframeSpecs(listOf(node)).firstOrNull() ?: continue
-            spec.timesMs.forEachIndexed { index, atMs ->
-                val name = spec.fileName(index)
-                if (drafts.readDraftFile(draftId, name) != null) return@forEachIndexed
-                if (videoMissing) return@forEachIndexed
-                media.extractFrame(
-                    drafts.draftFilePath(draftId, CaptureSession.VIDEO_FILE),
-                    atMs,
-                    REVIEW_MAX_SIDE,
-                    drafts.draftFilePath(draftId, name),
-                )
-            }
         }
     }
 }

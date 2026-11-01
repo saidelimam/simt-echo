@@ -1,6 +1,7 @@
 package app.simt.echo.data
 
 import app.simt.echo.model.CaptureLog
+import app.simt.echo.transfer.JobRecord
 import app.simt.echo.model.EchoJson
 import app.simt.echo.model.EchoRoute
 import kotlinx.serialization.encodeToString
@@ -38,6 +39,22 @@ class DraftRepository(private val store: FileStore) {
     fun readDraftFile(draftId: String, fileName: String): ByteArray? =
         store.readBytes("$DRAFTS_DIR/$draftId/$fileName")
 
+    /** Persists the cloud job record (`job.json`) next to the draft. */
+    fun saveJobRecord(draftId: String, record: JobRecord) {
+        store.writeText("$DRAFTS_DIR/$draftId/$JOB_FILE", EchoJson.encodeToString(record))
+    }
+
+    /** The persisted cloud job record, or null when never submitted. */
+    fun loadJobRecord(draftId: String): JobRecord? {
+        val text = store.readText("$DRAFTS_DIR/$draftId/$JOB_FILE") ?: return null
+        return EchoJson.decodeFromString<JobRecord>(text)
+    }
+
+    /** Clears the persisted cloud job record (delete-now, resubmit). */
+    fun clearJobRecord(draftId: String) {
+        store.deleteRecursively("$DRAFTS_DIR/$draftId/$JOB_FILE")
+    }
+
     /** Draft ids with a capture present, newest directory name last. */
     fun listDraftIds(): List<String> =
         store.list(DRAFTS_DIR).map { it.name }.sorted()
@@ -52,5 +69,6 @@ class DraftRepository(private val store: FileStore) {
 
     private companion object {
         const val DRAFTS_DIR = "drafts"
+        const val JOB_FILE = "job.json"
     }
 }

@@ -2,6 +2,7 @@ package app.simt.echo
 
 import android.app.Application
 import app.simt.echo.platform.AndroidPlatform
+import app.simt.echo.BuildConfig
 
 /**
  * Process entrypoint. Owns the single [AppGraph]; slices register their
@@ -9,6 +10,10 @@ import app.simt.echo.platform.AndroidPlatform
  */
 class EchoApplication : Application() {
     val graph: AppGraph by lazy {
-        AppGraph(platform = AndroidPlatform(dataDir = filesDir.absolutePath))
+        AppGraph(
+            platform = AndroidPlatform(dataDir = filesDir.absolutePath),
+            apiBaseUrl = BuildConfig.WORKERS_API_BASE,
+            appToken = BuildConfig.ECHO_APP_TOKEN,
+        )
     }
 }
