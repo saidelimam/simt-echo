@@ -89,6 +89,8 @@ fun SettingsScreen(
             text = "Hides landmark cards: turns and distance only.",
             style = MaterialTheme.typography.bodyMedium,
         )
+        EchoButton(text = "Export CSV", onClick = viewModel::exportTrials)
+        ui.exportNote?.let { Text(text = it) }
 
         Text(text = "Navigation", style = MaterialTheme.typography.titleMedium)
         Row(

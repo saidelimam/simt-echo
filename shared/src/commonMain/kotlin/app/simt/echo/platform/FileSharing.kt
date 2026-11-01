@@ -27,5 +27,8 @@ interface FileSharing {
 /** Plain containers travel unencrypted (W2-07 privacy warning). */
 const val ECHO_MIME = "application/octet-stream"
 
+/** Trial-protocol CSV export (W6-01). */
+const val CSV_MIME = "text/csv"
+
 @Composable
 expect fun rememberFileSharing(): FileSharing

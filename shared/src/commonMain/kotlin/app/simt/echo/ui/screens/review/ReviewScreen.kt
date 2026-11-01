@@ -40,6 +40,7 @@ import app.simt.echo.ai.AiCandidate
 import app.simt.echo.ai.CandidateMerger
 import app.simt.echo.ai.MaskPath
 import app.simt.echo.media.CropBox
+import app.simt.echo.media.cropBoxFromRect
 import app.simt.echo.model.Landmark
 import app.simt.echo.model.NodeType
 import app.simt.echo.platform.decodeImage
@@ -440,17 +441,7 @@ private fun DrawOverlay(
                         text = "Use box",
                         onClick = {
                             val rect = current ?: return@EchoButton
-                            val w = widthPx.coerceAtLeast(1f)
-                            val h = heightPx.coerceAtLeast(1f)
-                            onConfirm(
-                                nodeId,
-                                CropBox(
-                                    left = (minOf(rect.left, rect.right) / w).coerceIn(0f, 1f),
-                                    top = (minOf(rect.top, rect.bottom) / h).coerceIn(0f, 1f),
-                                    right = (maxOf(rect.left, rect.right) / w).coerceIn(0f, 1f),
-                                    bottom = (maxOf(rect.top, rect.bottom) / h).coerceIn(0f, 1f),
-                                ),
-                            )
+                            onConfirm(nodeId, cropBoxFromRect(rect, widthPx, heightPx))
                         },
                         enabled = current != null && title.isNotBlank(),
                     )

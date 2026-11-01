@@ -198,14 +198,14 @@ class TransferService(
         // overwrite each other's pending plaintext export.
         val name = echoFileName(route.name).removeSuffix(".echo") +
             "-${route.routeId}.echo"
-        val relative = "$EXPORTS_DIR/$name"
+        val relative = "${FileStore.EXPORTS_DIR}/$name"
         store.writeBytes(relative, container)
         return store.resolvePath(relative)
     }
 
     /** Deletes every pending plaintext export (bounded lifetime, R1). */
     fun purgePlainExports() {
-        store.deleteRecursively(EXPORTS_DIR)
+        store.deleteRecursively(FileStore.EXPORTS_DIR)
     }
 
     /**
@@ -234,7 +234,6 @@ class TransferService(
     }
 
     private companion object {
-        const val EXPORTS_DIR = "exports"
         /** Hard cap for a picked `.echo` file, enforced pre-decode (R1). */
         const val MAX_ECHO_FILE_BYTES = 50_000_000
         val PATH_HOSTILE = setOf('/', '\\', ':', '*', '?', '"', '<', '>', '|', ' ')

@@ -2,6 +2,7 @@ package app.simt.echo.media
 
 import app.simt.echo.model.NodeType
 import app.simt.echo.model.RouteNode
+import androidx.compose.ui.geometry.Rect
 import okio.Path
 
 /**
@@ -113,5 +114,24 @@ fun padBox(box: CropBox, padFraction: Float = 0.08f): CropBox {
         top = (box.top - h * padFraction).coerceIn(0f, 1f),
         right = (box.right + w * padFraction).coerceIn(0f, 1f),
         bottom = (box.bottom + h * padFraction).coerceIn(0f, 1f),
+    )
+}
+
+/**
+ * Maps a canvas-pixel [rect] onto the unit square of a [width] ×
+ * [height] px canvas (the review draw overlay's drag). Inverted drags
+ * (right→left, bottom→top) come back unrotated, and edges are clamped
+ * to `[0, 1]`, so a drag that extends past the canvas yields a
+ * full-frame crop. A zero-size canvas measures as 1 px — the overlay's
+ * confirm button is disabled until the canvas lays out anyway.
+ */
+fun cropBoxFromRect(rect: Rect, width: Float, height: Float): CropBox {
+    val w = width.coerceAtLeast(1f)
+    val h = height.coerceAtLeast(1f)
+    return CropBox(
+        left = (minOf(rect.left, rect.right) / w).coerceIn(0f, 1f),
+        top = (minOf(rect.top, rect.bottom) / h).coerceIn(0f, 1f),
+        right = (maxOf(rect.left, rect.right) / w).coerceIn(0f, 1f),
+        bottom = (maxOf(rect.top, rect.bottom) / h).coerceIn(0f, 1f),
     )
 }
