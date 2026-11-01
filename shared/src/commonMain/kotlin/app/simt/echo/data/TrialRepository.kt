@@ -17,13 +17,15 @@ class TrialRepository(private val store: FileStore) {
 
     fun list(): List<Trial> =
         store.list(TRIALS_DIR)
-            .filter { store.exists("$TRIALS_DIR/${it.name}/$TRIAL_FILE") }
-            .mapNotNull { get(it.name) }
+            .filter { it.name.endsWith(".json") }
+            .mapNotNull { get(it.name.removeSuffix(".json")) }
             .sortedBy { it.startedAtEpochMs }
 
+    /** One trial, or null when absent/corrupt — a partial write (process
+     * death mid-save) must never throw into list/export (review 0002). */
     fun get(trialId: String): Trial? {
         val text = store.readText(trialFile(trialId)) ?: return null
-        return EchoJson.decodeFromString<Trial>(text)
+        return runCatching { EchoJson.decodeFromString<Trial>(text) }.getOrNull()
     }
 
     fun save(trial: Trial) {
@@ -31,14 +33,16 @@ class TrialRepository(private val store: FileStore) {
     }
 
     fun delete(trialId: String) {
-        store.deleteRecursively("$TRIALS_DIR/$trialId")
+        store.deleteRecursively(trialFile(trialId))
     }
 
     /**
-     * One CSV for the whole protocol: a run row per trial, then one drift
-     * row per taped marker. Machine-readable with zero hand-editing —
-     * every column the protocol names is present, empty only when the run
-     * recorded nothing for it.
+     * One parseable CSV for the whole protocol: one header, one row per
+     * run, every §11 field a column. Per-marker drift rows stay in the
+     * trial JSON (they are per-marker, not per-run); the CSV carries
+     * their count and absolute-error summary so drift is reportable from
+     * the CSV alone. The run's [Trial.mode] is the single baseline
+     * record — there is no second, contradictable flag (review 0002).
      */
     fun exportCsv(trials: List<Trial> = list()): String {
         val runRows = Csv.rowsOf(
@@ -53,37 +57,29 @@ class TrialRepository(private val store: FileStore) {
             { it.arrived },
             { it.anchors },
             { it.confirmations },
+            { it.mistakenConfirmations },
             { it.uncertainEpisodes },
             { it.offRouteEpisodes },
-            { it.baselineMode },
+            { it.lighting },
+            { it.holdingStyle },
+            { it.notes },
+            { it.markers.size },
+            { t -> t.markers.map { m -> kotlin.math.abs(m.errorM) }.takeIf { it.isNotEmpty() }?.average() },
+            { t -> t.markers.map { m -> kotlin.math.abs(m.errorM) }.takeIf { it.isNotEmpty() }?.maxOrNull() },
         )
-        val markerRows = trials.flatMap { trial ->
-            Csv.rowsOf(
-                trial.markers,
-                { trial.trialId },
-                { it.expectedNodeDistanceM },
-                { it.estimatedDistanceM },
-                { it.errorM },
-                { it.atEpochMs },
-            )
-        }
-        return Csv.table(RUN_HEADERS, runRows) +
-            "\n" +
-            Csv.table(MARKER_HEADERS, markerRows)
+        return Csv.table(RUN_HEADERS, runRows)
     }
 
-    private fun trialFile(trialId: String) = "$TRIALS_DIR/$trialId/$TRIAL_FILE"
+    private fun trialFile(trialId: String) = "$TRIALS_DIR/$trialId.json"
 
     private companion object {
         const val TRIALS_DIR = "trials"
-        const val TRIAL_FILE = "trial.json"
         val RUN_HEADERS = listOf(
             "trialId", "routeId", "mode", "device", "startedAtEpochMs",
             "durationS", "distanceM", "arrived", "anchors", "confirmations",
-            "uncertainEpisodes", "offRouteEpisodes", "baselineMode",
-        )
-        val MARKER_HEADERS = listOf(
-            "trialId", "expectedM", "estimatedM", "errorM", "atEpochMs",
+            "mistakenConfirmations", "uncertainEpisodes", "offRouteEpisodes",
+            "lighting", "holdingStyle", "notes",
+            "markerCount", "meanAbsDriftM", "maxAbsDriftM",
         )
     }
 }

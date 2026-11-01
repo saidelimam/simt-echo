@@ -21,6 +21,8 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import app.simt.echo.data.RouteRepository
+import app.simt.echo.data.TrialRepository
+import app.simt.echo.model.shouldShowLandmarkCards
 import app.simt.echo.nav.NavPhase
 import app.simt.echo.nav.NavUi
 import app.simt.echo.platform.KeepScreenOn
@@ -50,6 +52,9 @@ fun NavigateScreen(
     onArrived: (String) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    trials: TrialRepository? = null,
+    device: String = "unknown",
+    baselineMode: Boolean = false,
 ) {
     val motion = rememberMotionSource()
     val haptics = rememberHaptics()
@@ -62,7 +67,7 @@ fun NavigateScreen(
         key = routeId,
         factory = viewModelFactory {
             addInitializer(NavigateViewModel::class) {
-                NavigateViewModel(routeId, routes, motion, haptics, onArrived)
+                NavigateViewModel(routeId, routes, motion, haptics, trials, device, baselineMode, onArrived = onArrived)
             }
         },
     )
@@ -100,7 +105,9 @@ fun NavigateScreen(
         DirectionArrow(angleRad = nav.arrowRad.toFloat())
         Text(text = nav.instruction, style = MaterialTheme.typography.titleLarge)
         DistanceReadout(text = "${oneDecimal(maxOf(0.0, nav.distanceToNextM))} m")
-        nav.landmark?.let { landmark ->
+        // Baseline (SENSOR_ONLY) runs show no landmark cards: turns and
+        // distance only, so the comparison against ECHO stays honest.
+        if (shouldShowLandmarkCards(viewModel.baselineMode)) nav.landmark?.let { landmark ->
             val cropBytes = remember(landmark.cropAssetId) {
                 landmark.cropAssetId?.let { routes.readAsset(routeId, it) }
             }
@@ -135,14 +142,19 @@ private fun NavigateActions(
         verticalArrangement = Arrangement.spacedBy(8.dp),
         modifier = modifier.fillMaxWidth(),
     ) {
+        val showCards = shouldShowLandmarkCards(viewModel.baselineMode)
         when (nav.phase) {
             NavPhase.CONFIRM -> {
-                EchoButton(text = "I see it", onClick = viewModel::seeLandmark, modifier = Modifier.fillMaxWidth())
+                if (showCards) {
+                    EchoButton(text = "I see it", onClick = viewModel::seeLandmark, modifier = Modifier.fillMaxWidth())
+                }
                 PillButton(text = "Not yet", onClick = viewModel::notYet, modifier = Modifier.fillMaxWidth())
             }
 
             NavPhase.UNCERTAIN -> {
-                EchoButton(text = "I see it", onClick = viewModel::seeLandmark, modifier = Modifier.fillMaxWidth())
+                if (showCards) {
+                    EchoButton(text = "I see it", onClick = viewModel::seeLandmark, modifier = Modifier.fillMaxWidth())
+                }
                 PillButton(text = "Lost", onClick = viewModel::lost, modifier = Modifier.fillMaxWidth())
             }
 
@@ -152,12 +164,13 @@ private fun NavigateActions(
             }
 
             NavPhase.WALK, NavPhase.APPROACH, NavPhase.TURNING -> {
-                if (nav.landmark != null) {
+                if (showCards && nav.landmark != null) {
                     EchoButton(text = "I see it", onClick = viewModel::seeLandmark, modifier = Modifier.fillMaxWidth())
                 }
                 if (nav.phase == NavPhase.WALK && viewModel.isLastLeg(nav)) {
                     EchoButton(text = "I'm here", onClick = viewModel::imHere, modifier = Modifier.fillMaxWidth())
                 }
+                PillButton(text = "At marker", onClick = viewModel::atMarker, modifier = Modifier.fillMaxWidth())
                 PillButton(text = "Lost", onClick = viewModel::lost, modifier = Modifier.fillMaxWidth())
             }
 

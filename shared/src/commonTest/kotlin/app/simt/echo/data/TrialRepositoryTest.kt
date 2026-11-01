@@ -31,7 +31,9 @@ class TrialRepositoryTest {
         confirmations = 2,
         uncertainEpisodes = 1,
         offRouteEpisodes = 0,
-        baselineMode = mode == TrialMode.SENSOR_ONLY,
+        mistakenConfirmations = 1,
+        lighting = "bright, even",
+        holdingStyle = "hand, portrait",
         markers = listOf(DriftMarker(20.0, 21.5, 2_000L)),
     )
 
@@ -58,28 +60,50 @@ class TrialRepositoryTest {
     }
 
     @Test
-    fun twoTrialsOfEachModeExportToOneCsv() {
-        val all = listOf(
-            trial("e1", TrialMode.ECHO),
-            trial("e2", TrialMode.ECHO),
-            trial("s1", TrialMode.SENSOR_ONLY),
-            trial("s2", TrialMode.SENSOR_ONLY),
-        )
+    fun trialsLiveAtTheFlatSpecPath() {
+        trials.save(trial("t1", TrialMode.ECHO))
+        assertTrue(store.exists("trials/t1.json"))
+    }
+
+    @Test
+    fun corruptTrialFileIsSkippedNotFatal() {
+        trials.save(trial("good", TrialMode.ECHO))
+        store.writeText("trials/broken.json", "{partial write")
+        assertEquals(listOf("good"), trials.list().map { it.trialId })
+        assertNull(trials.get("broken"))
+        assertTrue(trials.exportCsv().contains("good"))
+    }
+
+    @Test
+    fun fivePlusFiveProtocolExportsOneExactCsv() {
+        // The §11 protocol size: 5 ECHO + 5 SENSOR_ONLY, alternating.
+        val all = (1..5).flatMap { i ->
+            listOf(trial("e$i", TrialMode.ECHO), trial("s$i", TrialMode.SENSOR_ONLY))
+        }
         all.forEach(trials::save)
         val csv = trials.exportCsv()
 
         val lines = csv.lines().filter { it.isNotEmpty() }
-        // Run header + 4 run rows, blank separator, marker header + 4 marker rows.
-        assertTrue(lines.first().startsWith("trialId,routeId,mode,"))
-        // Run rows carry the route id; marker rows carry distances instead.
-        assertEquals(4, lines.count { it.contains("route-1") })
-        assertTrue(lines.any { it.startsWith("trialId,expectedM,estimatedM,errorM,") })
-        // Every protocol field present: no hand-editing to add a column.
-        assertTrue(csv.contains("uncertainEpisodes"))
-        assertTrue(csv.contains("offRouteEpisodes"))
-        assertTrue(csv.contains("baselineMode"))
-        // Drift transcribed with its signed error.
-        assertTrue(csv.contains("20.0,21.5,1.5"))
+        // One header + 10 run rows. No second table, no separator rows:
+        // a standard CSV reader sees exactly the protocol.
+        assertEquals(11, lines.size)
+        assertEquals(
+            "trialId,routeId,mode,device,startedAtEpochMs,durationS,distanceM,arrived," +
+                "anchors,confirmations,mistakenConfirmations,uncertainEpisodes,offRouteEpisodes," +
+                "lighting,holdingStyle,notes,markerCount,meanAbsDriftM,maxAbsDriftM",
+            lines.first(),
+        )
+        // Exact row: quoting for the comma-bearing §11 fields, drift
+        // summarised from the marker (signed +1.5 → abs 1.5), mode the
+        // single baseline record.
+        assertEquals(
+            "e1,route-1,ECHO,pixel-8,1000,61.5,62.0,true,3,2,1,1,0," +
+                "\"bright, even\",\"hand, portrait\",,1,1.5,1.5",
+            lines[1],
+        )
+        assertTrue(lines.any { it.startsWith("s1,route-1,SENSOR_ONLY,") })
+        assertEquals(5, lines.count { ",ECHO," in it })
+        assertEquals(5, lines.count { ",SENSOR_ONLY," in it })
     }
 
     @Test

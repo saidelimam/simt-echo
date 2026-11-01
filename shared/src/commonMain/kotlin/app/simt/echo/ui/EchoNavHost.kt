@@ -144,6 +144,11 @@ fun EchoNavHost(
                 routes = graph.routeRepository,
                 onArrived = { navController.navigateTo(EchoRoute.Arrived(it)) },
                 onBack = { navController.popBackStack() },
+                trials = graph.trialRepository,
+                device = graph.platform.name,
+                // Wired to EchoConfig.baselineMode when W4-02's
+                // ConfigRepository lands on this graph (merge order R4).
+                baselineMode = false,
             )
         }
         composable<EchoRoute.Arrived> { entry ->
@@ -152,6 +157,7 @@ fun EchoNavHost(
                 routeId = route.routeId,
                 routes = graph.routeRepository,
                 onDone = { navController.popBackStack(EchoRoute.Home, false) },
+                trials = graph.trialRepository,
             )
         }
         composable<EchoRoute.Settings> {

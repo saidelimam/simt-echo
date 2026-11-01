@@ -51,10 +51,16 @@ data class Trial(
     val anchors: Int = 0,
     /** Explicit landmark confirmations (`SeeLandmark` / "I see it"). */
     val confirmations: Int = 0,
+    /** Confirmations the field partner judged mistaken (§11 report field). */
+    val mistakenConfirmations: Int = 0,
     val uncertainEpisodes: Int = 0,
     val offRouteEpisodes: Int = 0,
-    /** True when navigation ran in baseline mode (cards hidden). */
-    val baselineMode: Boolean = false,
+    /** Lighting noted for the run (§11: note lighting and holding style). */
+    val lighting: String = "",
+    /** How the phone was held (§11). */
+    val holdingStyle: String = "",
+    /** Free-form field notes for the run (§11). */
+    val notes: String = "",
     val markers: List<DriftMarker> = emptyList(),
 )
 
