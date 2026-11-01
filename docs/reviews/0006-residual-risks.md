@@ -1,22 +1,44 @@
-# Plan 0002 — Residual risks from 0001-agentic-flow
+# Review 0006 — Residual risks from 0001-agentic-flow
 
-Status: **queued** · created 2026-11-01
+Status: **in progress** · created 2026-11-01 · converted from `docs/plans/0002-residual-risks.md` 2026-11-01
 
 ## Scope
 
 Close out the ten residual-risk markers carried on the `Complete` rows of
-`docs/plans/0001-agentic-flow.md`. The markers fall into three shapes:
+`docs/plans/0001-agentic-flow.md`, and record the new risks that surfaced
+while doing so. The original markers fall into three shapes:
 
-1. **One code gap** — W4-01: Settings has no CSV export action. The `shareFile`
-   seam it was waiting on landed with W2-07; what is missing is the wiring.
+1. **One code gap** — W4-01: Settings had no CSV export action. The `shareFile`
+   seam it was waiting on landed with W2-07; what was missing is the wiring.
 2. **Verification debt** — W2-01 (draw gesture), W2-06 (KeepScreenOn, online
    chip, haptic feel), W4-03 (device abuse pass), W2-04 (two-phone transfer),
-   W4-02 (calibrated walk), W5-04 (on-watch delivery). Six items marked
+   W4-02 (calibrated walk), W5-04 (on-watch delivery). Marked
    "device-unverified". Headless coverage is added where it is honest; the
    rest is recorded open-with-owner for the W4-06 field pass.
 3. **Infra-blocked + resolved** — W3-02/W3-04 (production deploy blocked on
    R2 bucket permission), W3-05 (marked blocked, then cleared by its own live
    check). Closed with hard evidence via the Cloudflare MCP connection.
+
+## Method
+
+Every original marker gets a final disposition in W6-04:
+closed-with-evidence (the test or live check that covers it, named) or
+open-with-owner (the W4-06 field pass). New risks found during the W6 work
+are recorded in "New residual risks" below with the same disposition
+discipline — a risk is not closed by claiming it; it is closed by the check
+that proves it.
+
+## Severity levels
+
+- **S1 — blocks release**: a production capability cannot be demonstrated
+  (W3-02/W3-04 deploy block). Must close with hard evidence before the
+  release is claimed.
+- **S2 — verification debt with headless coverage**: behaviour is covered by
+  automated tests, device feel remains (W2-01 gesture, W2-06 flag/online,
+  W4-03 offline/permission paths).
+- **S3 — open-with-owner / accepted-with-mitigation**: needs a field pass on
+  hardware, or a known harness limitation with a documented failure mode
+  (W5-04, W2-04, W4-02, W2-06 haptics, NR-1, NR-2).
 
 ## Settled decisions
 
@@ -35,9 +57,29 @@ Close out the ten residual-risk markers carried on the `Complete` rows of
 | id | state | slice | tier | lane | depends on | evidence |
 |----|-------|-------|------|------|------------|----------|
 | W6-01 | Complete | Settings CSV export over the W2-07 `shareFile` seam | F | E | — | 6c523a8 · test: ./gradlew :shared:testAndroidHostTest |
-| W6-02 | Queued | Draw-box normalisation extracted + unit-tested | F | E | — | — |
-| W6-03 | Queued | Robolectric + Compose UI verification (gesture, KeepScreenOn, offline/airplane, permission gate) | L | E | W6-02 | — |
+| W6-02 | Complete | Draw-box normalisation extracted + unit-tested | F | E | — | 1c51afa · test: ./gradlew :shared:testAndroidHostTest |
+| W6-03 | In progress | Robolectric + Compose UI verification (gesture, KeepScreenOn, offline/airplane, permission gate) | L | E | W6-02 | — |
 | W6-04 | Queued | Production close-out: R2 bucket, worker deploy, live job, residual dispositions on 0001 | L | D | W6-01, W6-02, W6-03 | — |
+
+## New residual risks (surfaced during W6-01…W6-03)
+
+- **NR-1 — Stub-`R` harness (S3, accepted-with-mitigation).** AGP 9 KMP's
+  `androidHostTest` source set runs no Android resource pipeline: `R` classes
+  are not generated for transitive dependencies, and no manifest is
+  processed. The headless UI harness therefore stands on hand-written stub
+  `R` objects (`shared/src/androidHostTest/kotlin/androidx/**/R.kt`) and a
+  custom `RobolectricActivityRule` that bypasses
+  `ActivityScenarioRule`'s manifest-based resolution. Every new AndroidX
+  dependency that references `R$id` in a static initializer breaks the suite
+  until a stub is added. Failure mode is loud — `NoClassDefFoundError`
+  naming the exact class — not silent. Disposition: open-with-owner; revisit
+  if AGP ships a resource pipeline for `androidHostTest` or the team moves
+  to instrumentation tests.
+- **NR-2 — Robolectric SDK pin lags compileSdk (S3, accepted-with-mitigation).**
+  UI tests run `@Config(sdk = [36])` while `compileSdk` is 37; Robolectric
+  4.16 does not ship SDK-37 shadows yet. Code that starts relying on
+  API-37 behaviour will be tested one level below. Disposition: open-with-
+  owner; raise the pin when Robolectric supports 37.
 
 ## Slices
 
@@ -45,8 +87,8 @@ Close out the ten residual-risk markers carried on the `Complete` rows of
 
 **F**, Lane E. The W4-01 residual said the export "needs a shareFile seam
 that does not exist yet"; the seam exists (W2-07 `FileSharing.shareFile`,
-`TrialRepository.exportCsv()` tested). The gap is the UI: `SettingsScreen`
-has no export action.
+`TrialRepository.exportCsv()` tested). The gap was the UI: `SettingsScreen`
+had no export action.
 
 Changes: `EchoNavHost` passes `rememberFileSharing()` into the Settings
 route; `SettingsViewModel.exportTrials()` writes `trials.csv` to app
@@ -62,7 +104,7 @@ note; `:shared:testAndroidHostTest` full host suite green; iOS compiles.
 
 **F**, Lane E. W2-01's residual: "Compose draw gesture device-unverified".
 The gesture's data path — canvas-px `Rect` → normalised 0..1 `CropBox` —
-is inline in `DrawOverlay`'s confirm lambda. Extract it to a pure
+was inline in `DrawOverlay`'s confirm lambda. Extract it to a pure
 commonMain function and test the exact mapping the drag produces.
 
 Acceptance: `cropBoxFromRect` (or equivalent) is pure, used by
@@ -110,7 +152,8 @@ is listed in W6-04's dispositions, not claimed here.
    cover: W2-01 gesture, W2-06 KeepScreenOn/online, W4-03 offline/
    permission paths) or **open-with-owner** naming the W4-06 field pass
    (W5-04 watch delivery, W2-04 two-phone transfer, W4-02 calibrated
-   walk, W2-06 haptic feel).
+   walk, W2-06 haptic feel). NR-1 and NR-2 close with their accepted-
+   mitigation dispositions.
 
 Acceptance: live-job evidence recorded on the W3-02/W3-04 rows; every one
 of the ten markers carries a disposition; no residual row left bare.
