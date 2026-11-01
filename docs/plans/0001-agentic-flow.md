@@ -204,7 +204,7 @@ slices. A slice is `done` only with its evidence recorded, per Plan §0.
 | W2-07 | Queued | `.echo` file fallback: share/import after privacy warning | L (S) | C | W2-02 | — |
 | W3-01 | Queued | Clips (Media3) + `ManifestBuilder` | L (F) | D | W1-05 | — |
 | W3-02 | Queued | Consent + `EchoApiClient` + Processing screen | F (S) | D | W3-01, W0-05 | — |
-| W3-03 | Queued | Worker jobs API + Workflow skeleton (contract freeze) | F (S) | D | W0-05 | — |
+| W3-03 | Complete | Worker jobs API + Workflow skeleton (contract freeze) | F (S) | D | W0-05 | 29f077c5a9018d2dbd1665a8e4962e0e9b832bec · test: worker npm run typecheck clean, npm test 25/25 (jobs.test.ts 18, auth 6, index 1) — BUILD SUCCESSFUL; S review APPROVE WITH RESIDUAL RISK: freeze/consent-before-storage/error-scope reviewed, live Workflow runtime unverified |
 | W3-04 | Queued | Workers AI scout chain (Llama Scout → Gemma fallback) | F (S) | D | W3-03 | — |
 | W3-05 | Queued | Grounding: box-only path + SAM 3.1, track selection/ranking | S | D | W3-04 | — |
 | W3-06 | Queued | Assemble pipeline + vitest + live latency/cost check | F | D | W3-05 | — |
