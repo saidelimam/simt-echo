@@ -444,6 +444,10 @@ export async function metaSparkScout(env: Env, jobId: string, manifest: Manifest
     }
   } catch (e) {
     if (e instanceof ScoutError) throw e;
+    // A retryable Meta 429/5xx must reach the Workflow's step retry as
+    // itself — wrapping it in a typed ScoutError would be converted to
+    // NonRetryableError by the pipeline and kill the job (review 0004).
+    if (isRetryableMetaError(e)) throw e;
     throw new ScoutError("all_models_failed", `meta-spark: request failed: ${errorMessage(e)}`);
   }
 
@@ -456,6 +460,7 @@ export async function metaSparkScout(env: Env, jobId: string, manifest: Manifest
       text = await metaResponses(env, sparkBody(context, images, { effort: "medium", schema: SPARK_JSON_SCHEMA }));
       parsed = JSON.parse(text);
     } catch (e) {
+      if (isRetryableMetaError(e)) throw e;
       throw new ScoutError("all_models_failed", `meta-spark: unparseable output: ${errorMessage(e)}`);
     }
   }
@@ -476,14 +481,15 @@ export async function metaSparkScout(env: Env, jobId: string, manifest: Manifest
       "meta-spark: answered for unknown checkpoints; trying next provider",
     );
   }
-  const knownImages = new Set(images.map((i) => i.id));
   const byNode = new Map(response.checkpoints.map((c) => [c.nodeId, c]));
   const checkpoints = manifest.checkpoints.map((cp) => ({
     nodeId: cp.nodeId,
-    // Same shaping as W3-04: only sent images may be boxed, top 2 by d·p.
+    // Same shaping as W3-04, per checkpoint: only images loaded AND sent
+    // for THIS checkpoint may be boxed — never another checkpoint's
+    // keyframes (review 0004 R2, the review-0001 invariant).
     candidates: cleanCandidates(
       byNode.get(cp.nodeId) ?? { nodeId: cp.nodeId, candidates: [] },
-      knownImages,
+      new Set((loadedByCp.get(cp.nodeId) ?? []).map((l) => l.id)),
     ),
   }));
   const result = ScoutResultSchema.parse({ model: SPARK_MODEL, checkpoints });
@@ -611,6 +617,16 @@ export function cleanCandidates(
  * `Candidate` rows are W3-05/W3-06's expansion. Throws `ScoutError` with a
  * closed code set — never raw model text.
  */
+/** True for the Meta transport's retryable (429/5xx) signal: a plain
+ * Error the Workflow step is supposed to retry, not a typed failure. */
+function isRetryableMetaError(e: unknown): boolean {
+  return (
+    !(e instanceof ScoutError) &&
+    !(e instanceof NonRetryableError) &&
+    errorMessage(e).startsWith("retryable meta")
+  );
+}
+
 export async function runScout(env: Env, jobId: string, manifest: Manifest): Promise<ScoutResult> {
   const order = (env.SCOUT_ORDER ?? "workers-ai")
     .split(",")
@@ -633,6 +649,9 @@ export async function runScout(env: Env, jobId: string, manifest: Manifest): Pro
       } catch (e) {
         lastError = e;
         if (e instanceof ScoutError && e.code === "media_missing") throw e;
+        // Retryable transport errors go back to the Workflow step retry,
+        // not silently to the next provider (review 0004 R2).
+        if (isRetryableMetaError(e)) throw e;
         continue;
       }
     }

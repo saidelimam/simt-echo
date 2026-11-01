@@ -533,6 +533,78 @@ describe("metaSparkScout (W3-09)", () => {
     expect(kept[1].box).toEqual([100, 100, 900, 900]);
   });
 
+  it("collects done-only output — the shape the real API sends", async () => {
+    const media = new FakeR2();
+    const jobId = "job-1";
+    seedMedia(media, jobId);
+    // No delta events at all: SAM/Spark answer in response.output_text.done
+    // (live-verified, review 0003 R5). The old delta-only stub hid this.
+    vi.stubGlobal("fetch", async () => {
+      const events =
+        `data: ${JSON.stringify({ type: "response.output_text.done", text: JSON.stringify(sparkAnswer()) })}\n\n` +
+        "data: [DONE]\n\n";
+      return new Response(events, { status: 200 });
+    });
+
+    const result = await metaSparkScout(
+      envFor(media, undefined, { META_API_KEY: "k" }),
+      jobId,
+      structuredClone(validManifest()) as never,
+    );
+
+    expect(result.model).toBe(SPARK_MODEL);
+    expect(result.checkpoints[0].candidates).toHaveLength(1);
+  });
+
+  it("never lets one checkpoint box another checkpoint's keyframe", async () => {
+    const media = new FakeR2();
+    const jobId = "job-1";
+    seedMedia(media, jobId);
+    await media.put(`jobs/${jobId}/in/kf_n3_0`, new Uint8Array([4, 2, 3]).buffer as ArrayBuffer);
+    const manifest = structuredClone(validManifest()) as unknown as { checkpoints: unknown[] };
+    manifest.checkpoints.push({
+      nodeId: "n3",
+      type: "DESTINATION",
+      atDistanceM: 45,
+      tMs: 60000,
+      heroKeyframeId: "kf_n3_0",
+      keyframes: [{ id: "kf_n3_0", tMs: 59500 }],
+      approach: [],
+    });
+    stubSparkFetch(() =>
+      sseSpark(
+        JSON.stringify({
+          checkpoints: [
+            // kf_n3_0 was sent, but for n3 — it must not survive on n2.
+            { nodeId: "n2", candidates: [candidate({ imageId: "kf_n3_0", distinctiveness: 1, permanence: 1 })] },
+            { nodeId: "n3", candidates: [candidate({ imageId: "kf_n3_0" })] },
+          ],
+        }),
+      ),
+    );
+
+    const result = await metaSparkScout(
+      envFor(media, undefined, { META_API_KEY: "k" }),
+      jobId,
+      manifest as never,
+    );
+
+    expect(result.checkpoints[0].candidates).toEqual([]);
+    expect(result.checkpoints[1].candidates).toHaveLength(1);
+  });
+
+  it("a retryable Meta 503 reaches the caller retryable, not as a typed failure", async () => {
+    const media = new FakeR2();
+    const jobId = "job-1";
+    seedMedia(media, jobId);
+    vi.stubGlobal("fetch", async () => new Response("busy", { status: 503 }));
+    const env = envFor(media, undefined, { META_API_KEY: "k", SCOUT_ORDER: "meta-spark" });
+
+    const err = await runScout(env, jobId, structuredClone(validManifest()) as never).catch((e) => e);
+    expect(err).not.toBeInstanceOf(ScoutError);
+    expect(String((err as Error).message)).toContain("retryable meta 503");
+  });
+
   it("retries once with medium effort on JSON parse failure", async () => {
     const media = new FakeR2();
     const jobId = "job-1";
