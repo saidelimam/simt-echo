@@ -1,0 +1,97 @@
+package app.simt.echo.ui
+
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.navigation.NavHostController
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
+import androidx.navigation.toRoute
+import app.simt.echo.ui.screens.HomeScreen
+import app.simt.echo.ui.screens.PlaceholderScreen
+import app.simt.echo.ui.screens.PlaceholderViewModel
+
+/**
+ * Navigation shell (plan §8.2). This file is owned by Lane A: screens
+ * register destinations here through their owning slices; nobody edits
+ * the graph to add screen content.
+ */
+@Composable
+fun EchoNavHost(
+    modifier: Modifier = Modifier,
+    navController: NavHostController = rememberNavController(),
+) {
+    NavHost(
+        navController = navController,
+        startDestination = EchoRoute.Home,
+        modifier = modifier,
+    ) {
+        composable<EchoRoute.Home> {
+            HomeScreen(onOpen = navController::navigateTo)
+        }
+        composable<EchoRoute.Record> {
+            val vm = remember { PlaceholderViewModel("Record", "Capture lands in W1-03.") }
+            PlaceholderScreen(vm, "Back home", { navController.popBackStack() })
+        }
+        composable<EchoRoute.Review> { entry ->
+            val route = entry.toRoute<EchoRoute.Review>()
+            val vm = remember(route.draftId) {
+                PlaceholderViewModel("Review ${route.draftId}", "Manual editor lands in W2-01.")
+            }
+            PlaceholderScreen(vm, "Find landmarks (W3-02)", { navController.navigateTo(EchoRoute.Processing(route.draftId)) })
+        }
+        composable<EchoRoute.Processing> { entry ->
+            val route = entry.toRoute<EchoRoute.Processing>()
+            val vm = remember(route.draftId) {
+                PlaceholderViewModel("Processing ${route.draftId}", "Consent + upload lands in W3-02.")
+            }
+            PlaceholderScreen(vm, "Back home", { navController.popBackStack() })
+        }
+        composable<EchoRoute.RouteDetail> { entry ->
+            val route = entry.toRoute<EchoRoute.RouteDetail>()
+            val vm = remember(route.routeId) {
+                PlaceholderViewModel("Route ${route.routeId}", "Detail lands in W2-01.")
+            }
+            PlaceholderScreen(vm, "Share", { navController.navigateTo(EchoRoute.Share(route.routeId)) })
+        }
+        composable<EchoRoute.Share> { entry ->
+            val route = entry.toRoute<EchoRoute.Share>()
+            val vm = remember(route.routeId) {
+                PlaceholderViewModel("Share ${route.routeId}", "QR offer lands in W2-04.")
+            }
+            PlaceholderScreen(vm, "Back home", { navController.popBackStack() })
+        }
+        composable<EchoRoute.Receive> {
+            val vm = remember { PlaceholderViewModel("Receive", "QR scan lands in W2-04.") }
+            PlaceholderScreen(vm, "Back home", { navController.popBackStack() })
+        }
+        composable<EchoRoute.Align> { entry ->
+            val route = entry.toRoute<EchoRoute.Align>()
+            val vm = remember(route.routeId) {
+                PlaceholderViewModel("Align ${route.routeId}", "Start alignment lands in W2-06.")
+            }
+            PlaceholderScreen(vm, "Start navigating", { navController.navigateTo(EchoRoute.Navigate(route.routeId, false)) })
+        }
+        composable<EchoRoute.Navigate> { entry ->
+            val route = entry.toRoute<EchoRoute.Navigate>()
+            val vm = remember(route.routeId, route.simulate) {
+                PlaceholderViewModel("Navigate ${route.routeId}", "Navigator lands in W2-05/W2-06.")
+            }
+            PlaceholderScreen(vm, "Finish", { navController.navigateTo(EchoRoute.Arrived("demo-trial")) })
+        }
+        composable<EchoRoute.Arrived> { entry ->
+            val route = entry.toRoute<EchoRoute.Arrived>()
+            val vm = remember(route.trialId) {
+                PlaceholderViewModel("Arrived", "Trial ${route.trialId} saved (W4-01 extends this).")
+            }
+            PlaceholderScreen(vm, "Done", { navController.popBackStack(EchoRoute.Home, false) })
+        }
+        composable<EchoRoute.Settings> {
+            val vm = remember { PlaceholderViewModel("Settings", "Calibration lands in W4-02.") }
+            PlaceholderScreen(vm, "Back home", { navController.popBackStack() })
+        }
+    }
+}
+
+private fun NavHostController.navigateTo(route: EchoRoute) = navigate(route)

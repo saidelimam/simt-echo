@@ -29,6 +29,7 @@ Where new code goes (owning slice in `docs/plans/0001-agentic-flow.md`):
 | Package / area | First slice |
 |---|---|
 | `shared/.../model`, `data` | W0-04 domain model, `FileStore`, `RouteRepository` |
+| `shared/.../ui`, nav shell | W0-03 theme, components, `EchoNavHost`, placeholder screens |
 | `shared/.../platform` | seams are declared here; actuals land per slice |
 | `shared/.../capture`, `nav` | W1-01 motion, W2-05 navigator |
 | `shared/.../bundle`, `transfer` | W2-02 codec, W2-03 peer transport |

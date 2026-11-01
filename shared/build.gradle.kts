@@ -34,11 +34,9 @@ kotlin {
     }
 
     sourceSets {
-        // Scaffold dependencies only: what the skeleton below compiles against.
-        // Slice-specific libraries (CameraX, Media3, Ktor, ML Kit, QR, crypto)
-        // stay in the version catalog and are wired by the slice that first
-        // uses them (W1-02, W2-02, W2-03, W3-01, ...), so `shared` never
-        // bundles a stack no code imports yet.
+        // W0-03 wires navigation + lifecycle (nav shell, screen ViewModels).
+        // CameraX, Media3, Ktor, ML Kit, QR and crypto stay catalog-only
+        // until the slice that first imports them.
         commonMain.dependencies {
             // CMP plugin accessors: JetBrains Compose artifacts do not share
             // one version number (material3 versions independently), so the
@@ -51,6 +49,13 @@ kotlin {
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.okio)
+            // Navigation shell (W0-03) and per-screen ViewModels. These are
+            // the org.jetbrains multiplatform artifacts, so iOS keeps
+            // compiling; Android-only camera/ML Kit/Ktor stay catalog-only
+            // until their slices wire them.
+            implementation(libs.androidx.navigation.compose)
+            implementation(libs.androidx.lifecycle.runtime.compose)
+            implementation(libs.androidx.lifecycle.viewmodel.compose)
         }
         androidMain.dependencies {
             implementation(libs.androidx.activity.compose)
