@@ -210,8 +210,8 @@ with device model + build SHA. No slice is Complete on a partial pass.
 
 | ID | State | Slice | Tier | Lane | Depends on | Evidence |
 |---|---|---|---|---|---|---|
-| W7-01 | Queued | Runtime truth audit + V2 coverage matrix (docs) | T (S) | F | — | — |
-| W7-02 | Queued | Fix the red host gate: Robolectric savedstate + ExportSelection | T | E | — | — |
+| W7-01 | Complete | Runtime truth audit + V2 coverage matrix (docs) | T (S) | F | — | 264fb5c7281ee0cab96ba996a1358cedffdccf59 |
+| W7-02 | Complete | Fix the red host gate: Robolectric savedstate + ExportSelection | T | E | — | b48637784d1b50fe45dd1162c7b6a58894136890 · test: ./gradlew :shared:testAndroidHostTest |
 | W7-03 | Queued | Purge demo Home; real routes/drafts only, honest empty state | F (T) | E | W7-02 | — |
 | W7-04 | Queued | Close the loop: RouteDetail → Align → Navigate + Simulate | T (S) | E | W7-03 | — |
 | W7-05 | Queued | Record → Review handoff (Finish lands in Review, named drafts) | F (T) | B | W7-03 | — |
