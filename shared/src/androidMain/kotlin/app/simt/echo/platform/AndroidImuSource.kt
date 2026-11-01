@@ -16,11 +16,11 @@ import kotlinx.coroutines.flow.Flow
  * Android sensors → [PdrEngine] (slice W1-01).
  *
  * This is ECHO's shipping `MotionSource` (`echo_builtin_pdr`) per the
- * W0-01 decision: simt-app's `PdrEngine` is Android-viewmodel-bound and
- * cannot cross the KMP boundary, so §6.1–6.2 is implemented natively in
- * `capture/` following its conventions. Accelerometer + game rotation
- * vector at game rate (~50 Hz), barometer at UI rate; events feed the
- * engine on a single-threaded scope so sample order is preserved.
+ * W0-01 decision: §6.1–6.2 is implemented natively in `capture/`,
+ * following the step/heading approach copied from the solved track
+ * code in `simt-app` — vendored, ECHO-owned, no dependency. Accelerometer + game rotation
+ * vector at game rate (~50 Hz), barometer at UI rate; sensor events feed
+ * the engine directly, in delivery order.
  */
 class BuiltInPdrMotionSource(context: Context) : MotionSource {
 

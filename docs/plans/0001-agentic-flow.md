@@ -2,8 +2,9 @@
 
 Status: **queued** · created 2026-11-01
 
-Owning repository: `simt-echo` (this repo). Secondary repository: `simt-app`
-(producer of reused Track / Connect / Iris / core code; see §4).
+Owning repository: `simt-echo` (this repo) — fully enclosed. `simt-app` is a
+read-only reference: solved code is copied from it into this repo and becomes
+ECHO code (see §4). It is never a dependency, never linked, never modified.
 Hackathon deadline: 2026-11-04 21:00 ET. Slice states use the tracker
 vocabulary: `Queued` (ready when its dependencies are `Complete`),
 `In progress`, `Complete`. The `Wn-nn` id pattern is registered in
@@ -20,10 +21,10 @@ the three things that document does not give a multi-agent team:
    (§2, tracker in §6).
 2. **Parallel lanes and batches** — the dependency DAG expressed as lanes that
    never edit the same files at the same time (§3, §5).
-3. **A reuse map against `simt-app`** — for every ECHO platform seam, the
-   concrete `simt-app` class or module to reuse, adapt, or deliberately not
-   reuse, with the fallback Plan already specifies (§4). This resolves the
-   `_tbd_` rows in Plan §2.1.
+3. **A copy map against `simt-app`** — for every ECHO platform seam, the
+   concrete `simt-app` code to copy into this repo (vendored, renamed as
+   ECHO code), or deliberately not copy, with the fallback Plan already
+   specifies (§4). This resolves the `_tbd_` rows in Plan §2.1.
 
 Out of scope: changing any Plan contract (§5), algorithm (§6), wire format,
 or cut order (§12). Where this plan and Plan disagree, Plan wins on
@@ -43,8 +44,8 @@ Acceptance for this document itself:
       18 F-primary, 11 S-primary).
 - [x] §4 maps every ECHO seam (`MotionSource`, `PeerTransport`, `QrPayload`,
       `CameraRecorder`, design system, Iris overlay, Wear haptics,
-      persistence) to a concrete `simt-app` class/module with a
-      reuse / adapt / new verdict and a named fallback.
+      persistence) to a concrete `simt-app` source to copy from, with a
+      copy / write-new verdict and a named fallback.
 
 ## 2. Model tiers
 
@@ -74,10 +75,14 @@ Rules that bind every tier:
   edit; `simt slice finish <id>` runs the gates and commits from the worktree;
   `simt plan done <id> <sha> --test "<cmd>"` records the evidence. Never direct
   two agents at the same files concurrently.
-- **Producer before consumer, across repos too.** If a slice needs a new
-  capability in `simt-app` (notably a byte-transfer path in Connect, §4), the
-  `simt-app` change lands and is committed first; the ECHO adapter slice
-  starts only after that SHA exists.
+- **Enclosed copying only.** Nothing in this repo depends on `simt-app`: no
+  Gradle module, no library, no import, no runtime link. When a slice needs
+  solved code, it copies the needed files/logic from `simt-app` into
+  `simt-echo` in the same commit, renamed into ECHO packages with no
+  Track+/Connect/Iris type names, and from then on it is ECHO code —
+  maintained, tested and committed here. Gaps in the copied source (e.g. no
+  byte-transfer API, §4) are filled with new ECHO code, never by modifying
+  `simt-app`.
 
 ## 3. Parallel lanes
 
@@ -117,43 +122,45 @@ Critical path (no parallelism can shorten it):
 Staff the critical path first; an idle **S** agent takes the next critical-path
 slice, not a leaf.
 
-## 4. Reuse map: `simt-app` → ECHO
+## 4. Copy map: `simt-app` → ECHO (vendored, enclosed)
 
-`simt-app` is an Android (non-KMP) app: modules `app.simt.feature.*` on
-`:core:di`, `:core:ui`, `:core:ui-camera`, `:core:common`, `:core:domain`,
-Hilt DI, AGP 9.5.0 / Kotlin 2.4.21. ECHO's `shared/` is KMP. That mismatch
-decides the reuse mechanism, and W0-01 must settle it before W0-02 finishes:
+`simt-app` is a separate Android app and stays untouched. It is a quarry,
+not a dependency: when part of a problem is already solved there, the
+slice copies the needed code into `simt-echo` instead of reinventing it.
+Rules for every copy:
 
-- **Android-only code** (Track, Connect, Iris, camera) can be consumed from
-  `androidApp` as Android libraries, or source-ported into `simt-echo`.
-- **KMP `shared/` code cannot import Hilt or Android library modules.** Reuse
-  inside `shared/` means porting the *design* (interfaces, sealed results,
-  pure algorithms), not linking the module.
-- Recommended default for W0-01: link, don't copy, where `androidApp` is the
-  consumer (Track, Connect transport, Iris, camera); port where `shared/` is
-  the consumer (domain patterns, QR payload shape). Copying Track's PDR into
-  ECHO would fork a tested sensor stack three days before a deadline.
+- **Enclosed.** No build file in this repo references `simt-app`; copied
+  code imports only ECHO and third-party types. If it doesn't compile
+  standalone here, it wasn't copied completely.
+- **Renamed.** Copied code lands in ECHO packages under ECHO names.
+  No type is named after a `simt-app` feature (`TrackPlus*`, `Link*`,
+  `Iris*` as class names, `simt_track_plus` as a source string, …).
+  Provenance is credited in the commit body / code comment, not in names.
+- **Owned.** From the copying commit onward the code is maintained and
+  tested here; upstream fixes in `simt-app` are never picked up
+  automatically — re-copy deliberately if ever needed.
+- **Minimum slice.** Copy the smallest part that solves the problem
+  (an algorithm, a transport class), not a whole feature module.
 
-| ECHO seam (Plan §5) | `simt-app` source | Verdict | Fallback if reuse fails |
+| ECHO seam (Plan §5) | `simt-app` source to copy from | Verdict | Fallback if copying fails |
 |---|---|---|---|
-| `MotionSource` | `feature/track`: `pdr/PdrEngine.kt` (StateFlows for steps, `currentPosition`, `headingDegrees`, `accuracy`; `start(stepDetectionEnabled)`), plus `MahonyAhrs`, `WeinbergEstimator`, `TiltProjector`, calibration classes — all unit-tested; `vio/VioProvider`, `ArCorePositionProvider`, `VioFusionManager` | **Adapt.** Build `TrackPlusMotionSource` in `androidApp` mapping `PdrEngine` flows to `Flow<MotionUpdate>`. Do not reimplement Plan §6.1–6.2 as new code. VIO only if it does not contend with ECHO's video recording for the camera; both phones run the same `MotionSource` | `BuiltInPdrMotionSource` exactly as specified in Plan §6.1–6.2 (that spec becomes the implementation, not a duplicate) |
-| `PeerTransport` (bulk bytes) | `feature/link` `offline/OfflineTransport` (+ `OfflineTransportRouter`, Wi-Fi Aware → Wi-Fi Direct), `network/LinkTcpSession`, `LinkTcpHandshake`, `SecurityManager` | **Adapt.** Reuse transport-up-to-IP, discovery, and the TCP session layer behind ECHO's `PeerTransport` (`offer`/`fetch: ByteArray`). This is the strongest reuse in the repo | `KtorLanTransport` (Plan W2-03) behind the same seam |
-| Peer identity / pairing trust | `feature/link`: `LinkRepository` (`core/domain/link`), `security/LinkIdentitySecurity`, `handoff/LinkBootstrap*`, admission policies | **Adapt for trust, reject for bytes.** `LinkRepository` is peer-*message* oriented (`sendMessageToPeer(peerId, String)`, pulses, locations) with no arbitrary-byte/file API. Reuse discovery, pairing, and identity; do not tunnel bundle bytes through short validated text messages. A byte path is either a new Connect capability in `simt-app` (producer-first, §2) or ECHO's own transport | ECHO token-in-QR trust model (Plan §5 wire format) with no Connect dependency |
-| `QrPayload` | `feature/link` `qr/LinkQrPayload` (`DecodeResult.Valid(bootstrap: LinkBootstrap)`), `qr/LinkQrWidgets`; `core/ui-camera` `scanner/QrCodeScanner` | **Adapt.** Reuse the scanner component and the payload-codec *pattern*. `LinkQrPayload` carries a `LinkBootstrap`, not ECHO's `simt-echo://r?v=1&h=&p=&t=&k=&s=&n=` URI (≤200 chars), so ECHO keeps its own codec — a good **L**-tier slice against the frozen format | Plan `QrPayload` codec as specified (this is the primary; the adaptation is in scanning/rendering only) |
-| `CameraRecorder`, `MediaTools` | `core/ui-camera`: `capture/SystemImageCaptureController`, `CameraUriUtils`, preview/overlay components | **Reuse where the API fits** (still capture, URI handling, preview); CameraX silent-video recording itself is ECHO code in W1-02 if the controller cannot express it | Raw CameraX in W1-02 as planned |
-| Design system, nav shell (W0-03) | `core/ui`: theme (`Color`, `Theme`, `Type`, `Shape`, `Motion`), components, `PermissionGate`; `core/navigation`: `AppRouter`/`ScreenRoute` | **Adapt tokens, own the shell.** Port ECHO's dark-first tokens (Plan §8: bg `#0B0D10`, Echo Lime `#C6F432`) onto `core/ui` conventions and reuse components/`PermissionGate`. `core/navigation` is `simt-app`'s router; ECHO's Compose nav shell stays ECHO's to avoid importing an app graph into a KMP scaffold | Plan W0-03 design system written fresh |
-| Iris overlay (W5-02) | `feature/iris`: `IrisScreen`, `IrisViewModel`, `IrisProjection`, `IrisTargetSpatialCalculator`, components (`IrisCameraView`, `TargetDirectionArrow`, `TargetInViewMarker`, `IrisTargetHud`) | **Reuse as the base** for Iris-lite; ECHO adds landmark anchoring, not a new overlay stack | Drop W5-02 (P2; first in the Plan §12 cut order) |
-| Wear haptics (W5-04) | `data/wear`: `WearDataLayerManager`, `WearDataLayerRepository`, `WearSyncProtocol`, `DataLayerPaths` | **Reuse** the Data Layer transport; ECHO adds the haptic-pattern messages (`Haptics` enum) | Drop W5-04 (P2) |
-| Persistence & domain patterns | `core/domain`: dependency-free repositories returning sealed `RepositoryResult`; `data/local` `SettingsDataStore`; `feature/track` `TrackRepository` session/checkpoint patterns | **Port the pattern** into `shared/` (`RouteRepository`, `FileStore`); do not link `core/domain` from KMP. Track's recovery-checkpoint pattern is the model for W4-03 process-death recovery | Plan §5 storage layout (`drafts/`, `routes/`, `trials/`) as specified |
+| `MotionSource` | `feature/track/pdr/`: step detection, `WeinbergEstimator`, heading/`MahonyAhrs`, `TiltProjector`, calibration classes — all unit-tested; `feature/track/vio/` for camera-motion fusion | **Copy the needed algorithm pieces** into `capture/` under ECHO names (done in W1-01: §6.1–6.2 engine following those conventions; copy further pieces only if a gap appears). Do not copy VIO: ARCore's exclusive camera would contend with `CameraXRecorder` | ECHO's §6.1–6.2 specification implemented natively (that is what W1-01 shipped) |
+| `PeerTransport` (bulk bytes) | `feature/link`: `offline/OfflineTransport` (+ router, Wi-Fi Aware → Wi-Fi Direct), `network/LinkTcpSession`, `LinkTcpHandshake`, `SecurityManager` | **Copy the transport/session code** into `transfer/` renamed as ECHO code (`LanPeerTransport`), behind ECHO's `PeerTransport` seam (`offer`/`fetch: ByteArray`) | `KtorLanTransport` (Plan W2-03) behind the same seam |
+| Peer identity / pairing trust | `feature/link`: `core/domain/link` repository, `security/LinkIdentitySecurity`, `handoff/LinkBootstrap*`, admission policies | **Copy the trust pieces; write bytes new.** The copied source is peer-*message* oriented (`sendMessageToPeer(peerId, String)`, pulses, locations) with no arbitrary-byte/file API — copy identity/pairing logic if needed, never tunnel bundle bytes through short validated text messages; the byte path is new ECHO code behind the same seam | ECHO token-in-QR trust model (Plan §5 wire format), ECHO-owned |
+| `QrPayload` | `feature/link` `qr/LinkQrPayload`, `qr/LinkQrWidgets`; `core/ui-camera` `scanner/QrCodeScanner` | **Copy the scanner; write the codec.** The copied payload type carries a bootstrap record, not ECHO's `simt-echo://r?v=1&h=&p=&t=&k=&s=&n=` URI (≤200 chars), so ECHO's codec is new code (good **L**-tier slice); the scanner component and widgets are copied where they fit | Plan `QrPayload` codec as specified (this is the primary; copying covers scanning/rendering only) |
+| `CameraRecorder`, `MediaTools` | `core/ui-camera`: `capture/SystemImageCaptureController`, `CameraUriUtils`, preview/overlay components | **Copy where the API fits** (still capture, URI handling, preview); CameraX silent-video recording itself is ECHO code in W1-02 (done — the controller could not express it) | Raw CameraX in W1-02 as planned |
+| Design system, nav shell (W0-03) | `core/ui`: theme (`Color`, `Theme`, `Type`, `Shape`, `Motion`), components, `PermissionGate`; `core/navigation`: `AppRouter`/`ScreenRoute` | **Copy conventions, own the shell.** ECHO's dark-first tokens (Plan §8: bg `#0B0D10`, Echo Lime `#C6F432`) follow the copied theme conventions; components/`PermissionGate` copied where reused. The nav shell is ECHO's own (done in W0-03) | Plan W0-03 design system written fresh |
+| Camera overlay (W5-02) | `feature/iris`: projection, spatial calculator, components (`IrisCameraView`, `TargetDirectionArrow`, `TargetInViewMarker`, `IrisTargetHud`) | **Copy the projection/HUD components** into `ui/` renamed as ECHO code; ECHO adds landmark anchoring, not a new overlay stack | Drop W5-02 (P2; first in the Plan §12 cut order) |
+| Wear haptics (W5-04) | `data/wear`: `WearDataLayerManager`, `WearDataLayerRepository`, `WearSyncProtocol`, `DataLayerPaths` | **Copy the Data Layer transport code** into ECHO; ECHO adds the haptic-pattern messages (`Haptics` enum) | Drop W5-04 (P2) |
+| Persistence & domain patterns | `core/domain`: dependency-free repositories returning sealed `RepositoryResult`; `data/local` `SettingsDataStore`; `feature/track` `TrackRepository` session/checkpoint patterns | **Copy the pattern** into `shared/` (`RouteRepository`, `FileStore`, done in W0-04). The copied recovery-checkpoint pattern is the model for W4-03 process-death recovery | Plan §5 storage layout (`drafts/`, `routes/`, `trials/`) as specified |
 | Haptics (device) | No dedicated haptics helper exists in `simt-app` core | **New.** Small Android actual for the `Haptics` seam; waveforms from Plan §8 | — |
-| DI | `simt-app` uses Hilt (`:core:di`, `di/LinkModule`) | **Do not reuse across the KMP boundary.** `androidApp` may use Hilt for Android actuals; `shared/` uses the manual `AppGraph` from Plan. One DI system per module, never both in `shared/` | Manual `AppGraph` everywhere |
+| DI | `simt-app` uses Hilt (`:core:di`, `di/LinkModule`) | **Do not copy.** ECHO uses the manual `AppGraph` from Plan everywhere; no DI framework is vendored in | Manual `AppGraph` everywhere |
 
-Version drift to settle in W0-01/W0-02: Plan pins Kotlin 2.4.20 / AGP 9.2.0
-/ CMP 1.12.0; `simt-app` builds with AGP 9.5.0 / Kotlin 2.4.21. If ECHO links
-`simt-app` Android modules, ECHO's Android build must align to the newer pins.
-Staying on Plan's pins is only coherent with source-porting. This is the
-one decision that changes W0-02's build files, so it is made by the **S** agent
-on W0-01 and recorded in the W0-02 commit body.
+Version alignment was settled in W0-01/W0-02: ECHO independently pins
+AGP 9.5.0 / Kotlin 2.4.21 / CMP 1.12.0 (Plan originally pinned AGP 9.2.0 /
+Kotlin 2.4.20). The pins happen to match `simt-app`'s, which keeps copied
+code compiling without translation — but nothing requires them to stay
+aligned, because nothing is linked.
 
 ## 5. Shared-file ownership
 
@@ -178,12 +185,12 @@ slices. A slice is `done` only with its evidence recorded, per Plan §0.
 
 | ID | State | Slice | Tier | Lane | Depends on | Evidence |
 |---|---|---|---|---|---|---|
-| W0-01 | Complete | Repo recon: settle Track/Connect reuse + version alignment (§4) | S | A | — | f944f22542714e070e409a80a43cecda02c56a81 · check: 0 _tbd_ rows in Plan §2.1; decisions verified against simt-app source (PdrEngine StateFlows, Link String-only send, AGP 9.5.0/Kotlin 2.4.21) |
+| W0-01 | Complete | Repo recon: settle copy sources + version alignment (§4) | S | A | — | f944f22542714e070e409a80a43cecda02c56a81 · check: 0 _tbd_ rows in Plan §2.1; decisions verified against simt-app source (PdrEngine StateFlows, Link String-only send, AGP 9.5.0/Kotlin 2.4.21) |
 | W0-02 | Complete | KMP scaffold (verify existing root `shared/` + `androidApp`) | F (S) | A | W0-01 | aa6d306af993833ba654563a653af16a2b82435e · test: JAVA_HOME=/Users/saidelimam/.sdkman/candidates/java/21.0.12-tem DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer ./gradlew clean :shared:testAndroidHostTest :shared:compileKotlinIosArm64 :shared:compileKotlinIosSimulatorArm64 :shared:compileTestKotlinIosSimulatorArm64 :androidApp:assembleDebug :androidApp:lintDebug (BUILD SUCCESSFUL, ScaffoldSmokeTest 2/2); worker: npm run typecheck + npm test (1/1) |
 | W0-03 | Complete | Design system + nav shell on `core/ui` conventions | F | A | W0-02 | 8f4b38ba4709fc69e8b5a087ccd7be91f92f3c83 · test: :shared:testAndroidHostTest --rerun-tasks (11/11: ScaffoldSmokeTest 2, RouteSerializationTest 3, ShellMathTest 6), :androidApp:assembleDebug, :shared:compileKotlinIosArm64, :shared:compileKotlinIosSimulatorArm64 — BUILD SUCCESSFUL |
 | W0-04 | Complete | Domain model, `FileStore`, `RouteRepository`, `L_ROUTE` fixture — contract freeze | S | A | W0-02 | c650168a9906169b40d51ae0d8f40e223d2e8059 · test: :shared:testAndroidHostTest (ModelJsonTest 8/8, RepositoryTest 7/7, suite 33/33), :androidApp:assembleDebug, :shared:compileKotlinIosArm64, :shared:compileKotlinIosSimulatorArm64 — BUILD SUCCESSFUL |
 | W0-05 | In progress | Worker scaffold: Hono, auth, rate limit, R2, deploy | F (S) | D | — | — |
-| W1-01 | Complete | `TrackPlusMotionSource` adapter over `PdrEngine` (+ built-in fallback) | S | B | W0-04 | 4889f9a72fe58901753f3a4d582fa562ac53384a · test: :shared:testAndroidHostTest (PdrEngineTest 7/7, suite 40/40), :androidApp:assembleDebug, :shared:compileKotlinIosArm64, :shared:compileKotlinIosSimulatorArm64 — BUILD SUCCESSFUL; shipped BuiltInPdr per W0-01 |
+| W1-01 | Complete | `MotionSource`: built-in PDR engine (§6.1–6.2) + Android IMU source | S | B | W0-04 | 4889f9a72fe58901753f3a4d582fa562ac53384a · test: :shared:testAndroidHostTest (PdrEngineTest 7/7, suite 40/40), :androidApp:assembleDebug, :shared:compileKotlinIosArm64, :shared:compileKotlinIosSimulatorArm64 — BUILD SUCCESSFUL |
 | W1-02 | Complete | `CameraRecorder`: CameraX silent video, `core/ui-camera` where it fits | F | B | W0-03 | 00db42bf4c39d913c645aad319233a693206fbb8 · test: :shared:testAndroidHostTest (RecorderLogicTest 7/7, suite 18/18), :androidApp:assembleDebug, :shared:compileKotlinIosArm64, :shared:compileKotlinIosSimulatorArm64 — BUILD SUCCESSFUL |
 | W1-03 | Queued | Record screen + `CaptureSession` + Finish | F | B | W1-01, W1-02 | — |
 | W1-04 | Queued | `Segmenter` → draft `EchoRoute` + minimap | L (S) | B | W1-03 | — |
@@ -211,7 +218,7 @@ slices. A slice is `done` only with its evidence recorded, per Plan §0.
 | W4-05 | Queued | Relay fallback: zero-knowledge R2 relay (P1) | S | D | W2-04, W0-05 | — |
 | W4-06 | Queued | README, limitations, demo script, release APK | S | F | wave P0 | — |
 | W5-01 | Queued | Local-model provider (P2) | S | D | W3-07 | — |
-| W5-02 | Queued | Iris-lite overlay on `feature/iris` (P2) | F (S) | E | W2-06 | — |
+| W5-02 | Queued | Camera overlay: copied projection/HUD components (P2) | F (S) | E | W2-06 | — |
 | W5-03 | Accepted | iOS actuals (P2) | S | A | wave P0, W4-06 | Postponed — iOS is out of v1 scope; not to implement |
 | W5-04 | Queued | Wear OS haptic bridge on `data/wear` (P2) | F | F | W0-01 | — |
 
@@ -237,9 +244,10 @@ rather than regenerating it — including the AGP/Kotlin pins decided in W0-01.
 Acceptance: `./gradlew :shared:allTests` green on the scaffold.
 
 ### W0-03 — Design system and nav shell
-**F**, Lane A. Port ECHO's §8 tokens onto `simt-app` `core/ui` conventions;
-reuse components and `PermissionGate`; keep ECHO's own Compose nav shell.
-Acceptance: shell navigates every §8 route with placeholder screens.
+**F**, Lane A. Port ECHO's §8 tokens following the design conventions
+copied from `simt-app`'s `core/ui` (§4 copy model); keep ECHO's own
+Compose nav shell. Acceptance: shell navigates every §8 route with
+placeholder screens.
 
 ### W0-04 — Domain model and contract freeze
 **S**, Lane A. The single most load-bearing slice in the plan: every lane
@@ -253,13 +261,13 @@ round-trip through `EchoJson` in `commonTest`.
 in Batch 0 so the worker chain never blocks on Gradle. Acceptance:
 `GET /v1/health` live, auth and rate limit enforced on all other routes.
 
-### W1-01 — MotionSource from Track
+### W1-01 — MotionSource (built-in PDR)
 **S**, Lane B. Geometry is a hard gate: a wrong yaw or step length silently
-corrupts every downstream slice. The work is an adapter over the tested
-`simt-app` `PdrEngine` (§4), plus validation that its flows satisfy the
-`MotionUpdate` contract — not a reimplementation of Plan §6.1–6.2, which
-survives only as the built-in fallback. Acceptance: recorded-walk fixture
-produces monotonic distance and stable relative yaw on both implementations.
+corrupts every downstream slice. The engine implements Plan §6.1–6.2 in
+`capture/`, following the step/heading approach already solved in
+`simt-app`'s track module (copied conventions, ECHO-owned code — §4 copy
+model; no dependency, no adapter type). Acceptance: synthetic-walk fixture
+produces monotonic distance, stable relative yaw and correct step counts.
 
 ### W1-02 — CameraRecorder
 **F**, Lane B. CameraX plumbing with `core/ui-camera` reuse where the API
@@ -383,9 +391,10 @@ the **S** review; this slice also takes ownership of `EchoConfig` (§5).
 Acceptance: calibrated K measurably reduces drift on the W4-01 baseline.
 
 ### W4-03 — Robustness
-**F**, Lane F. Permissions and process-death recovery, following `simt-app`
-Track's recovery-checkpoint pattern (§4). Acceptance: kill-mid-capture and
-kill-mid-navigation both recover to a resumable state.
+**F**, Lane F. Permissions and process-death recovery, following the
+recovery-checkpoint pattern copied from `simt-app`'s track module (§4).
+Acceptance: kill-mid-capture and kill-mid-navigation both recover to a
+resumable state.
 
 ### W4-04 — UX polish and accessibility
 **L (F review)**, Lane E. Copy (≤ 6 words, §8), contrast, touch targets.
@@ -409,10 +418,10 @@ each trace to a passing slice.
 LAN server class hardware). Frontier-owned for the provider-contract fit.
 Cut before any P0 work (§8).
 
-### W5-02 — Iris-lite overlay (P2)
-**F (S review)**, Lane E. Built on `simt-app` `feature/iris` (§4), adding
-landmark anchoring to its existing projection/HUD components. Cut before
-any P0 work (§8).
+### W5-02 — Camera overlay (P2)
+**F (S review)**, Lane E. Built on projection/HUD components copied from
+`simt-app`'s `feature/iris` into ECHO's `ui/` (§4 copy model), adding
+landmark anchoring. Cut before any P0 work (§8).
 
 ### W5-03 — iOS actuals (P2)
 **S**, Lane A. Largest single estimate in Plan (6 h) and pure stretch;
@@ -423,8 +432,9 @@ implemented.** Tracker row is `Accepted` (deliberately not done; it satisfies
 no dependencies and nothing depends on it).
 
 ### W5-04 — Wear OS haptic bridge (P2)
-**F**, Lane F. Reuses `simt-app` `data/wear` Data Layer transport (§4);
-ECHO contributes only the haptic-pattern messages.
+**F**, Lane F. Copies the Data Layer transport code from `simt-app`'s
+`data/wear` into ECHO (§4 copy model); ECHO contributes only the
+haptic-pattern messages.
 
 ## 8. Review of the source documents
 
@@ -450,14 +460,16 @@ these block Batch 0; each names the slice that resolves it.
    exceeds the §6.2 spec; Connect's `LinkRepository` has no byte-transfer
    API, so bundle transfer reuse is real at the transport layer and absent
    at the repository layer. Resolved by: W0-01.
-4. **Version drift.** Plan pins AGP 9.2.0 / Kotlin 2.4.20; `simt-app`
-   builds on AGP 9.5.0 / Kotlin 2.4.21. Linking `simt-app` modules forces
-   alignment; source-porting does not. Resolved by: W0-01 decision, applied
-   in W0-02.
-5. **Architecture mismatch limits reuse to `androidApp`.** `simt-app` is
-   Android-library + Hilt; ECHO's `shared/` is KMP. Any plan that assumes
-   `shared/` can import Track or Connect modules is wrong; §4 splits reuse
-   into *link* (Android side) and *port the pattern* (KMP side).
+4. **Version drift.** Plan pins AGP 9.2.0 / Kotlin 2.4.20; ECHO now pins
+   AGP 9.5.0 / Kotlin 2.4.21 / CMP 1.12.0 independently. The pins match
+   `simt-app`'s by choice (copied code compiles without translation), not
+   by necessity. Resolved by: W0-01 decision, applied in W0-02.
+5. **Enclosed copying makes the architecture mismatch irrelevant.**
+   `simt-app` is Android-library + Hilt; ECHO's `shared/` is KMP. Nothing
+   is imported across that boundary: solved code is copied into ECHO
+   packages, translated to the target source set where needed, and owned
+   here (§4 copy model). Any earlier *link/adapt* framing was wrong and
+   has been corrected throughout this plan.
 6. **Proposal acceptance A1–A8 is fully covered by Plan slices** —
    A5/A6 by W2-05/W2-06, A7 by W3-02/W3-08, A1–A4/A8 by W3-05/W2-03/W4-01/
    W4-06. No proposal requirement is unowned; no Plan P0 slice lacks a

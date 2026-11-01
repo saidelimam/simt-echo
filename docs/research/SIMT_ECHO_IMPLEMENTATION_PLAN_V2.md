@@ -69,26 +69,31 @@ screens in §8.
   (AGP 9: KMP modules must use `com.android.kotlin.multiplatform.library`; the app module is a separate
   `com.android.application` module without the kotlin-android plugin), CameraX **1.6.2**, Media3 **≥ 1.10.1**.
 
-### 2.1 Adapter mapping (filled by W0-01)
+### 2.1 Copy mapping (filled by W0-01)
 
-| Need | Found in track/link? (class, API) | ECHO adapter | Fallback (spec'd here) |
+ECHO is fully enclosed: it never depends on, links to, or modifies
+`simt-app`. Where a problem is already solved there, the slice **copies
+the needed code into `simt-echo`**, renamed into ECHO packages with no
+`simt-app` feature names, and owns it from that commit onward.
+
+| Need | Found in track/link? (class, API) | What ECHO copies / builds | Fallback (spec'd here) |
 |---|---|---|---|
-| Per-step distance + relative heading stream | Yes — `feature/track` `pdr/PdrEngine.kt`: `steps: StateFlow<Int>`, `currentPosition: StateFlow<Position>`, `headingDegrees: StateFlow<Float>`, `accuracy: StateFlow<TrackAccuracy>`, step events at sensor cadence — satisfies the plan decision rule (per-step + relative yaw, ≤ 2 h adapter). But `PdrEngine` is Android-only, driven by `TrackViewModel` in `simt-app`, and composing it into ECHO's KMP `shared` is not possible (see §4 architecture limit) | `TrackPlusMotionSource` (W1-01): consumes `PdrEngine` flows from `androidApp` behind the `MotionSource` seam, OR re-implements §6.1–6.2 natively where the app cannot be composed in | `BuiltInPdrMotionSource` (§6.1–6.2, specified in this document §6) — the only ECHO-owned implementation, and the one W1-01 ships |
-| Barometric pressure / altitude | Yes — `PdrEngine` consumes `TYPE_PRESSURE` internally; ECHO reads the sensor directly | Direct `TYPE_PRESSURE` listener in `AndroidImuSource` (W1-01), no dependency on `simt-app` internals | Same — this *is* the fallback; null pressure degrades `LEVEL_CHANGE` only |
-| Camera-motion fusion (VO) | Yes — `feature/track` `vio/` (`VioProvider`, `ArCorePositionProvider`, `VioFusionManager`) | None in v1: ARCore's exclusive camera would starve `CameraXRecorder` (W1-02), which records video concurrently | None (spec §12 keeps VIO out of the MVP) |
-| Peer discovery / pairing | Yes — `feature/link` `offline/OfflineTransport` + `OfflineTransportRouter` (Wi-Fi Aware → Wi-Fi Direct), NSD helpers, `LinkForegroundService`, TLS via `network/SecurityManager` | `LinkPeerTransport` (W2-03): discovery + transport-up-to-IP/SecurityManager TLS behind ECHO's `PeerTransport` seam, Launched from `androidApp` | QR with IP:port (§5.4) + `KtorLanTransport` (W2-03) |
-| Send arbitrary bytes to a peer | **No** — `LinkRepository`/`LinkRuntime` offer only `sendPulse`, `sendMessageToPeer` (validated short text), `sendLocationToPeer`; `LinkPeerMessageController` sends `String`. No file/blob/binary API exists | New byte path in `simt-app` (producer-first change) OR ECHO's own transport — envelope/chunking not available as-is | `KtorLanTransport` (W2-03): Ktor HTTP offer/fetch over LAN, the ECHO-owned path |
-| Wear OS haptic channel | Yes — `data/wear` `WearDataLayerManager`, `WearSyncProtocol` | W5-04 reuses the Data Layer transport; ECHO contributes `HapticPattern` messages | Phone haptics (`AndroidHaptics`, owned by ECHO — no helper exists in `simt-app` core) |
-| SIMT design tokens / fonts | Yes — `core/ui` theme (`Color`, `Theme`, `Type`, `Shape`, `Motion`) | Port dark-first tokens onto `core/ui` conventions into `EchoTheme` (done in W0-03); no linked dependency | Tokens in §8.1 (implemented in W0-03) |
-| Build setup (AGP/Kotlin versions of root) | `simt-app`: AGP 9.5.0 / Kotlin 2.4.21. `simt-echo` aligned to AGP 9.5.0 / Kotlin 2.4.21 / CMP 1.12.0 in W0-02 | Standalone `simt-echo` build (Option B); version alignment is by pin, not by linked module | Same — the standalone build *is* the shipped path |
+| Per-step distance + relative heading stream | Yes — `feature/track/pdr/`: step detection, `WeinbergEstimator`, heading/`MahonyAhrs`, `TiltProjector`, calibration classes, all unit-tested | Copy the needed algorithm pieces into `capture/` under ECHO names; §6.1–6.2 is the spec they are checked against. W1-01 shipped ECHO's native §6.1–6.2 engine following those conventions | ECHO's §6.1–6.2 specification implemented natively (that is what W1-01 shipped) |
+| Barometric pressure / altitude | Yes — track code consumes `TYPE_PRESSURE` internally; ECHO reads the sensor directly | Direct `TYPE_PRESSURE` listener in `AndroidImuSource` (W1-01), no copied code needed | Same — this *is* the fallback; null pressure degrades `LEVEL_CHANGE` only |
+| Camera-motion fusion (VO) | Yes — `feature/track/vio/` | **Do not copy in v1:** ARCore's exclusive camera would starve `CameraXRecorder` (W1-02), which records video concurrently | None (spec §12 keeps VIO out of the MVP) |
+| Peer discovery / pairing | Yes — `feature/link`: `offline/OfflineTransport` + router (Wi-Fi Aware → Wi-Fi Direct), NSD helpers, `LinkForegroundService`, TLS via `network/SecurityManager` | Copy the transport/session code into `transfer/` renamed as ECHO code (`LanPeerTransport`) behind ECHO's `PeerTransport` seam (W2-03) | QR with IP:port (§5.4) + `KtorLanTransport` (W2-03) |
+| Send arbitrary bytes to a peer | **No** — the link code offers only `sendPulse`, validated short text messages, `sendLocationToPeer`. No file/blob/binary API exists to copy | New ECHO byte path behind the `PeerTransport` seam — never modify `simt-app` to add one | `KtorLanTransport` (W2-03): Ktor HTTP offer/fetch over LAN, the ECHO-owned path |
+| Wear OS haptic channel | Yes — `data/wear` `WearDataLayerManager`, `WearSyncProtocol` | W5-04 copies the Data Layer transport code into ECHO; ECHO contributes `HapticPattern` messages | Phone haptics (`AndroidHaptics`, owned by ECHO — no helper exists in the source repo's core) |
+| SIMT design tokens / fonts | Yes — `core/ui` theme (`Color`, `Theme`, `Type`, `Shape`, `Motion`) | Copy the theme conventions into `EchoTheme` (done in W0-03); no dependency | Tokens in §8.1 (implemented in W0-03) |
+| Build setup (AGP/Kotlin versions of root) | Source repo: AGP 9.5.0 / Kotlin 2.4.21. `simt-echo` independently pins AGP 9.5.0 / Kotlin 2.4.21 / CMP 1.12.0 (W0-02) | Standalone `simt-echo` build; pins match by choice so copied code compiles without translation, not by requirement | Same — the standalone build *is* the shipped path |
 
-> **Architecture limit that governs every row above:** `simt-app` is an
-> Android-library + Hilt codebase; ECHO's `shared/` is KMP. Code is *linked*
-> only where `androidApp` is the consumer; everywhere else ECHO *ports the
-> pattern* into `shared/`. Copying Track's PDR wholesale into ECHO would fork
-> a tested sensor stack three days before the deadline, so W1-01 implements
-> §6.1–6.2 natively and uses `PdrEngine`'s conventions (per-step flows,
-> tracker accuracy states) as the reference, not a binary dependency.
+> **Copy model that governs every row above:** `simt-app` stays untouched
+> and unreferenced by any build file. Copied code is translated to the
+> target source set where needed (Android-only source may need a KMP or
+> `androidMain` home), renamed without Track+/Connect/Iris type names,
+> credited in the commit body, and maintained as ECHO code afterward.
+> Wholesale-copying a whole feature module is as wrong as reinventing a
+> solved algorithm: copy the smallest piece that closes the gap.
 
 ## 3. Architecture
 
@@ -167,7 +172,7 @@ and `MainActivity` provides it via `CompositionLocalProvider(LocalAppGraph provi
 ```kotlin
 data class MotionUpdate(val tNs: Long /* monotonic; Android elapsedRealtimeNanos base */, val distanceM: Double /* since start() */,
     val yawRad: Double /* relative to start(), clockwise-positive, (-π, π] */, val stepCount: Int, val isStep: Boolean /* new step */,
-    val pressureHpa: Double? /* null without barometer */, val source: String /* "simt_track_plus" | "echo_builtin_pdr" | "replay" */)
+    val pressureHpa: Double? /* null without barometer */, val source: String /* "echo_builtin_pdr" | "replay" */)
 interface MotionSource { val updates: Flow<MotionUpdate>; fun start(); fun stop() }        // ~20 Hz + every step
 interface CameraRecorder { @Composable fun Preview(modifier: Modifier); suspend fun takePhoto(out: Path): Path
     suspend fun startVideo(out: Path): Long /* tNs of recording start, MotionUpdate clock */; suspend fun stopVideo(): Path }
@@ -642,10 +647,13 @@ Est = focused hours. Pri: P0 = needed for the end-to-end demo, P1 = expendable, 
 `rg -n "step|heading|azimuth|yaw|Pdr|pressure|Flow<|StateFlow|interface" track/src --type kotlin | head -200`; find the
 public entry point that starts tracking and the type it emits. 3) In `link`: `rg -n "send|receive|socket|nsd|discover|pair|ByteArray" link/src`.
 4) Fill every row of §2.1 with class names/APIs; record AGP/Kotlin versions of the root build.
-**Decision rules:** use `TrackPlusMotionSource` only if Track+ emits per-step (or ≥5 Hz) distance and a heading usable as
-relative yaw, adaptable in ≤ 2 h, and does not need exclusive camera access (ECHO records video; if Track+ camera-motion needs the camera, run Track+
-without that input or use the built-in PDR); use `LinkPeerTransport` only if link can send ≥ 1 MB of arbitrary bytes to a peer found
-without internet. **Both phones must run the same MotionSource.**
+**Decision rules (copy model, §2.1):** copy step/heading algorithm pieces
+from the track module only where they close a gap in §6.1–6.2, renamed as
+ECHO code; never copy camera-motion code that needs exclusive camera
+access (ECHO records video concurrently). Copy link transport code only
+if it can carry ≥ 1 MB of arbitrary bytes to a peer found without
+internet; otherwise build ECHO's byte path new. **Both phones must run
+the same MotionSource.**
 **Done when:** §2.1 has no `_tbd_`; decisions committed in this file. **Fallback:** built-in implementations.
 
 #### W0-02 · KMP scaffold
@@ -707,7 +715,9 @@ Meta key is set, also probe `GET https://api.meta.ai/v1/models` for `sam-3.1` / 
 `ImuSample(tNs, ax, ay, az)`, `RotSample(tNs, r: FloatArray)`, `PressureSample`), `androidMain/AndroidImuSource.kt`
 (SensorManager listeners for `TYPE_ACCELEROMETER` + `TYPE_GAME_ROTATION_VECTOR` at `SENSOR_DELAY_GAME`, `TYPE_PRESSURE` at
 `SENSOR_DELAY_NORMAL`; `callbackFlow` into a single-thread dispatcher feeding `PdrEngine`), `BuiltInPdrMotionSource`
-(`MotionSource`, `source = "echo_builtin_pdr"`); optional `androidApp/TrackPlusMotionSource.kt` mapping Track+ output → `MotionUpdate`.
+(`MotionSource`, `source = "echo_builtin_pdr"`). Per the §2.1 copy model there
+is no adapter to any external engine: copied algorithm pieces land in
+`capture/` as ECHO code.
 **Tests:** heading of identity matrix (flat, top→north) = 0; upright portrait facing east (camera axis) = +π/2; PDR on a synthetic
 2 Hz sine of amplitude 2 m/s² for 10 s → 20 ± 1 steps, distance 13.6 ± 1.5 m; yaw wraps correctly across ±π.
 **Done when:** debug overlay on Record shows steps/distance/yaw live and walking 10 counted steps yields ≈ 10.
@@ -781,7 +791,9 @@ override suspend fun fetch(e: Endpoint, token: String): ByteArray =
 ```
 `localIpv4()`: `NetworkInterface.getNetworkInterfaces()` → up, non-loopback, `Inet4Address.isSiteLocalAddress`; prefer names
 `wlan*`, then `ap*`/`swlan*` (hotspot). Server stops 3 s after the first successful download or after 10 min. Install Ktor `HttpTimeout`.
-If W0-01 chose `LinkPeerTransport`, implement the same interface in `androidApp` and select it in `AppGraph`.
+If W2-03 copies the link transport code, it lands renamed as
+`LanPeerTransport` behind the same `PeerTransport` interface; select the
+implementation in `AppGraph`.
 **Done when:** two phones on the same Wi-Fi **and** on Phone A's hotspot transfer a 500 KB bundle in < 3 s.
 
 #### W2-04 · Share + Receive screens

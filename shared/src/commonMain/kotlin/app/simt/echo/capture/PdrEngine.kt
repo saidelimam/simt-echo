@@ -20,10 +20,11 @@ data class PressureSample(val tNs: Long, val hPa: Double)
 /**
  * Built-in pedestrian dead reckoning (implementation plan §6.2).
  *
- * This is ECHO's shipping `MotionSource` (the W0-01 decision): it follows
- * the same conventions as simt-app's tested `PdrEngine` — per-step flows,
- * scalar distance smoothing — but is owned here because the KMP boundary
- * prevents linking that Android-only engine. Thresholds are spec
+ * This is ECHO's shipping `MotionSource` (the W0-01 decision). The
+ * step/heading approach (per-step emissions, Weinberg step length,
+ * scalar distance smoothing) follows the problem as already solved in
+ * `simt-app`'s track module — copied conventions, vendored here as
+ * ECHO-owned code with no dependency on that repo. Thresholds are spec
  * constants; calibration (step K) lands in W4-02 and only touches [k].
  *
  * The engine is pure: feed samples in, read [updates] out. Android

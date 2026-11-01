@@ -22,9 +22,10 @@ data class MotionUpdate(
 /**
  * Stream of device motion while walking a route.
  *
- * Implementations: `TrackPlusMotionSource` (reusing simt-app Track) with a
- * built-in PDR fallback, slice W1-01. Replay for navigation tests implements
- * the same seam (W2-05), so capture and navigation never diverge.
+ * Implementations: `BuiltInPdrMotionSource` (slice W1-01, engine in
+ * `capture/`), and replay for navigation tests (W2-05) — so capture and
+ * navigation never diverge. ECHO is fully enclosed: no implementation
+ * depends on any external app or engine.
  */
 interface MotionSource {
     /** Motion at ~20 Hz plus discrete step events ([MotionUpdate.isStep]). */
