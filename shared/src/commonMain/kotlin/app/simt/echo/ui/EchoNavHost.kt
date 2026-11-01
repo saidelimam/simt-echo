@@ -9,10 +9,13 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import app.simt.echo.AppGraph
+import app.simt.echo.platform.rememberHaptics
 import app.simt.echo.ui.screens.HomeScreen
 import app.simt.echo.ui.screens.PlaceholderScreen
 import app.simt.echo.ui.screens.PlaceholderViewModel
+import app.simt.echo.ui.screens.receive.ReceiveScreen
 import app.simt.echo.ui.screens.record.RecordScreen
+import app.simt.echo.ui.screens.share.ShareScreen
 
 /**
  * Navigation shell (plan §8.2). This file is owned by Lane A: screens
@@ -65,14 +68,18 @@ fun EchoNavHost(
         }
         composable<EchoRoute.Share> { entry ->
             val route = entry.toRoute<EchoRoute.Share>()
-            val vm = remember(route.routeId) {
-                PlaceholderViewModel("Share ${route.routeId}", "QR offer lands in W2-04.")
-            }
-            PlaceholderScreen(vm, "Back home", { navController.popBackStack() })
+            ShareScreen(
+                routeId = route.routeId,
+                service = graph.transferService,
+                haptics = rememberHaptics(),
+                onClose = { navController.popBackStack() },
+            )
         }
         composable<EchoRoute.Receive> {
-            val vm = remember { PlaceholderViewModel("Receive", "QR scan lands in W2-04.") }
-            PlaceholderScreen(vm, "Back home", { navController.popBackStack() })
+            ReceiveScreen(
+                service = graph.transferService,
+                onImported = { navController.navigateTo(EchoRoute.RouteDetail(it)) },
+            )
         }
         composable<EchoRoute.Align> { entry ->
             val route = entry.toRoute<EchoRoute.Align>()

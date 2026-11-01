@@ -4,7 +4,9 @@ import app.simt.echo.bundle.BundleCodec
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.model.Asset
 import app.simt.echo.model.BundleBody
+import app.simt.echo.platform.Endpoint
 import app.simt.echo.platform.PeerTransport
+import kotlinx.coroutines.flow.Flow
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 import kotlin.random.Random
@@ -51,23 +53,41 @@ class TransferService(
     }
 
     suspend fun receive(qrUri: String): BundleBody {
+        val body = fetchPreview(qrUri)
+        saveImported(body)
+        return body
+    }
+
+    /**
+     * Fetches, opens and verifies the bundle behind [qrUri] without saving
+     * (W2-04 Receive import sheet). The caller shows the returned body and
+     * persists it with [saveImported] only after the user confirms Save.
+     */
+    suspend fun fetchPreview(qrUri: String): BundleBody {
         val payload = QrPayload.parse(qrUri).getOrThrow()
         val sealed = transport.fetch(
-            app.simt.echo.platform.Endpoint(payload.host, payload.port),
+            Endpoint(payload.host, payload.port),
             base64Url(payload.token),
         )
         val body = BundleCodec.open(sealed, payload.key, nowMs()).getOrThrow()
         check(BundleCodec.sha8Hex(body) == payload.sha8Hex) {
             "bundle fingerprint mismatch: QR promised ${payload.sha8Hex}"
         }
+        return body
+    }
+
+    /** Persists a previewed [BundleBody] with its asset bytes (W2-04 Save). */
+    fun saveImported(body: BundleBody) {
         val assetBytes = body.assets.associate { asset ->
             asset.id to Base64.decode(asset.b64)
         }
         routes.saveWithAssetBytes(body.route, assetBytes)
-        return body
     }
 
     fun stopOffer() = transport.stopOffer()
+
+    /** Re-emits the transport's per-download signal (W2-04 Share "Sent ✓"). */
+    val served: Flow<Unit> get() = transport.served
 
     private fun collectAssets(
         routeId: String,

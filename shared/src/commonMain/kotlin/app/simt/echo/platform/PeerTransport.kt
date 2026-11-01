@@ -1,5 +1,8 @@
 package app.simt.echo.platform
 
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
+
 /** Where a peer can be reached on the local network. */
 data class Endpoint(val host: String, val port: Int)
 
@@ -18,4 +21,11 @@ interface PeerTransport {
 
     /** Stops serving (after a successful fetch or when the UI leaves). */
     fun stopOffer()
+
+    /**
+     * Emits once per successful peer download (W2-04 Share "Sent ✓").
+     * Defaults to never emitting so fakes and platform stubs that cannot
+     * observe downloads keep compiling without pretending they can.
+     */
+    val served: Flow<Unit> get() = emptyFlow()
 }
