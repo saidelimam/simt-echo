@@ -2,6 +2,7 @@ package app.simt.echo.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -14,13 +15,16 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.simt.echo.model.EchoRoute as SavedRoute
 import app.simt.echo.ui.EchoRoute
 import app.simt.echo.ui.components.EchoButton
+import app.simt.echo.ui.components.StatusChip
+import kotlin.math.roundToInt
 
 /**
- * Home: route cards land with W2-01; until then one button per §8.2
- * destination proves every route is reachable (W0-03 done-when), and
- * unfinished captures are listed with a Draft badge (W1-03 done-when).
+ * Home: saved routes are listed as cards with an ownership badge
+ * (plan W2-01), unfinished captures carry a Draft badge (W1-03), and one
+ * button per §8.2 destination keeps every route reachable.
  */
 @Composable
 fun HomeScreen(
@@ -28,6 +32,8 @@ fun HomeScreen(
     modifier: Modifier = Modifier,
     draftIds: List<String> = emptyList(),
     onOpenDraft: (String) -> Unit = { onOpen(EchoRoute.Review(it)) },
+    savedRoutes: List<SavedRoute> = emptyList(),
+    onOpenRoute: (String) -> Unit = { onOpen(EchoRoute.RouteDetail(it)) },
 ) {
     Column(
         modifier = modifier
@@ -38,6 +44,19 @@ fun HomeScreen(
     ) {
         Text(text = "ECHO", style = MaterialTheme.typography.displayLarge)
         Text(text = "Walk it once. Share the way.")
+        savedRoutes.forEach { route ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                EchoButton(
+                    text = "${route.name.ifEmpty { route.routeId }} · " +
+                        "${route.totalLengthM.roundToInt()} m · ${route.landmarks.size} landmarks",
+                    onClick = { onOpenRoute(route.routeId) },
+                    modifier = Modifier.weight(1f),
+                )
+                // Own saves stamp the Segmenter default; anything else
+                // arrived over the wire (W2-04).
+                StatusChip(text = if (route.creatorLabel == "creator") "Own" else "Received")
+            }
+        }
         draftIds.forEach { draftId ->
             EchoButton(
                 text = "$draftId · Draft",

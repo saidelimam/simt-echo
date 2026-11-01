@@ -1,6 +1,7 @@
 package app.simt.echo.capture
 
 import app.simt.echo.model.CaptureLog
+import app.simt.echo.model.defaultCue
 import app.simt.echo.model.CaptureSample
 import app.simt.echo.model.EchoConfig
 import app.simt.echo.model.EchoIds
@@ -39,8 +40,8 @@ fun segment(log: CaptureLog, cfg: EchoConfig, routeId: String, nowMs: Long): Ech
             totalLengthM = 0.0,
             start = START_ANCHOR,
             nodes = listOf(
-                node(0, NodeType.START, 0.0, "Start", null, cueFor(NodeType.START, null, null)),
-                node(1, NodeType.DESTINATION, 0.0, dest, null, cueFor(NodeType.DESTINATION, dest, null)),
+                node(0, NodeType.START, 0.0, "Start", null),
+                node(1, NodeType.DESTINATION, 0.0, dest, null),
             ),
             legs = listOf(RouteLeg(EchoIds.nodeId(0), EchoIds.nodeId(1), 0.0, 0.0)),
             path = emptyList(),
@@ -114,7 +115,6 @@ fun segment(log: CaptureLog, cfg: EchoConfig, routeId: String, nowMs: Long): Ech
             d = rn.d,
             label = rn.label,
             turn = rn.turn,
-            cue = cueFor(rn.type, if (rn.type == NodeType.DESTINATION) rn.label else null, rn.turn),
             levelDelta = if (rn.type == NodeType.LEVEL_CHANGE) rn.levelDelta else 0,
             captureTMs = geo.captureTMsAt(rn.d) - log.videoStartNs / 1_000_000L,
         )
@@ -414,31 +414,24 @@ private fun turnWord(dir: TurnDir): String = when (dir) {
     TurnDir.U_TURN -> "U-turn"
 }
 
-/** Default cues (plan §8.4): sentence case, ≤ 6 words, no certainty. */
-private fun cueFor(type: NodeType, destinationLabel: String?, turn: TurnDir?): String = when (type) {
-    NodeType.START -> "Start here"
-    NodeType.TURN -> "Turn ${turnWord(turn ?: TurnDir.RIGHT)}"
-    NodeType.CHECKPOINT -> "Pass the checkpoint"
-    NodeType.LEVEL_CHANGE -> "Change level"
-    NodeType.DESTINATION -> "Arrive at ${destinationLabel ?: DEFAULT_DESTINATION_LABEL}"
-}
-
 private fun node(
     index: Int,
     type: NodeType,
     d: Double,
     label: String,
     turn: TurnDir?,
-    cue: String,
     levelDelta: Int = 0,
     captureTMs: Long? = null,
-): RouteNode = RouteNode(
-    id = EchoIds.nodeId(index),
-    type = type,
-    atDistanceM = d,
-    label = label,
-    turn = turn,
-    cue = cue,
-    levelDelta = levelDelta,
-    captureTMs = captureTMs,
-)
+): RouteNode {
+    val stub = RouteNode(
+        id = EchoIds.nodeId(index),
+        type = type,
+        atDistanceM = d,
+        label = label,
+        turn = turn,
+        levelDelta = levelDelta,
+        captureTMs = captureTMs,
+    )
+    // One §8.4 source of truth: Review refreshes untouched cues against this.
+    return stub.copy(cue = defaultCue(stub))
+}
