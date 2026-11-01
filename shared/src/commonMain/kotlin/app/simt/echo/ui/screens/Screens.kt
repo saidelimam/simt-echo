@@ -15,6 +15,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.simt.echo.data.RecoverableDraft
+import app.simt.echo.data.destination
 import app.simt.echo.model.EchoRoute as SavedRoute
 import app.simt.echo.ui.EchoRoute
 import app.simt.echo.ui.components.EchoButton
@@ -34,6 +36,8 @@ fun HomeScreen(
     onOpenDraft: (String) -> Unit = { onOpen(EchoRoute.Review(it)) },
     savedRoutes: List<SavedRoute> = emptyList(),
     onOpenRoute: (String) -> Unit = { onOpen(EchoRoute.RouteDetail(it)) },
+    recoverableDrafts: List<RecoverableDraft> = emptyList(),
+    onResumeDraft: (RecoverableDraft) -> Unit = { onOpen(it.destination()) },
 ) {
     Column(
         modifier = modifier
@@ -44,6 +48,21 @@ fun HomeScreen(
     ) {
         Text(text = "ECHO", style = MaterialTheme.typography.displayLarge)
         Text(text = "Walk it once. Share the way.")
+        if (recoverableDrafts.isNotEmpty()) {
+            // Interrupted work first (W4-03): a kill mid-record or
+            // mid-upload must greet the user on relaunch, not hide.
+            Text(text = "Interrupted drafts", style = MaterialTheme.typography.titleMedium)
+            recoverableDrafts.forEach { draft ->
+                EchoButton(
+                    text = if (draft.hasRouteDraft) {
+                        "${draft.draftId} · Open in Review"
+                    } else {
+                        "${draft.draftId} · Resume recording (${draft.sampleCount} samples)"
+                    },
+                    onClick = { onResumeDraft(draft) },
+                )
+            }
+        }
         savedRoutes.forEach { route ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 EchoButton(
@@ -63,7 +82,7 @@ fun HomeScreen(
                 onClick = { onOpenDraft(draftId) },
             )
         }
-        EchoButton(text = "Record", onClick = { onOpen(EchoRoute.Record) })
+        EchoButton(text = "Record", onClick = { onOpen(EchoRoute.Record()) })
         EchoButton(text = "Receive", onClick = { onOpen(EchoRoute.Receive) })
         EchoButton(text = "Review demo draft", onClick = { onOpen(EchoRoute.Review("demo-draft")) })
         EchoButton(text = "Route detail demo", onClick = { onOpen(EchoRoute.RouteDetail("demo-route")) })

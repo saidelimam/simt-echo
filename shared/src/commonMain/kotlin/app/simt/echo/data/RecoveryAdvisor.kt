@@ -38,6 +38,15 @@ fun listRecoverable(drafts: DraftRepository): List<RecoverableDraft> =
         )
     }
 
-/** Where the UI should send the user for [draft]: Review when segmented, Record-list otherwise. */
-fun resumeRoute(draft: RecoverableDraft): String =
-    if (draft.hasRouteDraft) "review/${draft.draftId}" else "record?resume=${draft.draftId}"
+/**
+ * Where the UI sends the user for [draft], as a typed destination:
+ * Review when the walk already segmented, resume-recording in the same
+ * draft otherwise. (This replaces the original string routes, which the
+ * type-safe nav graph cannot parse — review 0003 R2.)
+ */
+fun RecoverableDraft.destination(): app.simt.echo.ui.EchoRoute =
+    if (hasRouteDraft) {
+        app.simt.echo.ui.EchoRoute.Review(draftId)
+    } else {
+        app.simt.echo.ui.EchoRoute.Record(resumeDraftId = draftId)
+    }

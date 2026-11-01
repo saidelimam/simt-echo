@@ -9,7 +9,6 @@ import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,11 +45,14 @@ actual fun rememberCameraPermissionState(): CameraPermissionState {
             CameraPermissionStatus.DENIED
         }
     }
-    // Re-check when returning from Settings (gate's Open settings).
-    LaunchedEffect(Unit) {
+    // Re-check on every resume — including returning from Settings,
+    // where the user may just have granted the permission (review 0003:
+    // a one-shot LaunchedEffect left the gate stuck on denied).
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
         if (initialStatus(context) == CameraPermissionStatus.GRANTED) {
             status = CameraPermissionStatus.GRANTED
         }
+        onPauseOrDispose { }
     }
     return remember(status) {
         CameraPermissionState(
@@ -80,5 +82,7 @@ private fun initialStatus(context: android.content.Context): CameraPermissionSta
     ) {
         CameraPermissionStatus.GRANTED
     } else {
-        CameraPermissionStatus.DENIED
+        // Not granted is not yet denied: until the launcher reports a
+        // refusal, this is a first ask, and the copy must say so.
+        CameraPermissionStatus.NOT_DETERMINED
     }

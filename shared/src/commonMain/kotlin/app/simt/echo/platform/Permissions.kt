@@ -22,6 +22,9 @@ import app.simt.echo.ui.components.PillButton
  */
 enum class CameraPermissionStatus {
     UNKNOWN,
+    /** Never asked (or askable again): not a denial, and must not be
+     * labelled as one (review 0003 R2). */
+    NOT_DETERMINED,
     GRANTED,
     DENIED,
     PERMANENTLY_DENIED,
@@ -42,10 +45,13 @@ fun cameraRationale(): String =
 
 fun cameraDeniedMessage(permanently: Boolean): String =
     if (permanently) {
-        "Camera is off. Enable it in Settings to record or scan, or continue without camera."
+        "Camera is off. Enable it in Settings to record or scan."
     } else {
         "Camera was denied. ECHO cannot record or scan without it."
     }
+
+fun cameraNotDeterminedMessage(): String =
+    "ECHO has not asked for the camera yet."
 
 /**
  * Fail-closed permission gate (W4-03): granted (or unknown on platforms
@@ -63,6 +69,7 @@ fun CameraPermissionGate(
         CameraPermissionStatus.GRANTED,
         CameraPermissionStatus.UNKNOWN,
         -> content()
+        CameraPermissionStatus.NOT_DETERMINED,
         CameraPermissionStatus.DENIED,
         CameraPermissionStatus.PERMANENTLY_DENIED,
         -> {
@@ -82,7 +89,11 @@ fun CameraPermissionGate(
                     style = MaterialTheme.typography.bodyLarge,
                 )
                 Text(
-                    text = cameraDeniedMessage(permanent),
+                    text = if (permission.status == CameraPermissionStatus.NOT_DETERMINED) {
+                        cameraNotDeterminedMessage()
+                    } else {
+                        cameraDeniedMessage(permanent)
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.error,
                 )

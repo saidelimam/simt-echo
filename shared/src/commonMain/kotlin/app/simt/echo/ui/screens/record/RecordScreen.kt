@@ -22,6 +22,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import app.simt.echo.capture.CaptureSession
 import app.simt.echo.capture.CaptureState
 import app.simt.echo.data.DraftRepository
@@ -54,11 +57,12 @@ fun RecordScreen(
     drafts: DraftRepository,
     onSaved: () -> Unit,
     modifier: Modifier = Modifier,
+    resumeDraftId: String? = null,
 ) {
     val motion = rememberMotionSource()
     val camera = rememberCameraRecorder()
     val haptics = rememberHaptics()
-    val session = remember(motion, camera, haptics, drafts) {
+    val session = remember(motion, camera, haptics, drafts, resumeDraftId) {
         CaptureSession(
             motion = motion,
             camera = camera,
@@ -69,14 +73,23 @@ fun RecordScreen(
             newDraftId = { "draft-${Random.nextInt(1_000_000)}" },
         )
     }
-    val viewModel = remember(session) { RecordViewModel(session) }
+    // Back-stack-scoped (review 0001 pattern): rotation/process handling
+    // must not silently drop the session behind a `remember`.
+    val viewModel: RecordViewModel = viewModel(
+        key = resumeDraftId ?: "new",
+        factory = viewModelFactory {
+            addInitializer(RecordViewModel::class) {
+                RecordViewModel(session)
+            }
+        },
+    )
     val uiState by viewModel.uiState.collectAsState()
-    LaunchedEffect(Unit) { viewModel.onPreviewReady() }
+    LaunchedEffect(Unit) { viewModel.prepare(resumeDraftId) }
     KeepScreenOn()
 
     CameraPermissionGate {
         Box(modifier = modifier.fillMaxSize()) {
-            camera.Preview(modifier = Modifier.fillMaxSize())
+            camera.Preview(modifier = Modifier.fillMaxSize(), onError = viewModel::onCameraError)
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -93,6 +106,13 @@ fun RecordScreen(
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
+                    uiState.error?.let { message ->
+                        Text(
+                            text = message,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
                     DistanceReadout(text = "${oneDecimal(uiState.hud.distanceM)} m")
                     when (uiState.state) {
                         CaptureState.READY -> RoundActionButton(

@@ -33,7 +33,7 @@ class RecoveryAdvisorTest {
         assertEquals(listOf("draft-a"), found.map { it.draftId })
         assertFalse(found.single().hasRouteDraft)
         assertEquals(21, found.single().sampleCount)
-        assertEquals("record?resume=draft-a", resumeRoute(found.single()))
+        assertEquals(app.simt.echo.ui.EchoRoute.Record(resumeDraftId = "draft-a"), found.single().destination())
     }
 
     @Test
@@ -45,7 +45,7 @@ class RecoveryAdvisorTest {
         assertEquals(1, found.size)
         assertTrue(found.single().hasRouteDraft)
         assertEquals("working", found.single().jobStatus)
-        assertEquals("review/draft-b", resumeRoute(found.single()))
+        assertEquals(app.simt.echo.ui.EchoRoute.Review("draft-b"), found.single().destination())
     }
 
     @Test
