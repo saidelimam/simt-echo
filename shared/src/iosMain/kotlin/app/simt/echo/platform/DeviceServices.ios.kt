@@ -59,3 +59,9 @@ actual fun rememberHaptics(): Haptics = remember {
         override fun play(pattern: HapticPattern) = Unit
     }
 }
+
+@Composable
+actual fun rememberOnline(pollMs: Long): Boolean = false
+
+@Composable
+actual fun KeepScreenOn() = Unit

@@ -34,6 +34,7 @@ import app.simt.echo.ui.components.EchoButton
 import app.simt.echo.ui.components.PillButton
 import app.simt.echo.ui.components.RoundActionButton
 import app.simt.echo.ui.components.StatusChip
+import app.simt.echo.ui.components.oneDecimal
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlin.random.Random
@@ -163,9 +164,4 @@ private fun FinishButton(onFinish: () -> Unit) {
 private fun formatElapsed(ms: Long): String {
     val totalSeconds = ms / 1000
     return "${totalSeconds / 60}:${(totalSeconds % 60).toString().padStart(2, '0')}"
-}
-
-private fun oneDecimal(value: Double): String {
-    val tenths = (value * 10).toLong()
-    return "${tenths / 10}.${tenths % 10}"
 }

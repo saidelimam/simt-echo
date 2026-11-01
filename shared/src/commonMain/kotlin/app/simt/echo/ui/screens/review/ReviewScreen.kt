@@ -1,7 +1,6 @@
 package app.simt.echo.ui.screens.review
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -27,7 +26,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -37,6 +35,7 @@ import app.simt.echo.model.Landmark
 import app.simt.echo.model.NodeType
 import app.simt.echo.platform.decodeImage
 import app.simt.echo.ui.components.EchoButton
+import app.simt.echo.ui.components.CropImage
 import app.simt.echo.ui.components.Minimap
 import app.simt.echo.ui.components.PillButton
 import kotlin.math.roundToInt
@@ -219,21 +218,15 @@ private fun HeroImage(
     contentDescription: String?,
     modifier: Modifier = Modifier,
 ) {
-    val bitmap = remember(bytes) { bytes?.let(::decodeImage) }
-    if (bitmap != null) {
-        Image(
-            bitmap = bitmap,
-            contentDescription = contentDescription,
-            contentScale = ContentScale.Crop,
-            modifier = modifier
-                .fillMaxWidth()
-                .height(160.dp),
-        )
-    } else {
+    CropImage(
+        bytes = bytes,
+        contentDescription = contentDescription,
+        modifier = modifier.height(160.dp),
+    ) {
         Text(
             text = "No keyframe yet",
             style = MaterialTheme.typography.bodyMedium,
-            modifier = modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth(),
         )
     }
 }

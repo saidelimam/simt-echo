@@ -17,7 +17,10 @@ import app.simt.echo.platform.currentEpochMs
 import app.simt.echo.platform.rememberMediaTools
 import app.simt.echo.platform.rememberHaptics
 import app.simt.echo.ui.screens.HomeScreen
+import app.simt.echo.ui.screens.align.AlignScreen
+import app.simt.echo.ui.screens.arrived.ArrivedScreen
 import app.simt.echo.ui.screens.detail.RouteDetailScreen
+import app.simt.echo.ui.screens.navigate.NavigateScreen
 import app.simt.echo.ui.screens.processing.ProcessingScreen
 import app.simt.echo.ui.screens.processing.ProcessingViewModel
 import app.simt.echo.ui.screens.PlaceholderScreen
@@ -127,24 +130,29 @@ fun EchoNavHost(
         }
         composable<EchoRoute.Align> { entry ->
             val route = entry.toRoute<EchoRoute.Align>()
-            val vm = remember(route.routeId) {
-                PlaceholderViewModel("Align ${route.routeId}", "Start alignment lands in W2-06.")
-            }
-            PlaceholderScreen(vm, "Start navigating", { navController.navigateTo(EchoRoute.Navigate(route.routeId, false)) })
+            AlignScreen(
+                routeId = route.routeId,
+                routes = graph.routeRepository,
+                onAligned = { navController.navigateTo(EchoRoute.Navigate(route.routeId, false)) },
+                onBack = { navController.popBackStack() },
+            )
         }
         composable<EchoRoute.Navigate> { entry ->
             val route = entry.toRoute<EchoRoute.Navigate>()
-            val vm = remember(route.routeId, route.simulate) {
-                PlaceholderViewModel("Navigate ${route.routeId}", "Navigator lands in W2-05/W2-06.")
-            }
-            PlaceholderScreen(vm, "Finish", { navController.navigateTo(EchoRoute.Arrived("demo-trial")) })
+            NavigateScreen(
+                routeId = route.routeId,
+                routes = graph.routeRepository,
+                onArrived = { navController.navigateTo(EchoRoute.Arrived(it)) },
+                onBack = { navController.popBackStack() },
+            )
         }
         composable<EchoRoute.Arrived> { entry ->
             val route = entry.toRoute<EchoRoute.Arrived>()
-            val vm = remember(route.trialId) {
-                PlaceholderViewModel("Arrived", "Trial ${route.trialId} saved (W4-01 extends this).")
-            }
-            PlaceholderScreen(vm, "Done", { navController.popBackStack(EchoRoute.Home, false) })
+            ArrivedScreen(
+                routeId = route.routeId,
+                routes = graph.routeRepository,
+                onDone = { navController.popBackStack(EchoRoute.Home, false) },
+            )
         }
         composable<EchoRoute.Settings> {
             val vm = remember { PlaceholderViewModel("Settings", "Calibration lands in W4-02.") }
