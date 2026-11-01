@@ -1,14 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkflowStep as RuntimeWorkflowStep } from "cloudflare:workers";
 import { app } from "./index";
 import { EchoPipeline } from "./pipeline";
 import {
   CHECKPOINT_JSON_SCHEMA,
+  SPARK_JSON_SCHEMA,
+  SPARK_MODEL,
   SYSTEM,
   ScoutError,
   checkpointContext,
   cleanCandidates,
+  metaSparkScout,
   runScout,
+  sparkContext,
   type ScoutCheckpoint,
 } from "./scout";
 
@@ -340,7 +344,7 @@ describe("runScout typed failures", () => {
     const media = new FakeR2();
     const jobId = "job-1";
     seedMedia(media, jobId);
-    // meta-spark is not implemented yet (W3-09): listed but skipped.
+    // meta-spark without a key is skipped (W3-09: key-gated).
     const env = envFor(media, undefined, { SCOUT_ORDER: "meta-spark" });
 
     const err = await runScout(env, jobId, structuredClone(validManifest()) as never).catch((e) => e);
@@ -427,6 +431,209 @@ describe("scout helpers", () => {
     } as unknown as ScoutCheckpoint;
     const kept = cleanCandidates(raw, new Set(["kf_n2_0", "kf_n2_1"]));
     expect(kept.map((c) => c.imageId)).toEqual(["kf_n2_1", "kf_n2_0"]);
+  });
+});
+
+// W3-09 test delta: the Muse Spark whole-job scout. The fetch stub mirrors
+// ground.test.ts's SSE shape; bodies are asserted against the §7.1 verbatim
+// request instead of re-stating it here.
+function sseSpark(text: string): Response {
+  const events = `data: ${JSON.stringify({ type: "response.output_text.delta", delta: text })}\n\ndata: [DONE]\n\n`;
+  return new Response(events, { status: 200 });
+}
+
+function stubSparkFetch(handler: (body: Record<string, unknown>) => Response | Promise<Response>) {
+  const calls: Record<string, unknown>[] = [];
+  vi.stubGlobal("fetch", async (_url: string, init: { body: string }) => {
+    const body = JSON.parse(init.body) as Record<string, unknown>;
+    calls.push(body);
+    return handler(body);
+  });
+  return calls;
+}
+
+function sparkAnswer(nodeId = "n2", candidates: unknown[] = [candidate()]) {
+  return { checkpoints: [{ nodeId, candidates }] };
+}
+
+describe("metaSparkScout (W3-09)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("proposes the whole job in one call with SYSTEM/SCHEMA verbatim", async () => {
+    const media = new FakeR2();
+    const jobId = "job-1";
+    seedMedia(media, jobId);
+    const calls = stubSparkFetch(() => sseSpark(JSON.stringify(sparkAnswer())));
+
+    const result = await metaSparkScout(
+      envFor(media, undefined, { META_API_KEY: "k" }),
+      jobId,
+      structuredClone(validManifest()) as never,
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(result.model).toBe(SPARK_MODEL);
+    expect(result.checkpoints).toHaveLength(1);
+    expect(result.checkpoints[0].candidates).toHaveLength(1);
+    const body = calls[0] as {
+      model: string;
+      reasoning: { effort: string };
+      input: Array<{ role: string; content: unknown[] }>;
+      text: { format: { name: string; schema: unknown } };
+    };
+    expect(body.model).toBe("muse-spark-1.3");
+    expect(body.reasoning).toEqual({ effort: "low" });
+    expect(body.input[0].content).toEqual([{ type: "input_text", text: SYSTEM }]);
+    expect(body.text.format.name).toBe("echo_landmarks");
+    expect(body.text.format.schema).toEqual(SPARK_JSON_SCHEMA);
+    // One CONTEXT text plus an imageId marker per sent image.
+    const userContent = body.input[1].content as Array<{ type: string; text?: string }>;
+    expect(userContent[0].type).toBe("input_text");
+    expect(userContent.filter((c) => c.type === "input_image")).toHaveLength(2);
+    expect(userContent.filter((c) => c.text === "imageId=kf_n2_0")).toHaveLength(1);
+
+    // Compact evidence sealed like the per-checkpoint path.
+    const sealed = JSON.parse(new TextDecoder().decode(media.store.get(`jobs/${jobId}/scout.json`)!));
+    expect(sealed.model).toBe(SPARK_MODEL);
+    const raw = JSON.parse(
+      new TextDecoder().decode(media.store.get(`jobs/${jobId}/scout/raw/spark.0.json`)!),
+    );
+    expect(raw.model).toBe(SPARK_MODEL);
+  });
+
+  it("cleans Spark output like W3-04: drops unknown images, clamps, keeps top 2", async () => {
+    const media = new FakeR2();
+    const jobId = "job-1";
+    seedMedia(media, jobId);
+    stubSparkFetch(() =>
+      sseSpark(
+        JSON.stringify(
+          sparkAnswer("n2", [
+            candidate({ imageId: "kf_evil", distinctiveness: 1, permanence: 1 }),
+            candidate({ imageId: "kf_n2_0", distinctiveness: 0.5, permanence: 0.5, box: [900, 900, 100, 100] }),
+            candidate({ imageId: "kf_n2_1", distinctiveness: 0.9, permanence: 1, box: [-50, -10, 1200, 2000] }),
+            candidate({ imageId: "kf_n2_1", distinctiveness: 0.1, permanence: 0.1 }),
+          ]),
+        ),
+      ),
+    );
+
+    const result = await metaSparkScout(
+      envFor(media, undefined, { META_API_KEY: "k" }),
+      jobId,
+      structuredClone(validManifest()) as never,
+    );
+
+    const kept = result.checkpoints[0].candidates;
+    expect(kept).toHaveLength(2);
+    expect(kept[0].imageId).toBe("kf_n2_1");
+    expect(kept[0].box).toEqual([0, 0, 1000, 1000]);
+    expect(kept[1].box).toEqual([100, 100, 900, 900]);
+  });
+
+  it("retries once with medium effort on JSON parse failure", async () => {
+    const media = new FakeR2();
+    const jobId = "job-1";
+    seedMedia(media, jobId);
+    let n = 0;
+    const calls = stubSparkFetch(() => {
+      n++;
+      return sseSpark(n === 1 ? "not json at all" : JSON.stringify(sparkAnswer()));
+    });
+
+    const result = await metaSparkScout(
+      envFor(media, undefined, { META_API_KEY: "k" }),
+      jobId,
+      structuredClone(validManifest()) as never,
+    );
+
+    expect(result.checkpoints[0].candidates).toHaveLength(1);
+    expect(calls).toHaveLength(2);
+    expect((calls[1] as { reasoning: { effort: string } }).reasoning).toEqual({ effort: "medium" });
+  });
+
+  it("fails typed when Spark output is schema-invalid", async () => {
+    const media = new FakeR2();
+    const jobId = "job-1";
+    seedMedia(media, jobId);
+    stubSparkFetch(() => sseSpark(JSON.stringify(sparkAnswer("n2", [candidate({ distinctiveness: 2 })]))));
+
+    const err = await metaSparkScout(
+      envFor(media, undefined, { META_API_KEY: "k" }),
+      jobId,
+      structuredClone(validManifest()) as never,
+    ).catch((e) => e);
+    expect(err).toBeInstanceOf(ScoutError);
+    expect((err as ScoutError).code).toBe("all_models_failed");
+    expect(media.store.has(`jobs/${jobId}/scout.json`)).toBe(false);
+  });
+
+  it("fails with media_missing when no keyframe bytes exist", async () => {
+    const media = new FakeR2();
+    const jobId = "job-1";
+    stubSparkFetch(() => sseSpark(JSON.stringify(sparkAnswer())));
+
+    const err = await metaSparkScout(
+      envFor(media, undefined, { META_API_KEY: "k" }),
+      jobId,
+      structuredClone(validManifest()) as never,
+    ).catch((e) => e);
+    expect(err).toBeInstanceOf(ScoutError);
+    expect((err as ScoutError).code).toBe("media_missing");
+  });
+
+  it("runs first with a key and SCOUT_ORDER=meta-spark,workers-ai", async () => {
+    const media = new FakeR2();
+    const jobId = "job-1";
+    seedMedia(media, jobId);
+    const ai = new FakeAI({ [LLAMA]: () => ({ response: checkpointResult("n2", []) }) });
+    const fetches = stubSparkFetch(() => sseSpark(JSON.stringify(sparkAnswer())));
+    const env = envFor(media, ai, { SCOUT_ORDER: "meta-spark,workers-ai", META_API_KEY: "k" });
+
+    const result = await runScout(env, jobId, structuredClone(validManifest()) as never);
+
+    expect(result.model).toBe(SPARK_MODEL);
+    expect(fetches).toHaveLength(1);
+    expect(ai.calls).toHaveLength(0);
+  });
+
+  it("falls back to Workers AI when Spark fails but the key is set", async () => {
+    const media = new FakeR2();
+    const jobId = "job-1";
+    seedMedia(media, jobId);
+    const ai = new FakeAI({ [LLAMA]: () => ({ response: checkpointResult() }) });
+    stubSparkFetch(() => sseSpark("garbage {{{"));
+    const env = envFor(media, ai, { SCOUT_ORDER: "meta-spark,workers-ai", META_API_KEY: "k" });
+
+    const result = await runScout(env, jobId, structuredClone(validManifest()) as never);
+
+    expect(result.model).toBe(LLAMA);
+  });
+
+  it("without a key nothing changes: meta-spark is skipped", async () => {
+    const media = new FakeR2();
+    const jobId = "job-1";
+    seedMedia(media, jobId);
+    const ai = new FakeAI({ [LLAMA]: () => ({ response: checkpointResult() }) });
+    const fetches = stubSparkFetch(() => sseSpark(JSON.stringify(sparkAnswer())));
+    const env = envFor(media, ai, { SCOUT_ORDER: "meta-spark,workers-ai" });
+
+    const result = await runScout(env, jobId, structuredClone(validManifest()) as never);
+
+    expect(result.model).toBe(LLAMA);
+    expect(fetches).toHaveLength(0);
+  });
+
+  it("builds the whole-job CONTEXT from sensor-measured directions", () => {
+    const cp = validManifest().checkpoints[0] as never;
+    const text = sparkContext("Indoor walk", [
+      { cp, loaded: [{ id: "kf_n2_0", tMs: 39250 }] },
+    ]);
+    expect(text).toContain("Route: Indoor walk. Checkpoints in walking order:");
+    expect(text).toContain("TURN LEFT at 23.5 m (sensor-measured)");
+    expect(text).toContain("kf_n2_0 (2.0 s before)");
   });
 });
 
