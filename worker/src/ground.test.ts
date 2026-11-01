@@ -299,6 +299,8 @@ describe("runGround SAM path", () => {
   it("reports vendor frames per video send and real SAM time in usage", async () => {
     const { manifest, env } = groundedSetup();
     vi.stubGlobal("fetch", async () => {
+      // Real elapsed time so the measured samMs is > 0 deterministically.
+      await new Promise((r) => setTimeout(r, 5));
       const events =
         `data: ${JSON.stringify({ type: "response.output_text.done", text: SAM_VIDEO })}\n\n` +
         `data: ${JSON.stringify({ type: "response.completed", response: { usage: { video_frames_processed: 120 } } })}\n\n` +
