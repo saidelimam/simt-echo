@@ -17,10 +17,10 @@ const STEP_OPTS = {
   timeout: "4 minutes" as const,
 };
 
-/** Load → scout (Workers AI, W3-04) → ground (W3-05) → assemble. W3-05 owns
- * ground-*: box-only default + SAM 3.1 when keyed, ranked per §6.6.
- * W3-06 owns assemble's content; ground seals ranked candidates to
- * `jobs/<id>/ground.json` for it to consume. */
+/** Load → scout (W3-04, plus W3-09 meta-spark) → ground (W3-05) → assemble.
+ * Ground seals ranked candidates to `jobs/<id>/ground.json`; assemble (this
+ * slice, W3-06) re-sorts by §6.6 rank, attaches measured usage and seals
+ * `jobs/<id>/result.json` for the app to poll. */
 export class EchoPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
   override async run(
     event: Readonly<WorkflowEvent<PipelineParams>>,
@@ -29,9 +29,17 @@ export class EchoPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
     const { jobId } = event.payload;
     try {
       const manifest = await step.do("load", STEP_OPTS, () => loadManifest(this.env, jobId));
+      // Wall-clock usage for result.json (plan §10 W3-06: timings). Measured
+      // around the steps so the numbers are real even though the Workflow
+      // scheduler owns the gaps between them.
+      const t0 = Date.now();
       const scout = await step.do("scout", STEP_OPTS, () => runScoutStep(this.env, jobId, manifest));
-      await step.do("ground", STEP_OPTS, () => runGroundStep(this.env, jobId, manifest, scout));
-      return await step.do("assemble", STEP_OPTS, () => assembleEmpty(this.env, jobId, manifest));
+      const scoutMs = Date.now() - t0;
+      const ground = await step.do("ground", STEP_OPTS, () => runGroundStep(this.env, jobId, manifest, scout));
+      const samMs = Date.now() - t0 - scoutMs;
+      return await step.do("assemble", STEP_OPTS, () =>
+        assembleFromGround(this.env, jobId, manifest, ground, { scoutMs, samMs }),
+      );
     } catch (e) {
       await putError(this.env, jobId, e instanceof Error ? e.message : String(e));
       throw e;
@@ -59,19 +67,50 @@ async function runScoutStep(env: Env, jobId: string, manifest: Manifest): Promis
   }
 }
 
-async function assembleEmpty(env: Env, jobId: string, manifest: Manifest): Promise<JobResult> {
+/**
+ * Assemble the public result (plan §7.1 step 4, slice W3-06): re-sort every
+ * checkpoint's candidates by §6.6 rank (ground already ranks; the re-sort is
+ * the cheap invariant the Review screen's preselect depends on), attach
+ * measured usage, and seal `jobs/<id>/result.json`. `samFrames` counts clip
+ * frames sent to SAM — a billing proxy, since the text-only SSE collector
+ * does not surface `response.completed` usage; it is absent on the box-only
+ * path. Exported for the slice's vitest.
+ */
+export async function assembleFromGround(
+  env: Env,
+  jobId: string,
+  manifest: Manifest,
+  ground: JobResult,
+  timings: { scoutMs: number; samMs: number },
+): Promise<JobResult> {
+  const samRan = ground.models.ground !== "none";
+  const samFrames = samRan
+    ? manifest.checkpoints.reduce((sum, cp) => sum + (cp.clip?.frameCount ?? 0), 0)
+    : undefined;
   const result = JobResultSchema.parse({
+    ...ground,
     jobId,
-    models: { scout: "none", ground: "none" },
-    checkpoints: manifest.checkpoints.map((c) => ({ nodeId: c.nodeId, candidates: [] })),
-    usage: {},
+    checkpoints: ground.checkpoints.map((c) => ({
+      nodeId: c.nodeId,
+      candidates: [...c.candidates].sort((a, b) => b.rank - a.rank || (a.candidateId < b.candidateId ? -1 : 1)),
+    })),
+    usage: {
+      ...(samFrames !== undefined && samFrames > 0 ? { samFrames } : {}),
+      scoutMs: Math.max(0, timings.scoutMs),
+      samMs: Math.max(0, timings.samMs),
+    },
   });
   await env.MEDIA.put(`jobs/${jobId}/result.json`, JSON.stringify(result));
   await putProgress(env, jobId, "complete");
   return result;
 }
 
-async function runGroundStep(env: Env, jobId: string, manifest: Manifest, scout: ScoutResult): Promise<void> {
+async function runGroundStep(
+  env: Env,
+  jobId: string,
+  manifest: Manifest,
+  scout: ScoutResult,
+): Promise<JobResult> {
   await putProgress(env, jobId, "grounding");
-  await runGround(env, jobId, manifest, scout);
+  return runGround(env, jobId, manifest, scout);
 }
