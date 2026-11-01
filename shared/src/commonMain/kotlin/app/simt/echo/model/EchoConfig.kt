@@ -30,6 +30,16 @@ data class EchoConfig(
      * pose or tracking exists in this app (review 0004 R4).
      */
     val cameraOverlayEnabled: Boolean = false,
+
+    // Local model (plan §7.5 / W5-01), Settings → Advanced. All defaults
+    // are "nothing configured": with these unset the app behaves exactly
+    // as before (cloud or manual landmarks only).
+    /** Base URL of an OpenAI-compatible LAN vision server, or empty. */
+    val localModelBaseUrl: String = "",
+    /** Model id on that server (also its display name), or empty. */
+    val localModelName: String = "",
+    /** Prefer the local model over the cloud worker when both could run. */
+    val preferLocalModel: Boolean = false,
     /** Resample distance per path point, metres (§6.3 step 1). */
     val resampleStepM: Double = 0.5,
     /** Circular yaw-smoothing window radius, metres (§6.3 step 2). */

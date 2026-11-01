@@ -14,6 +14,12 @@ class EchoApplication : Application() {
             platform = AndroidPlatform(dataDir = filesDir.absolutePath),
             apiBaseUrl = BuildConfig.WORKERS_API_BASE,
             appToken = BuildConfig.ECHO_APP_TOKEN,
+            // W5-01: a .litertlm pushed into the app's models directory
+            // (adb) enables the on-phone provider; absent = LAN/manual.
+            onPhoneModelPath = getExternalFilesDir("models")
+                ?.listFiles()
+                ?.firstOrNull { it.isFile && it.name.endsWith(".litertlm") }
+                ?.absolutePath,
         )
     }
 
