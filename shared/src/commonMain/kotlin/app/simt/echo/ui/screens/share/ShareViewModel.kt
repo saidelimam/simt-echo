@@ -86,6 +86,9 @@ class ShareViewModel(
         if (!_ui.value.fileWarning) return
         viewModelScope.launch {
             try {
+                // Plaintext exports live only until the next share:
+                // purge any stale unencrypted copy before writing anew.
+                service.purgePlainExports()
                 val path = service.exportFile(routeId)
                 val shared = sharing.shareFile(path, "ECHO route", ECHO_MIME)
                 _ui.update {

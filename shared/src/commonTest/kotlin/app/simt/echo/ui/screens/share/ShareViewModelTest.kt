@@ -194,14 +194,14 @@ class ShareViewModelTest {
         vm.requestFileShare()
         assertTrue(vm.ui.value.fileWarning)
         assertNull(sharing.sharedPath)
-        assertNull(store.readBytes("exports/${service.echoFileName(Fixtures.L_ROUTE.name)}"))
+        assertNull(store.readBytes("exports/${service.echoFileName(Fixtures.L_ROUTE.name).removeSuffix(".echo")}-${Fixtures.L_ROUTE.routeId}.echo"))
 
         // Confirming writes the plain container and opens the sheet with it.
         vm.confirmFileShare()
         advanceUntilIdle()
 
-        val expected = store.resolvePath("exports/${service.echoFileName(Fixtures.L_ROUTE.name)}")
-        assertNotNull(store.readBytes("exports/${service.echoFileName(Fixtures.L_ROUTE.name)}"))
+        val expected = store.resolvePath("exports/${service.echoFileName(Fixtures.L_ROUTE.name).removeSuffix(".echo")}-${Fixtures.L_ROUTE.routeId}.echo")
+        assertNotNull(store.readBytes("exports/${service.echoFileName(Fixtures.L_ROUTE.name).removeSuffix(".echo")}-${Fixtures.L_ROUTE.routeId}.echo"))
         assertEquals(expected, sharing.sharedPath)
         assertEquals(ECHO_MIME, sharing.sharedMime)
         val ui = vm.ui.value
@@ -223,7 +223,7 @@ class ShareViewModelTest {
         assertFalse(ui.fileWarning)
         assertFalse(ui.fileShared)
         assertNull(sharing.sharedPath)
-        assertNull(store.readBytes("exports/${service.echoFileName(Fixtures.L_ROUTE.name)}"))
+        assertNull(store.readBytes("exports/${service.echoFileName(Fixtures.L_ROUTE.name).removeSuffix(".echo")}-${Fixtures.L_ROUTE.routeId}.echo"))
     }
 
     @Test
@@ -242,6 +242,6 @@ class ShareViewModelTest {
         assertFalse(ui.fileShared)
         assertNotNull(ui.error)
         // The file was written before the sheet failed; the error is surfaced.
-        assertNotNull(store.readBytes("exports/${service.echoFileName(Fixtures.L_ROUTE.name)}"))
+        assertNotNull(store.readBytes("exports/${service.echoFileName(Fixtures.L_ROUTE.name).removeSuffix(".echo")}-${Fixtures.L_ROUTE.routeId}.echo"))
     }
 }

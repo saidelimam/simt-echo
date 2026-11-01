@@ -38,8 +38,11 @@ class AndroidFileSharing(
         val cont = pendingPick
         pendingPick = null
         if (cont != null) {
-            val bytes = uri?.let { readDocument(it) }
-            cont.resumeWith(Result.success(bytes))
+            // Read failures (revoked URI, oversize) resume as failures so
+            // the caller's error state shows them — throwing here would
+            // crash inside the registry callback (review 0003 R1).
+            val result = runCatching { uri?.let { readDocument(it) } }
+            cont.resumeWith(result)
         }
     }
 
@@ -64,9 +67,31 @@ class AndroidFileSharing(
         openDocument.launch(arrayOf("*/*"))
     }
 
-    private fun readDocument(uri: Uri): ByteArray =
-        context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+    /** Reads with a hard cap: an oversize pick fails fast, never OOMs. */
+    private fun readDocument(uri: Uri): ByteArray {
+        val stream = context.contentResolver.openInputStream(uri)
             ?: throw IllegalArgumentException("could not read the picked document")
+        return stream.use {
+            val out = java.io.ByteArrayOutputStream()
+            val buffer = ByteArray(64 * 1024)
+            var total = 0
+            while (true) {
+                val n = it.read(buffer)
+                if (n < 0) break
+                total += n
+                if (total > MAX_PICK_BYTES) {
+                    throw IllegalArgumentException("That file is too large to be an ECHO route.")
+                }
+                out.write(buffer, 0, n)
+            }
+            out.toByteArray()
+        }
+    }
+
+    private companion object {
+        /** Mirrors TransferService's import cap (review 0003 R1). */
+        const val MAX_PICK_BYTES = 50_000_000
+    }
 }
 
 @Composable

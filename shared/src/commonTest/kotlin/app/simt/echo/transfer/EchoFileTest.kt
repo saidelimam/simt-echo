@@ -42,17 +42,102 @@ class EchoFileTest {
     @Test
     fun exportWritesPlainContainerAndImportRoundTrips() = runTest {
         val (store, service) = setup()
-        val fileName = service.echoFileName(Fixtures.L_ROUTE.name)
         val path = service.exportFile(Fixtures.L_ROUTE.routeId)
 
-        // The file lands under exports/ and is a plain C container, not a seal.
-        assertEquals(store.resolvePath("exports/$fileName"), path)
-        val bytes = store.readBytes("exports/$fileName")!!
+        // The file lands under exports/ (route id in the name) and is a
+        // plain C container, not a seal.
+        assertTrue(path.name.endsWith(".echo"), path.name)
+        assertTrue(path.name.contains(Fixtures.L_ROUTE.routeId), path.name)
+        val bytes = store.readBytes(path.toString())!!
         assertEquals("ECHO".encodeToByteArray().toList(), bytes.take(4).toList())
 
         // Import decodes the same route back out.
         val body = service.importFile(bytes)
         assertEquals(Fixtures.L_ROUTE, body.route)
+    }
+
+    @Test
+    fun photoBytesSurviveTheFileRoundTrip() = runTest {
+        val (store, service) = setup()
+        val routes = RouteRepository(store)
+        val photo = byteArrayOf(9, 8, 7, 6)
+        routes.saveWithAssetBytes(
+            Fixtures.L_ROUTE,
+            mapOf(Fixtures.L_ROUTE.start.photoAssetId!! to photo),
+        )
+        val path = service.exportFile(Fixtures.L_ROUTE.routeId)
+        val body = service.importFile(store.readBytes(path.toString())!!)
+
+        assertEquals(1, body.assets.size)
+        assertEquals(
+            photo.toList(),
+            kotlin.io.encoding.Base64.decode(body.assets.single().b64).toList(),
+        )
+
+        // And Save persists the imported body for real.
+        service.saveImported(body)
+        assertEquals(
+            photo.toList(),
+            routes.readAsset(Fixtures.L_ROUTE.routeId, Fixtures.L_ROUTE.start.photoAssetId!!)!!.toList(),
+        )
+    }
+
+    @Test
+    fun traversalIdsAreRejectedOnSave() = runTest {
+        val (store, service) = setup()
+        val bytes = store.readBytes(service.exportFile(Fixtures.L_ROUTE.routeId).toString())!!
+        val body = service.importFile(bytes)
+
+        val evilRoute = body.copy(route = body.route.copy(routeId = "../../evil"))
+        assertTrue(runCatching { service.saveImported(evilRoute) }.isFailure)
+
+        val evilAsset = body.copy(
+            assets = listOf(app.simt.echo.model.Asset(id = "../../evil.jpg", mime = "image/jpeg", b64 = "AA==")),
+        )
+        assertTrue(runCatching { service.saveImported(evilAsset) }.isFailure)
+        // Nothing escaped into a sibling directory.
+        assertTrue(store.list("evil").isEmpty())
+    }
+
+    @Test
+    fun expiredAndOversizeFilesAreRefused() = runTest {
+        val (store, service) = setup()
+        val routes = RouteRepository(store)
+        routes.save(
+            Fixtures.L_ROUTE.copy(
+                routeId = "old-route",
+                privacy = app.simt.echo.model.PrivacyInfo(expiresAtEpochMs = 10L),
+            ),
+        )
+        val expiredPath = run {
+            val s = TransferService(FakeTransport(), routes, store, nowMs = { 1L })
+            s.exportFile("old-route")
+        }
+        val bytes = store.readBytes(expiredPath.toString())!!
+        // The test clock (1.76e12) is long past the 10 ms expiry.
+        assertTrue(runCatching { service.importFile(bytes) }.isFailure)
+
+        assertTrue(
+            runCatching { service.importFile(ByteArray(50_000_001)) }.isFailure,
+        )
+    }
+
+    @Test
+    fun duplicateImportReplacesCleanlyAndExportsPurge() = runTest {
+        val (store, service) = setup()
+        val routes = RouteRepository(store)
+        routes.saveWithAssetBytes(
+            Fixtures.L_ROUTE,
+            mapOf("stale_asset" to byteArrayOf(1)),
+        )
+        val body = service.importFile(store.readBytes(service.exportFile(Fixtures.L_ROUTE.routeId).toString())!!)
+        service.saveImported(body)
+        service.saveImported(body) // re-import: no stale assets survive
+        assertEquals(null, routes.readAsset(Fixtures.L_ROUTE.routeId, "stale_asset"))
+
+        assertTrue(store.exists("exports"))
+        service.purgePlainExports()
+        assertTrue(store.list("exports").isEmpty())
     }
 
     @Test

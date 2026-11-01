@@ -3,6 +3,7 @@ package app.simt.echo.transfer
 import app.simt.echo.bundle.BundleCodec
 import app.simt.echo.data.FileStore
 import app.simt.echo.data.RouteRepository
+import app.simt.echo.data.isSafeStorageId
 import app.simt.echo.model.Asset
 import app.simt.echo.model.BundleBody
 import app.simt.echo.platform.Endpoint
@@ -113,8 +114,21 @@ class TransferService(
         }
     }
 
-    /** Persists a previewed [BundleBody] with its asset bytes (W2-04 Save). */
+    /**
+     * Persists a previewed [BundleBody] with its asset bytes (W2-04 Save).
+     * Imported files are untrusted: ids must be safe single path
+     * components, and an existing route with the same id is replaced
+     * cleanly — never overwritten in place with stale assets left
+     * behind (review 0003 R1).
+     */
     fun saveImported(body: BundleBody) {
+        require(isSafeStorageId(body.route.routeId)) { "This file names an unsafe route id." }
+        body.assets.forEach { asset ->
+            require(isSafeStorageId(asset.id)) { "This file names an unsafe asset." }
+        }
+        if (routes.get(body.route.routeId) != null) {
+            routes.delete(body.route.routeId)
+        }
         val assetBytes = body.assets.associate { asset ->
             asset.id to Base64.decode(asset.b64)
         }
@@ -132,18 +146,32 @@ class TransferService(
             ?: error("exportFile: no route $routeId")
         val assets = collectAssets(routeId, route)
         val container = BundleCodec.encode(route, assets)
-        val name = echoFileName(route.name)
+        // Route id in the filename: two same-named routes must not
+        // overwrite each other's pending plaintext export.
+        val name = echoFileName(route.name).removeSuffix(".echo") +
+            "-${route.routeId}.echo"
         val relative = "$EXPORTS_DIR/$name"
         store.writeBytes(relative, container)
         return store.resolvePath(relative)
     }
 
+    /** Deletes every pending plaintext export (bounded lifetime, R1). */
+    fun purgePlainExports() {
+        store.deleteRecursively(EXPORTS_DIR)
+    }
+
     /**
      * File-fallback import (W2-07): opens a plain `C` container from the
      * picked bytes. No key is needed because the file is unsealed.
+     * Oversize files are refused before any decoding, and expiry is
+     * enforced exactly as on the sealed path (review 0003 R1).
      */
-    suspend fun importFile(bytes: ByteArray): BundleBody =
-        BundleCodec.open(bytes).getOrThrow()
+    suspend fun importFile(bytes: ByteArray): BundleBody {
+        require(bytes.size <= MAX_ECHO_FILE_BYTES) {
+            "That file is too large to be an ECHO route."
+        }
+        return BundleCodec.open(bytes, nowMs = nowMs()).getOrThrow()
+    }
 
     /**
      * Maps a route name to a safe `<name>.echo` filename, collapsing
@@ -159,6 +187,8 @@ class TransferService(
 
     private companion object {
         const val EXPORTS_DIR = "exports"
+        /** Hard cap for a picked `.echo` file, enforced pre-decode (R1). */
+        const val MAX_ECHO_FILE_BYTES = 50_000_000
         val PATH_HOSTILE = setOf('/', '\\', ':', '*', '?', '"', '<', '>', '|', ' ')
     }
 
