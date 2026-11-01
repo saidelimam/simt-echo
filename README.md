@@ -5,10 +5,16 @@ GPS. The creator records a route (video + inertial sensors), AI grounds
 landmarks onto the captured geometry, and the resulting **EchoRoute bundle**
 navigates a friend along it — turn cues, landmark AR overlays, QR checkpoints.
 
-Status: **scaffold complete** (slice W0-02) — module structure, build wiring,
-platform seams and a runnable app shell; no feature code yet. The
-authoritative spec is `docs/research/SIMT_ECHO_IMPLEMENTATION_PLAN_V2.md`
-(tracked in `docs/research/`), and agent work is sequenced by `docs/plans/0001-agentic-flow.md`.
+Status: **in development — feature code throughout, not yet production-true.**
+Plan `docs/plans/0001-agentic-flow.md` stands at 34/36 Complete (W5-03
+Accepted/postponed, W4-06 Queued); the active plan is
+`docs/plans/0002-production-ready-cosmos.md` (W7-01, W7-02 Complete), whose
+review verdict on the app as it stands is **BLOCK**: the core loop dead-ends
+from the UI, the worker has never been deployed, and device proofs are open.
+W6-02's draw-box extraction landed (`1c51afa`, recorded Complete in
+`docs/reviews/0006-residual-risks.md`). Measured cost/latency evidence lives
+in `docs/measurements.md` — the deployed 60 m envelope is still unmeasured
+and unclaimed.
 
 ## Layout
 
@@ -34,7 +40,7 @@ Where new code goes (owning slice in `docs/plans/0001-agentic-flow.md`):
 | `shared/.../capture`, `nav` | W1-01 motion, W2-05 navigator |
 | `shared/.../bundle`, `transfer` | W2-02 codec, W2-03 peer transport |
 | `shared/.../ai`, `ui` | W3-02 API client, W0-03 nav shell + screens |
-| `worker/src` | W3-03 jobs API (health route already live) |
+| `worker/src` | W3-03 jobs API (contract implemented + vitest-green, never deployed — production deploy is W9-01) |
 
 ## Setup
 
@@ -48,7 +54,7 @@ export JAVA_HOME=/Users/saidelimam/.sdkman/candidates/java/21.0.12-tem
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 ```
 
-### Build & test (acceptance gate for the scaffold)
+### Build & test (current gates)
 
 ```sh
 ./gradlew :shared:testAndroidHostTest :androidApp:assembleDebug
