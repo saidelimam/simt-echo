@@ -18,6 +18,7 @@ import app.simt.echo.data.RouteRepository
 import app.simt.echo.platform.rememberCameraRecorder
 import app.simt.echo.ui.components.CropImage
 import app.simt.echo.ui.components.EchoButton
+import app.simt.echo.ui.components.EmptyState
 
 /**
  * Align screen (plan §8.3 / W2-06): start photo, live preview PiP, hint
@@ -37,15 +38,12 @@ fun AlignScreen(
     val camera = rememberCameraRecorder()
 
     if (route == null) {
-        Column(
-            modifier = modifier
-                .fillMaxSize()
-                .padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text(text = "No saved route $routeId", style = MaterialTheme.typography.titleLarge)
-            EchoButton(text = "Back", onClick = onBack, modifier = Modifier.fillMaxWidth())
-        }
+        EmptyState(
+            title = "No saved route $routeId",
+            actionLabel = "Back",
+            onAction = onBack,
+            modifier = modifier.fillMaxSize(),
+        )
         return
     }
 

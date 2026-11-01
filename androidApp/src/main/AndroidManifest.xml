@@ -14,8 +14,8 @@
     <application
         android:name=".EchoApplication"
         android:label="ECHO"
-        android:icon="@android:mipmap/sym_def_app_icon"
-        android:theme="@android:style/Theme.Material.NoActionBar"
+        android:icon="@mipmap/ic_launcher"
+        android:theme="@style/Theme.Echo"
         android:allowBackup="false"
         android:supportsRtl="true">
 
