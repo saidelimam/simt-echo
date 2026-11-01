@@ -11,6 +11,7 @@
 // W3-06's assemble reuses all three without re-implementing §6.6.
 
 import { NonRetryableError } from "cloudflare:workflows";
+import { decodeMaskToSVGPath, formats, frameIndexOf, recordsOfKind } from "@meta-sam/parser";
 import type { Env } from "./index";
 import { metaResponses } from "./meta";
 import { parseSam, type SamObs } from "./samParse";
@@ -96,39 +97,29 @@ function toBase64(bytes: Uint8Array): string {
 }
 
 /**
- * Decode the hero frame's mask to an SVG path (plan §7.3). The hero line's
- * `<|mask;…|>` section carries the one-bit raster; it is rebuilt as a
- * `SegmentationMask` over the frame and converted with the parser's
- * mask→SVG helper. Any shape drift or decode failure null-degrades to
- * box-only — the caller never throws for a mask.
+ * Decode the hero observation's mask to an SVG path (plan §7.3): the hero
+ * line goes to `@meta-sam/parser`'s video parser, and the mask record for
+ * this object on this frame goes to its mask→SVG helper. The SVG lives in
+ * mask-raster coordinates, so `w`/`h` are the raster's own dims — never
+ * the frame's. The mask stays attached to the object that produced it:
+ * a multi-object line cannot donate another object's mask. Any shape
+ * drift or decode failure null-degrades to box-only (review 0002 R1).
  */
-async function decodeHeroMask(
-  heroLine: string | null,
-  frameW: number,
-  frameH: number,
-): Promise<{ svg: string; w: number; h: number } | null> {
-  if (!heroLine || frameW <= 0 || frameH <= 0) return null;
-  const section = /<\|mask;([^|]*)\|>/.exec(heroLine)?.[1];
-  if (!section) return null;
-  // Section shape is `<encoding>;<payload>`; the encoding token varies by
-  // API version, so the payload is everything after the first `;`.
-  const payload = section.includes(";") ? section.slice(section.indexOf(";") + 1) : section;
-  if (!payload) return null;
+function decodeHeroMask(hero: SamObs | null): { svg: string; w: number; h: number } | null {
+  if (!hero) return null;
   try {
-    const { decodeMaskToSVGPath } = await import("@meta-sam/parser");
-    for (const encoding of ["one_bit", "lossless"] as const) {
-      try {
-        const svg = decodeMaskToSVGPath({ encoding, payload, width: frameW, height: frameH });
-        if (typeof svg === "string" && svg !== "") {
-          return { svg, w: frameW, h: frameH };
-        }
-      } catch {
-        // Try the next encoding; a final failure degrades below.
-      }
-    }
-    return null;
+    const parser = formats.segmentation.video().createParser();
+    parser.push(`${hero.line}\n`);
+    const { result } = parser.finish({ status: "completed" });
+    const masks = recordsOfKind(result.records, "mask");
+    const rec =
+      masks.find((m) => m.objectId === String(hero.id) && frameIndexOf(m) === hero.frame) ??
+      (masks.length === 1 ? masks[0] : undefined);
+    if (!rec) return null;
+    const svg = decodeMaskToSVGPath(rec.mask);
+    if (typeof svg !== "string" || svg === "") return null;
+    return { svg, w: rec.mask.width, h: rec.mask.height };
   } catch {
-    // Any parser shape drift null-degrades to box-only (plan §7.3 fallback).
     return null;
   }
 }
@@ -158,31 +149,37 @@ export async function runGround(
   for (const cp of manifest.checkpoints) {
     const kept = scoutByNode.get(cp.nodeId)?.candidates ?? [];
     const keyframeTMs = new Map(cp.keyframes.map((k) => [k.id, k.tMs]));
-    if (!samEnabled || !cp.clip || kept.length === 0) {
-      checkpoints.push({ nodeId: cp.nodeId, candidates: boxOnly(jobId, scout.model, cp, kept, keyframeTMs) });
+    if (!samEnabled || kept.length === 0) {
+      // Box-only is the default path, and its consumers preselect
+      // candidates[0]: it gets the same §6.6 rank order as the SAM path.
+      const ranked = boxOnly(jobId, scout.model, cp, kept, keyframeTMs).sort(
+        (a, b) => b.rank - a.rank,
+      );
+      checkpoints.push({ nodeId: cp.nodeId, candidates: ranked });
       continue;
     }
-    const clipObj = await env.MEDIA.get(`jobs/${jobId}/in/${cp.clip.id}`);
-    const fps = (cp.clip.frameCount * 1000) / Math.max(1, cp.clip.durationMs);
-    if (!clipObj) {
-      checkpoints.push({ nodeId: cp.nodeId, candidates: boxOnly(jobId, scout.model, cp, kept, keyframeTMs) });
-      continue;
-    }
-    const clipB64 = toBase64(new Uint8Array(await clipObj.arrayBuffer()));
     const heroTMs = keyframeTMs.get(cp.heroKeyframeId) ?? cp.tMs;
-    const heroIdx = heroIndex(heroTMs, cp.clip.startMs, fps);
+    // Fallback a (plan §10 W3-05): no clip — or no clip bytes — grounds on
+    // the hero keyframe image instead of short-circuiting to box-only.
+    let clip: { clipB64: string; fps: number; heroIdx: number; heroTMs: number } | null = null;
+    if (cp.clip) {
+      const clipObj = await env.MEDIA.get(`jobs/${jobId}/in/${cp.clip.id}`);
+      if (clipObj) {
+        const fps = (cp.clip.frameCount * 1000) / Math.max(1, cp.clip.durationMs);
+        clip = {
+          clipB64: toBase64(new Uint8Array(await clipObj.arrayBuffer())),
+          fps,
+          heroIdx: heroIndex(heroTMs, cp.clip.startMs, fps),
+          heroTMs,
+        };
+      }
+    }
     const candidates: Candidate[] = [];
     const jobs: Array<Promise<void>> = [];
     kept.forEach((sc, k) => {
       jobs.push(
         (async () => {
-          const candidate = await groundOne(env, jobId, scout.model, cp, sc, k, {
-            clipB64,
-            fps,
-            heroIdx,
-            heroTMs,
-          });
-          candidates.push(candidate);
+          candidates.push(await groundOne(env, jobId, scout.model, cp, sc, k, clip));
         })(),
       );
     });
@@ -211,7 +208,7 @@ async function groundOne(
   cp: Checkpoint,
   sc: ScoutCandidate,
   k: number,
-  clip: { clipB64: string; fps: number; heroIdx: number; heroTMs: number },
+  clip: { clipB64: string; fps: number; heroIdx: number; heroTMs: number } | null,
 ): Promise<Candidate> {
   const evidenceKey = `jobs/${jobId}/sam/${cp.nodeId}_${k}.txt`;
   const fallback: Candidate = {
@@ -247,6 +244,10 @@ async function groundOne(
     evidenceKey,
   };
   try {
+    if (!clip) {
+      // Fallback a from the start: no clip to ground against.
+      return await groundViaImage(env, jobId, cp, sc, k, evidenceKey, fallback);
+    }
     const text = await metaResponses(env, {
       model: "sam-3.1",
       metadata: { include_confidence: "true", mask_encoding: "one_bit" },
@@ -265,58 +266,90 @@ async function groundOne(
     const obs = parseSam(text);
     if (obs.length === 0) {
       // Fallback a (plan §10 W3-05): same phrase on the hero keyframe.
-      const heroObj = await env.MEDIA.get(`jobs/${jobId}/in/${sc.imageId}`);
-      if (!heroObj) return fallback;
-      const heroB64 = toBase64(new Uint8Array(await heroObj.arrayBuffer()));
-      const heroText = await metaResponses(env, {
-        model: "sam-3.1",
-        metadata: { include_confidence: "true", mask_encoding: "one_bit" },
-        input: [
-          {
-            type: "message",
-            role: "user",
-            content: [
-              { type: "input_text", text: sc.samPhrase },
-              { type: "input_image", image_url: `data:image/jpeg;base64,${heroB64}` },
-            ],
-          },
-        ],
-      });
-      await env.MEDIA.put(evidenceKey, heroText);
-      const heroObs = parseSam(heroText);
-      if (heroObs.length === 0) return fallback;
-      return toGrounded(jobId, scoutModel, cp, sc, k, evidenceKey, heroObs, clip, null);
+      return await groundViaImage(env, jobId, cp, sc, k, evidenceKey, fallback);
     }
-    return await toGrounded(jobId, scoutModel, cp, sc, k, evidenceKey, obs, clip, null);
+    return toGrounded(cp, sc, k, evidenceKey, obs, clip, fallback, false);
   } catch (e) {
     if (e instanceof NonRetryableError) return fallback;
     throw e;
   }
 }
 
-async function toGrounded(
+/**
+ * Fallback a (plan §10 W3-05): ground the phrase on the candidate's hero
+ * keyframe via `input_image`. Single-frame grounding has no track, so
+ * `trackability` and `visibleFromM` are null by spec — never the real
+ * clip-derived values.
+ */
+async function groundViaImage(
+  env: Env,
   jobId: string,
-  scoutModel: string,
+  cp: Checkpoint,
+  sc: ScoutCandidate,
+  k: number,
+  evidenceKey: string,
+  fallback: Candidate,
+): Promise<Candidate> {
+  const heroObj = await env.MEDIA.get(`jobs/${jobId}/in/${sc.imageId}`);
+  if (!heroObj) return fallback;
+  const heroB64 = toBase64(new Uint8Array(await heroObj.arrayBuffer()));
+  const heroText = await metaResponses(env, {
+    model: "sam-3.1",
+    metadata: { include_confidence: "true", mask_encoding: "one_bit" },
+    input: [
+      {
+        type: "message",
+        role: "user",
+        content: [
+          { type: "input_text", text: sc.samPhrase },
+          { type: "input_image", image_url: `data:image/jpeg;base64,${heroB64}` },
+        ],
+      },
+    ],
+  });
+  await env.MEDIA.put(evidenceKey, heroText);
+  const heroObs = parseSam(heroText);
+  if (heroObs.length === 0) return fallback;
+  return toGrounded(
+    cp,
+    sc,
+    k,
+    evidenceKey,
+    heroObs,
+    { clipB64: "", fps: 0, heroIdx: 0, heroTMs: cp.tMs },
+    fallback,
+    true,
+  );
+}
+
+function toGrounded(
   cp: Checkpoint,
   sc: ScoutCandidate,
   k: number,
   evidenceKey: string,
   obs: SamObs[],
   clip: { clipB64: string; fps: number; heroIdx: number; heroTMs: number },
-  _unused: null,
-): Promise<Candidate> {
+  fallback: Candidate,
+  imageFallback: boolean,
+): Candidate {
   const frameW = obs[0]?.w ?? GRID;
   const frameH = obs[0]?.h ?? GRID;
   const sparkPx = sparkBoxToPixels(sc.box, frameW, frameH);
-  const sel = selectTrack(obs, sparkPx, clip.heroIdx, clip.fps);
-  const trackability = sel.obs.length === 0 ? null : sel.present;
-  const samConfidence = sel.hero?.c ?? (sel.obs.length === 0 ? null : sel.meanC || null);
+  const sel = selectTrack(obs, sparkPx, imageFallback ? 0 : clip.heroIdx, clip.fps);
+  // No hero observation means no SAM box in this frame's pixels. Emitting
+  // the scout's 0–1000-grid box against SAM frame dims would mix two
+  // coordinate systems (review 0002): degrade to the box-only candidate.
+  if (!sel.hero || sel.obs.length === 0) return fallback;
+  const winW = sel.frameW > 0 ? sel.frameW : frameW;
+  const winH = sel.frameH > 0 ? sel.frameH : frameH;
+  const trackability = imageFallback ? null : sel.present;
+  const samConfidence = sel.hero?.c ?? (sel.meanC || null);
   const tFirst = cp.clip ? cp.clip.startMs + (sel.first * 1000) / Math.max(1e-9, clip.fps) : cp.tMs;
-  const visibleFromM =
-    sel.obs.length === 0 ? null : Math.max(0, cp.atDistanceM - interpolateDistance(cp.approach, tFirst));
-  const mask = sel.hero ? await decodeHeroMask(sel.hero.line, frameW, frameH) : null;
-  const box = sel.hero ? [...sel.hero.box] as Box : ([...sc.box] as Box);
-  void jobId;
+  const visibleFromM = imageFallback
+    ? null
+    : Math.max(0, cp.atDistanceM - interpolateDistance(cp.approach, tFirst));
+  const mask = decodeHeroMask(sel.hero);
+  const box = [...sel.hero.box] as Box;
   return {
     candidateId: `${cp.nodeId}_${k}`,
     title: sc.title,
@@ -327,8 +360,8 @@ async function toGrounded(
     privacyRisk: sc.privacyRisk,
     keyframeId: sc.imageId,
     box,
-    frameW,
-    frameH,
+    frameW: winW,
+    frameH: winH,
     maskSvgPath: mask?.svg ?? null,
     maskW: mask && mask.w > 0 ? mask.w : null,
     maskH: mask && mask.h > 0 ? mask.h : null,
@@ -345,8 +378,8 @@ async function toGrounded(
       ambiguous: sc.ambiguous,
       boxMismatch: sel.boxMismatch,
     }),
-    source: sel.obs.length === 0 ? "AI_BOX_ONLY" : "AI_GROUNDED",
-    models: `${scoutModel} + sam-3.1`,
+    source: "AI_GROUNDED",
+    models: fallback.models,
     evidenceKey,
   };
 }

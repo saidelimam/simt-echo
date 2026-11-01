@@ -48,12 +48,22 @@ export function parseSam(text: string): SamObs[] {
       ];
       const w = Number(kv.w);
       const h = Number(kv.h);
-      if (box.some((v) => !Number.isFinite(v)) || !Number.isFinite(w) || !Number.isFinite(h)) {
+      // Sanitise here, at the wire boundary: CandidateSchema demands int
+      // boxes, positive int frame dims and confidence in 0–1, and a record
+      // that violates that must be dropped — never carried downstream to
+      // crash JobResultSchema.parse and error the whole job (review 0002).
+      if (box.some((v) => !Number.isInteger(v)) || !Number.isInteger(w) || !Number.isInteger(h)) {
+        continue;
+      }
+      if (w <= 0 || h <= 0 || box[2] <= box[0] || box[3] <= box[1]) {
         continue;
       }
       const obs: SamObs = { frame, id: Number(r[1]), box, w, h, line };
-      if (kv.c !== undefined && kv.c !== "" && Number.isFinite(Number(kv.c))) {
-        obs.c = Number(kv.c);
+      if (kv.c !== undefined && kv.c !== "") {
+        const c = Number(kv.c);
+        // Out-of-range confidence is ignored (the parser's own stance),
+        // not fatal and never clamped into a lie.
+        if (Number.isFinite(c) && c >= 0 && c <= 1) obs.c = c;
       }
       out.push(obs);
     }
