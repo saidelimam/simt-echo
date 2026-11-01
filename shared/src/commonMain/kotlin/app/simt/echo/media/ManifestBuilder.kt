@@ -78,6 +78,22 @@ data class Manifest(
     val checkpoints: List<ManifestCheckpoint>,
 )
 
+/** Upload field id for one planned keyframe (the W1-05 file minus ext, flattened). */
+fun keyframeId(spec: KeyframeSpec, index: Int): String =
+    spec.fileName(index).removeSuffix(".jpg").replace('/', '_')
+
+/** Upload field id + draft-relative file for every planned keyframe. */
+fun keyframeFiles(specs: List<KeyframeSpec>): Map<String, String> =
+    specs.flatMap { spec ->
+        spec.timesMs.indices.map { i -> keyframeId(spec, i) to spec.fileName(i) }
+    }.toMap()
+
+/** Upload field id for one node's clip. */
+fun clipId(nodeId: String): String = "clip_$nodeId"
+
+/** Draft-relative file holding one node's cut clip. */
+fun clipFileName(nodeId: String): String = "kf/${clipId(nodeId)}.mp4"
+
 /**
  * One node's clip window: `[t − 4000, t + 1000]` (plan W3-01), clamped to
  * `[0, durationMs]` when a positive [durationMs] is known. A 5 s window at
@@ -175,15 +191,13 @@ object ManifestBuilder {
         if (node.type == NodeType.START) return null
         val spec = spec ?: KeyframeSpec(node.id, keyframeTimes(node), heroIndex(node.type, 0))
         // Manifest keyframe ids are the W1-05 file names minus the extension
-        // and with the directory flattened (`kf_<nodeId>_<i>`); the worker
+        // and with the directory flattened (see [keyframeId]); the worker
         // maps them to uploaded files by id.
-        val keyframes = spec.timesMs.mapIndexed { i, tMs ->
-            ManifestKeyframe(spec.fileName(i).removeSuffix(".jpg").replace('/', '_'), tMs)
-        }
+        val keyframes = spec.timesMs.indices.map { i -> ManifestKeyframe(keyframeId(spec, i), spec.timesMs[i]) }
         val clip = clips[node.id]?.let { info ->
             val window = clipWindow(t)
             ManifestClip(
-                id = "clip_${node.id}",
+                id = clipId(node.id),
                 startMs = window.startMs,
                 endMs = window.endMs,
                 frameCount = info.frameCount,

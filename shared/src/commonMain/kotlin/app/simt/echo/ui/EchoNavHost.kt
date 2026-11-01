@@ -15,6 +15,8 @@ import app.simt.echo.platform.rememberMediaTools
 import app.simt.echo.platform.rememberHaptics
 import app.simt.echo.ui.screens.HomeScreen
 import app.simt.echo.ui.screens.detail.RouteDetailScreen
+import app.simt.echo.ui.screens.processing.ProcessingScreen
+import app.simt.echo.ui.screens.processing.ProcessingViewModel
 import app.simt.echo.ui.screens.PlaceholderScreen
 import app.simt.echo.ui.screens.PlaceholderViewModel
 import app.simt.echo.ui.screens.receive.ReceiveScreen
@@ -69,14 +71,25 @@ fun EchoNavHost(
                 viewModel = viewModel,
                 onSaved = { navController.navigateTo(EchoRoute.RouteDetail(it)) },
                 onBack = { navController.popBackStack() },
+                onFindLandmarks = { navController.navigateTo(EchoRoute.Processing(route.draftId)) },
             )
         }
         composable<EchoRoute.Processing> { entry ->
             val route = entry.toRoute<EchoRoute.Processing>()
-            val vm = remember(route.draftId) {
-                PlaceholderViewModel("Processing ${route.draftId}", "Consent + upload lands in W3-02.")
+            val mediaTools = rememberMediaTools()
+            val viewModel = remember(route.draftId, mediaTools) {
+                ProcessingViewModel(
+                    draftId = route.draftId,
+                    drafts = graph.draftRepository,
+                    media = mediaTools,
+                    api = graph.apiClient,
+                    nowMs = ::currentEpochMs,
+                )
             }
-            PlaceholderScreen(vm, "Back home", { navController.popBackStack() })
+            ProcessingScreen(
+                viewModel = viewModel,
+                onDone = { navController.popBackStack() },
+            )
         }
         composable<EchoRoute.RouteDetail> { entry ->
             val route = entry.toRoute<EchoRoute.RouteDetail>()
