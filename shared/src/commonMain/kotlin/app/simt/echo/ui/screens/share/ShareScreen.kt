@@ -72,6 +72,16 @@ fun ShareScreen(
             qrUri != null -> StatusChip(text = "Waiting for the other phone…")
             else -> StatusChip(text = "Starting offer…")
         }
+        if (ui.relayAvailable && !ui.relayOffered && qrUri != null) {
+            EchoButton(
+                text = "Use internet relay",
+                onClick = viewModel::useInternetRelay,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        if (ui.relayOffered) {
+            StatusChip(text = "Relay code in QR — works off this Wi-Fi")
+        }
         EchoButton(text = "Back", onClick = onClose, modifier = Modifier.fillMaxWidth())
     }
 }

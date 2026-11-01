@@ -7,6 +7,8 @@ import app.simt.echo.platform.Endpoint
 import app.simt.echo.platform.HapticPattern
 import app.simt.echo.platform.Haptics
 import app.simt.echo.platform.PeerTransport
+import app.simt.echo.transfer.QrPayload
+import app.simt.echo.transfer.RelayClient
 import app.simt.echo.transfer.TransferService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -102,6 +104,43 @@ class ShareViewModelTest {
 
         assertTrue(vm.ui.value.sent)
         assertEquals(listOf(HapticPattern.CONFIRM), haptics.played)
+    }
+
+    @Test
+    fun relayActionHiddenWithoutRelayAndAddsCodeWhenConfigured() = runTest(dispatcher) {
+        // No relay configured: no relay state surfaces.
+        val (plainService, _) = serviceWithRoute()
+        val plainVm = ShareViewModel(Fixtures.L_ROUTE.routeId, plainService, FakeHaptics())
+        advanceUntilIdle()
+        assertTrue(!plainVm.ui.value.relayAvailable)
+
+        // Relay configured: action appears, then the QR gains the code.
+        val fileSystem = FakeFileSystem()
+        val routes = RouteRepository(FileStore(fileSystem, "/relay".toPath()))
+        routes.save(Fixtures.L_ROUTE)
+        val relay = object : RelayClient {
+            override suspend fun upload(sealed: ByteArray): String = "XYZ789"
+            override suspend fun download(code: String): ByteArray = error("unused")
+        }
+        val service = TransferService(
+            transport = FakeTransport(MutableSharedFlow()),
+            routes = routes,
+            randomBytes = { size -> ByteArray(size) { (it + 1).toByte() } },
+            nowMs = { 1_762_000_000_000L },
+            relay = relay,
+        )
+        val vm = ShareViewModel(Fixtures.L_ROUTE.routeId, service, FakeHaptics())
+        advanceUntilIdle()
+        assertTrue(vm.ui.value.relayAvailable)
+        assertNull(QrPayload.parse(vm.ui.value.qrUri ?: error("no QR yet")).getOrThrow().relayCode)
+
+        vm.useInternetRelay()
+        advanceUntilIdle()
+        assertTrue(vm.ui.value.relayOffered)
+        assertEquals(
+            "XYZ789",
+            QrPayload.parse(vm.ui.value.qrUri ?: error("no QR yet")).getOrThrow().relayCode,
+        )
     }
 
     @Test

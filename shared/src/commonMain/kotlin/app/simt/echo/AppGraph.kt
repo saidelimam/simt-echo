@@ -33,6 +33,11 @@ class AppGraph(
 
     /** LAN bundle transport + offer/receive service (W2-03). */
     val peerTransport: PeerTransport by lazy { createPeerTransport() }
+
+    // Relay (W4-05) stays unconfigured here on purpose: the Worker URL and
+    // app token are W3-02's API configuration, injected as a RelayClient
+    // when that lands. Until then transfers are LAN-only and Share does
+    // not offer the relay.
     val transferService: TransferService by lazy {
         TransferService(
             transport = peerTransport,

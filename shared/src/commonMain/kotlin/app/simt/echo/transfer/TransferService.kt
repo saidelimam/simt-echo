@@ -30,9 +30,19 @@ class TransferService(
     private val routes: RouteRepository,
     private val randomBytes: (Int) -> ByteArray = { size -> Random.nextBytes(size) },
     private val nowMs: () -> Long = { 0L },
+    /** Internet relay (W4-05); null until W3-02 supplies Worker config. */
+    private val relay: RelayClient? = null,
 ) {
 
-    suspend fun offer(routeId: String): OfferInfo {
+    /** True when Share may offer the internet relay for this offer. */
+    val relayAvailable: Boolean get() = relay != null
+
+    /**
+     * Starts a LAN offer; with [useRelay] the sealed bytes are also uploaded
+     * to the relay and the QR gains `c=` so a receiver whose LAN attempt
+     * fails can fall back to it. The bundle key stays in the QR either way.
+     */
+    suspend fun offer(routeId: String, useRelay: Boolean = false): OfferInfo {
         val route = routes.get(routeId)
             ?: error("offer: no route $routeId")
         val assets = collectAssets(routeId, route)
@@ -41,6 +51,12 @@ class TransferService(
         val (sealed, key) = BundleCodec.seal(container)
         val tokenBytes = randomBytes(QrPayload.TOKEN_BYTES)
         val endpoint = transport.offer(sealed, base64Url(tokenBytes))
+        val relayCode = if (useRelay) {
+            val client = relay ?: error("offer: internet relay is not configured")
+            client.upload(sealed)
+        } else {
+            null
+        }
         val payload = QrPayload(
             host = endpoint.host,
             port = endpoint.port,
@@ -48,6 +64,7 @@ class TransferService(
             key = key,
             sha8Hex = BundleCodec.sha8Hex(body),
             name = route.name,
+            relayCode = relayCode,
         )
         return OfferInfo(qrUri = payload.build(), host = endpoint.host, port = endpoint.port)
     }
@@ -65,15 +82,30 @@ class TransferService(
      */
     suspend fun fetchPreview(qrUri: String): BundleBody {
         val payload = QrPayload.parse(qrUri).getOrThrow()
-        val sealed = transport.fetch(
-            Endpoint(payload.host, payload.port),
-            base64Url(payload.token),
-        )
+        val sealed = fetchSealed(payload)
         val body = BundleCodec.open(sealed, payload.key, nowMs()).getOrThrow()
         check(BundleCodec.sha8Hex(body) == payload.sha8Hex) {
             "bundle fingerprint mismatch: QR promised ${payload.sha8Hex}"
         }
         return body
+    }
+
+    /**
+     * LAN first, relay second (W4-05): only a transport failure falls back —
+     * a bundle that arrives but fails to open or verify is never masked by
+     * fetching a second copy.
+     */
+    private suspend fun fetchSealed(payload: QrPayload): ByteArray {
+        try {
+            return transport.fetch(
+                Endpoint(payload.host, payload.port),
+                base64Url(payload.token),
+            )
+        } catch (lanFailure: Exception) {
+            val code = payload.relayCode ?: throw lanFailure
+            val client = relay ?: throw lanFailure
+            return client.download(code)
+        }
     }
 
     /** Persists a previewed [BundleBody] with its asset bytes (W2-04 Save). */

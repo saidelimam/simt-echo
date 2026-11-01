@@ -23,6 +23,7 @@ class TransferServiceTest {
         var servedPayload: ByteArray? = null
         var servedToken: String? = null
         var stopCalls = 0
+        var failFetch = false
 
         override suspend fun offer(payload: ByteArray, token: String): Endpoint {
             servedPayload = payload
@@ -31,11 +32,28 @@ class TransferServiceTest {
         }
 
         override suspend fun fetch(endpoint: Endpoint, token: String): ByteArray {
+            if (failFetch) throw IllegalStateException("LAN unreachable")
             check(token == servedToken) { "token mismatch" }
             return servedPayload ?: error("nothing served")
         }
 
         override fun stopOffer() { stopCalls++ }
+    }
+
+    /** In-memory relay (W4-05): stores sealed bytes by code, like R2. */
+    private class FakeRelay(private val code: String = "ABC234") : RelayClient {
+        val store = mutableMapOf<String, ByteArray>()
+        var downloads = 0
+
+        override suspend fun upload(sealed: ByteArray): String {
+            store[code] = sealed
+            return code
+        }
+
+        override suspend fun download(code: String): ByteArray {
+            downloads++
+            return store[code] ?: error("relay: no such code")
+        }
     }
 
     private fun setup(): Triple<RouteRepository, FakeTransport, TransferService> {
@@ -134,6 +152,82 @@ class TransferServiceTest {
             listOf<Byte>(9, 8, 7),
             phoneB.readAsset(Fixtures.L_ROUTE.routeId, "a_start")!!.toList(),
         )
+    }
+
+    @Test
+    fun relayOfferUploadsCiphertextAndAddsCodeToQr() = runTest {
+        val seeded = setup()
+        val relay = FakeRelay()
+        val withRelay = TransferService(
+            transport = seeded.second,
+            routes = seeded.first,
+            randomBytes = { size -> ByteArray(size) { (it + 1).toByte() } },
+            nowMs = { 1_762_000_000_000L },
+            relay = relay,
+        )
+        assertTrue(withRelay.relayAvailable)
+        assertTrue(!seeded.third.relayAvailable)
+
+        val offer = withRelay.offer(Fixtures.L_ROUTE.routeId, useRelay = true)
+        val payload = QrPayload.parse(offer.qrUri).getOrThrow()
+        assertEquals("ABC234", payload.relayCode)
+
+        // The relay only ever holds the sealed bytes (ECX1 ciphertext).
+        val uploaded = relay.store.getValue("ABC234")
+        assertTrue(uploaded.contentEquals(seeded.second.servedPayload))
+        assertEquals("ECX1", uploaded.decodeToString(0, 4))
+    }
+
+    @Test
+    fun relayOfferWithoutConfiguredRelayFails() = runTest {
+        val (_, _, service) = setup()
+        assertFailsWith<IllegalStateException> {
+            service.offer(Fixtures.L_ROUTE.routeId, useRelay = true)
+        }
+    }
+
+    @Test
+    fun lanFailureFallsBackToRelay() = runTest {
+        val relay = FakeRelay()
+        val seeded = setup()
+        val senderWithRelay = TransferService(
+            transport = seeded.second,
+            routes = seeded.first,
+            randomBytes = { size -> ByteArray(size) { (it + 1).toByte() } },
+            nowMs = { 1_762_000_000_000L },
+            relay = relay,
+        )
+        val offer = senderWithRelay.offer(Fixtures.L_ROUTE.routeId, useRelay = true)
+
+        // Phone B: LAN is blocked, relay is configured with the same store.
+        val deadLan = FakeTransport().apply { failFetch = true }
+        val phoneB = RouteRepository(FileStore(FakeFileSystem(), "/phoneB".toPath()))
+        val serviceB = TransferService(
+            transport = deadLan,
+            routes = phoneB,
+            nowMs = { 1_762_000_000_000L },
+            relay = relay,
+        )
+        val body = serviceB.fetchPreview(offer.qrUri)
+        assertEquals(Fixtures.L_ROUTE, body.route)
+        assertEquals(1, relay.downloads)
+    }
+
+    @Test
+    fun lanFailureWithoutRelayRethrows() = runTest {
+        val (_, _, service) = setup()
+        val offer = service.offer(Fixtures.L_ROUTE.routeId)
+        assertNull(QrPayload.parse(offer.qrUri).getOrThrow().relayCode)
+
+        val deadLan = FakeTransport().apply { failFetch = true }
+        val phoneB = RouteRepository(FileStore(FakeFileSystem(), "/phoneB".toPath()))
+        val serviceB = TransferService(
+            transport = deadLan,
+            routes = phoneB,
+            nowMs = { 1_762_000_000_000L },
+            relay = FakeRelay(),
+        )
+        assertFailsWith<IllegalStateException> { serviceB.fetchPreview(offer.qrUri) }
     }
 
     @Test
