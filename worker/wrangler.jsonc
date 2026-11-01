@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "echo-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "r2_buckets": [
+    {
+      "binding": "MEDIA",
+      "bucket_name": "echo-media"
+    }
+  ],
+  "vars": {
+    "SCOUT_ORDER": "workers-ai,meta-spark",
+    "GROUND_ORDER": "sam31,none",
+    "AI_GATEWAY_ID": "echo",
+    "ENV": "dev"
+  }
+}
