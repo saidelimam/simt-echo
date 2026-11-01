@@ -23,6 +23,13 @@ data class EchoConfig(
      * trial by the trial writer; this is the global Settings default.
      */
     val baselineMode: Boolean = false,
+    /**
+     * Camera HUD on Navigate (W5-02): live preview behind the navigation
+     * HUD with the landmark crop (and its SAM mask, when persisted) over
+     * it. Opt-in, default off; never a live-frame projection — no camera
+     * pose or tracking exists in this app (review 0004 R4).
+     */
+    val cameraOverlayEnabled: Boolean = false,
     /** Resample distance per path point, metres (§6.3 step 1). */
     val resampleStepM: Double = 0.5,
     /** Circular yaw-smoothing window radius, metres (§6.3 step 2). */

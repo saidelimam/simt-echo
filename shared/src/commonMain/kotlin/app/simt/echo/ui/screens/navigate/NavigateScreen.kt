@@ -27,9 +27,11 @@ import app.simt.echo.model.shouldShowLandmarkCards
 import app.simt.echo.nav.NavPhase
 import app.simt.echo.nav.NavUi
 import app.simt.echo.platform.KeepScreenOn
+import app.simt.echo.platform.rememberCameraRecorder
 import app.simt.echo.platform.rememberHaptics
 import app.simt.echo.platform.rememberMotionSource
 import app.simt.echo.platform.rememberOnline
+import app.simt.echo.ui.components.CameraNavigateOverlay
 import app.simt.echo.ui.components.CropImage
 import app.simt.echo.ui.components.DirectionArrow
 import app.simt.echo.ui.components.DistanceReadout
@@ -38,6 +40,7 @@ import app.simt.echo.ui.components.LandmarkCard
 import app.simt.echo.ui.components.PillButton
 import app.simt.echo.ui.components.StatusChip
 import app.simt.echo.ui.components.oneDecimal
+import app.simt.echo.ui.components.overlayScrimAlpha
 
 /**
  * Navigate screen (plan §8.3 / W2-06): arrow, instruction + distance,
@@ -93,6 +96,19 @@ fun NavigateScreen(
         return
     }
 
+    if (config.cameraOverlayEnabled) {
+        NavigateOverlayBody(
+            nav = nav,
+            routes = routes,
+            routeId = routeId,
+            online = online,
+            legCount = viewModel.legCount,
+            viewModel = viewModel,
+            modifier = modifier,
+        )
+        return
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -132,6 +148,55 @@ fun NavigateScreen(
         )
         NavigateActions(nav = nav, viewModel = viewModel)
     }
+}
+
+@Composable
+private fun NavigateOverlayBody(
+    nav: NavUi,
+    routes: RouteRepository,
+    routeId: String,
+    online: Boolean,
+    legCount: Int,
+    viewModel: NavigateViewModel,
+    modifier: Modifier = Modifier,
+) {
+    val camera = rememberCameraRecorder()
+    // Baseline honesty in the overlay too: a SENSOR_ONLY trial sees no
+    // landmark card, crop, or mask (review 0004 R4).
+    val landmark = nav.landmark?.takeIf { shouldShowLandmarkCards(viewModel.baselineMode) }
+    val cropBytes = remember(landmark?.cropAssetId) {
+        landmark?.cropAssetId?.let { routes.readAsset(routeId, it) }
+    }
+    val distanceM = maxOf(0.0, nav.distanceToNextM)
+    CameraNavigateOverlay(
+        arrowRad = nav.arrowRad.toFloat(),
+        instruction = nav.instruction,
+        distanceText = "${oneDecimal(distanceM)} m",
+        uncertaintyText = "±${oneDecimal(nav.uncertaintyM)} m",
+        offline = !online,
+        landmarkTitle = landmark?.title,
+        landmarkCue = landmark?.cue,
+        landmarkStats = landmark?.let { "in ~${oneDecimal(distanceM)} m" },
+        cropBytes = cropBytes,
+        cropDescription = landmark?.title,
+        maskSvgPath = landmark?.maskSvgPath,
+        maskW = landmark?.maskW,
+        maskH = landmark?.maskH,
+        maskBox = landmark?.box,
+        maskFrameW = landmark?.frameW,
+        maskFrameH = landmark?.frameH,
+        progress01 = nav.progress01.toFloat(),
+        legText = "Leg ${nav.legIndex + 1} of $legCount",
+        scrimAlpha = overlayScrimAlpha(distanceM),
+        // The camera starts only behind the W4-03 permission gate.
+        preview = {
+            app.simt.echo.platform.CameraPermissionGate {
+                camera.Preview(modifier = Modifier.fillMaxSize())
+            }
+        },
+        actions = { NavigateActions(nav = nav, viewModel = viewModel) },
+        modifier = modifier,
+    )
 }
 
 @Composable

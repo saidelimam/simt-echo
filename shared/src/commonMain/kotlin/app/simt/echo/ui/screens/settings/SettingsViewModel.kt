@@ -16,6 +16,8 @@ data class SettingsUi(
     val stepK: Double = 0.48,
     /** Global baseline default for new trials (cards hidden). */
     val baselineMode: Boolean = false,
+    /** Camera HUD on Navigate (W5-02), persisted. */
+    val cameraOverlayEnabled: Boolean = false,
     /** Last calibration walk's measured distance, metres (input). */
     val measuredM: String = "",
     /** Result line after calibrating, or null before the first run. */
@@ -35,7 +37,13 @@ private const val CALIBRATION_WALK_M = 10.0
 class SettingsViewModel(private val configs: ConfigRepository) : ViewModel() {
 
     private val _ui = MutableStateFlow(
-        configs.get().let { SettingsUi(stepK = it.stepK, baselineMode = it.baselineMode) },
+        configs.get().let {
+            SettingsUi(
+                stepK = it.stepK,
+                baselineMode = it.baselineMode,
+                cameraOverlayEnabled = it.cameraOverlayEnabled,
+            )
+        },
     )
     val ui: StateFlow<SettingsUi> = _ui.asStateFlow()
 
@@ -74,6 +82,11 @@ class SettingsViewModel(private val configs: ConfigRepository) : ViewModel() {
     fun setBaselineMode(enabled: Boolean) {
         configs.update { it.copy(baselineMode = enabled) }
         _ui.update { it.copy(baselineMode = enabled) }
+    }
+
+    fun setCameraOverlay(enabled: Boolean) {
+        configs.update { it.copy(cameraOverlayEnabled = enabled) }
+        _ui.update { it.copy(cameraOverlayEnabled = enabled) }
     }
 }
 

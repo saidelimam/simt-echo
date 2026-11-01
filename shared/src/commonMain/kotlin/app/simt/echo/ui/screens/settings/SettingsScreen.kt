@@ -90,6 +90,26 @@ fun SettingsScreen(
             style = MaterialTheme.typography.bodyMedium,
         )
 
+        Text(text = "Navigation", style = MaterialTheme.typography.titleMedium)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(
+                text = "Camera overlay",
+                modifier = Modifier.weight(1f),
+            )
+            Switch(
+                checked = ui.cameraOverlayEnabled,
+                onCheckedChange = viewModel::setCameraOverlay,
+            )
+        }
+        Text(
+            text = "Live camera behind the navigation HUD, with the landmark crop and mask.",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+
         EchoButton(text = "Back", onClick = onBack, modifier = Modifier.fillMaxWidth())
     }
 }

@@ -23,9 +23,11 @@ import app.simt.echo.ui.theme.EchoCardRadius
 fun DistanceReadout(
     text: String,
     modifier: Modifier = Modifier,
+    color: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color.Unspecified,
 ) {
     Text(
         text = text,
+        color = color,
         style = MaterialTheme.typography.displayLarge.copy(
             fontFeatureSettings = "tnum",
         ),
