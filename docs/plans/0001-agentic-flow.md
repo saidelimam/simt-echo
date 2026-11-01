@@ -193,10 +193,10 @@ slices. A slice is `done` only with its evidence recorded, per Plan §0.
 | W1-01 | Complete | `MotionSource`: built-in PDR engine (§6.1–6.2) + Android IMU source | S | B | W0-04 | 4889f9a72fe58901753f3a4d582fa562ac53384a · test: :shared:testAndroidHostTest (PdrEngineTest 7/7, suite 40/40), :androidApp:assembleDebug, :shared:compileKotlinIosArm64, :shared:compileKotlinIosSimulatorArm64 — BUILD SUCCESSFUL |
 | W1-02 | Complete | `CameraRecorder`: CameraX silent video, `core/ui-camera` where it fits | F | B | W0-03 | 00db42bf4c39d913c645aad319233a693206fbb8 · test: :shared:testAndroidHostTest (RecorderLogicTest 7/7, suite 18/18), :androidApp:assembleDebug, :shared:compileKotlinIosArm64, :shared:compileKotlinIosSimulatorArm64 — BUILD SUCCESSFUL |
 | W1-03 | Complete | Record screen + `CaptureSession` + Finish | F | B | W1-01, W1-02 | d655775cd1f2bb8f34c800a64bdc926881ae9ead · test: :shared:testAndroidHostTest (CaptureSessionTest 3/3, suite 43/43), :androidApp:assembleDebug, :shared:compileKotlinIosArm64, :shared:compileKotlinIosSimulatorArm64 — BUILD SUCCESSFUL |
-| W1-04 | Queued | `Segmenter` → draft `EchoRoute` + minimap | L (S) | B | W1-03 | — |
+| W1-04 | In progress | `Segmenter` → draft `EchoRoute` + minimap | L (S) | B | W1-03 | — |
 | W1-05 | Queued | `MediaTools`: keyframes + crop | L (F) | B | W1-02 | — |
 | W2-01 | Queued | Review screen + manual landmark editor + Save | F (S) | E | W1-04, W1-05 | — |
-| W2-02 | Queued | `BundleCodec`: `ECHO` container, SHA-256, AES-256-GCM `ECX1` | S | C | W0-04 | — |
+| W2-02 | Complete | `BundleCodec`: `ECHO` container, SHA-256, AES-256-GCM `ECX1` | S | C | W0-04 | 3bfbbf09dd79db1b71f6c5d212ec9a30b16cc0d1 · test: :shared:testAndroidHostTest (BundleCodecTest 10/10, suite 53/53), :androidApp:assembleDebug, :shared:compileKotlinIosArm64, :shared:compileKotlinIosSimulatorArm64 — BUILD SUCCESSFUL; catalog cryptography pin corrected 0.8.0 → 0.6.0 (0.8.0 unpublished) |
 | W2-03 | Queued | `PeerTransport` over Connect offline transport + `QrPayload` codec | S | C | W2-02 | — |
 | W2-04 | Queued | Share + Receive QR screens (`QrCodeScanner` reuse) | F | E | W2-03 | — |
 | W2-05 | Queued | `Navigator` + `TurnDetector` + `ReplayMotionSource` + 7 scenario tests | S | C | W0-04 | — |
@@ -220,7 +220,7 @@ slices. A slice is `done` only with its evidence recorded, per Plan §0.
 | W5-01 | Queued | Local-model provider (P2) | S | D | W3-07 | — |
 | W5-02 | Queued | Camera overlay: copied projection/HUD components (P2) | F (S) | E | W2-06 | — |
 | W5-03 | Accepted | iOS actuals (P2) | S | A | wave P0, W4-06 | Postponed — iOS is out of v1 scope; not to implement |
-| W5-04 | Queued | Wear OS haptic bridge on `data/wear` (P2) | F | F | W0-01 | — |
+| W5-04 | Complete | Wear OS haptic bridge on `data/wear` (P2) | F | F | W0-01 | ec654489ef5024e99ab2924081827c7f0c8f215e |
 
 ## 7. Slice sections
 
