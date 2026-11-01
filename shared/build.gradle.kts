@@ -58,6 +58,8 @@ kotlin {
             implementation(libs.androidx.lifecycle.viewmodel.compose)
             // W2-02 BundleCodec: SHA-256 + AES-GCM (provider actual below).
             implementation(libs.cryptography.core)
+            // W2-04 Share: QR generation (Compose Multiplatform painter).
+            implementation(libs.qrose)
         }
         androidMain.dependencies {
             implementation(libs.androidx.activity.compose)
@@ -72,6 +74,8 @@ kotlin {
             // W2-03 KtorLanTransport: CIO server + OkHttp client engine.
             implementation(libs.ktor.client.okhttp)
             implementation(libs.ktor.server.cio)
+            // W2-04 Receive: ML Kit barcode scanner over a CameraX use case.
+            implementation(libs.mlkit.barcode.scanning)
         }
         iosMain.dependencies {
             implementation(libs.cryptography.provider.optimal)

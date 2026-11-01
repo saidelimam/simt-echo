@@ -19,6 +19,8 @@ import io.ktor.server.routing.routing
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
 import java.net.Inet4Address
 import java.net.NetworkInterface
@@ -33,6 +35,10 @@ class KtorLanTransport : PeerTransport {
 
     private var server: EmbeddedServer<*, *>? = null
     private val scope = CoroutineScope(Dispatchers.IO)
+    private val downloads = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+    /** Emits once per successful peer download (W2-04 Share "Sent ✓"). */
+    override val served: Flow<Unit> get() = downloads
     private val client = HttpClient(OkHttp) {
         install(HttpTimeout) {
             connectTimeoutMillis = 4_000
@@ -50,6 +56,7 @@ class KtorLanTransport : PeerTransport {
                         return@get
                     }
                     call.respondBytes(payload, ContentType.Application.OctetStream)
+                    downloads.tryEmit(Unit)
                     scope.launch {
                         delay(3_000)
                         stopOffer()

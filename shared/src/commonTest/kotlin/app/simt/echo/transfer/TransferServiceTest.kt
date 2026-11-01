@@ -5,12 +5,14 @@ import app.simt.echo.data.FileStore
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.platform.Endpoint
 import app.simt.echo.platform.PeerTransport
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.test.runTest
 import okio.Path.Companion.toPath
 import okio.fakefilesystem.FakeFileSystem
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.test.assertFailsWith
 
@@ -102,6 +104,41 @@ class TransferServiceTest {
         service.offer(Fixtures.L_ROUTE.routeId)
         service.stopOffer()
         assertEquals(1, transport.stopCalls)
+    }
+
+    @Test
+    fun fetchPreviewReturnsBodyWithoutSaving() = runTest {
+        val (_, transport, service) = setup()
+        val offer = service.offer(Fixtures.L_ROUTE.routeId)
+
+        val phoneB = RouteRepository(FileStore(FakeFileSystem(), "/phoneB".toPath()))
+        val serviceB = TransferService(transport, phoneB, nowMs = { 1_762_000_000_000L })
+        val body = serviceB.fetchPreview(offer.qrUri)
+
+        assertEquals(Fixtures.L_ROUTE, body.route)
+        assertNull(phoneB.get(Fixtures.L_ROUTE.routeId))
+    }
+
+    @Test
+    fun saveImportedPersistsPreviewedBody() = runTest {
+        val (_, transport, service) = setup()
+        val offer = service.offer(Fixtures.L_ROUTE.routeId)
+
+        val phoneB = RouteRepository(FileStore(FakeFileSystem(), "/phoneB".toPath()))
+        val serviceB = TransferService(transport, phoneB, nowMs = { 1_762_000_000_000L })
+        val body = serviceB.fetchPreview(offer.qrUri)
+        serviceB.saveImported(body)
+
+        assertEquals(Fixtures.L_ROUTE, phoneB.get(Fixtures.L_ROUTE.routeId))
+        assertEquals(
+            listOf<Byte>(9, 8, 7),
+            phoneB.readAsset(Fixtures.L_ROUTE.routeId, "a_start")!!.toList(),
+        )
+    }
+
+    @Test
+    fun servedDefaultsToEmpty() = runTest {
+        assertNull(FakeTransport().served.firstOrNull())
     }
 
     @Test
