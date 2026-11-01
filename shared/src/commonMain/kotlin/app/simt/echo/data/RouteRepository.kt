@@ -28,8 +28,10 @@ class RouteRepository(private val store: FileStore) {
      * appended when the id carries no extension (plan §5.3 layout).
      */
     fun save(route: EchoRoute, assets: Map<String, Path> = emptyMap()) {
+        require(isSafeStorageId(route.routeId)) { "unsafe route id: ${route.routeId}" }
         store.writeText(routeFile(route.routeId), EchoJson.encodeToString(route))
         for ((assetId, source) in assets) {
+            require(isSafeStorageId(assetId)) { "unsafe asset id: $assetId" }
             val bytes = store.fileSystem.read(source) { readByteArray() }
             store.writeBytes(assetFile(route.routeId, assetId), bytes)
         }
@@ -41,8 +43,10 @@ class RouteRepository(private val store: FileStore) {
 
     /** Saves [route] with asset bytes directly (received-bundle import). */
     fun saveWithAssetBytes(route: EchoRoute, assetBytes: Map<String, ByteArray>) {
+        require(isSafeStorageId(route.routeId)) { "unsafe route id: ${route.routeId}" }
         store.writeText(routeFile(route.routeId), EchoJson.encodeToString(route))
         for ((assetId, bytes) in assetBytes) {
+            require(isSafeStorageId(assetId)) { "unsafe asset id: $assetId" }
             store.writeBytes(assetFile(route.routeId, assetId), bytes)
         }
     }
@@ -78,5 +82,22 @@ class RouteRepository(private val store: FileStore) {
         const val ROUTES_DIR = "routes"
         const val ROUTE_FILE = "route.json"
         const val ASSETS_DIR = "assets"
+    }
+}
+
+/**
+ * A storage id is safe when every path component is a plain name: no
+ * empty components, no `.`/`..`, no leading slash. Imported bundles are
+ * untrusted input — a crafted `routeId`/`assetId` must never write
+ * outside the route's own directory (review 0003 R1). App ids satisfy
+ * this, including nested crop names like `kf/manual_<id>.jpg`.
+ */
+fun isSafeStorageId(id: String): Boolean {
+    if (id.isEmpty() || id.length > 256) return false
+    return id.split('/').all { part ->
+        part.isNotEmpty() &&
+            part != "." &&
+            part != ".." &&
+            part.all { it.isLetterOrDigit() || it == '-' || it == '_' || it == '.' }
     }
 }

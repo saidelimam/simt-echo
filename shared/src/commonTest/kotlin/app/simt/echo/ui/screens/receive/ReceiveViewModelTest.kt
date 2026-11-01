@@ -4,6 +4,7 @@ import app.simt.echo.Fixtures
 import app.simt.echo.data.FileStore
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.platform.Endpoint
+import app.simt.echo.platform.FileSharing
 import app.simt.echo.platform.PeerTransport
 import app.simt.echo.transfer.QrPayload
 import app.simt.echo.transfer.TransferService
@@ -13,13 +14,16 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import okio.Path
 import okio.Path.Companion.toPath
 import okio.fakefilesystem.FakeFileSystem
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /** W2-04 gate: scan → preview (unsaved) → Save persists; failures show the hotspot copy. */
 class ReceiveViewModelTest {
@@ -56,8 +60,23 @@ class ReceiveViewModelTest {
         override fun stopOffer() = Unit
     }
 
+    private class FakeFileSharing : FileSharing {
+        var pickResult: ByteArray? = null
+        var picks = 0
+
+        override suspend fun shareFile(path: Path, name: String, mime: String): Boolean =
+            error("Receive never shares")
+
+        override suspend fun pickDocument(): ByteArray? {
+            picks++
+            return pickResult
+        }
+    }
+
     private class Setup(
+        val storeA: FileStore,
         val phoneB: RouteRepository,
+        val storeB: FileStore,
         val transport: FakeTransport,
         val serviceA: TransferService,
         val serviceB: TransferService,
@@ -65,31 +84,36 @@ class ReceiveViewModelTest {
 
     private fun setup(): Setup {
         val fileSystem = FakeFileSystem()
-        val routesA = RouteRepository(FileStore(fileSystem, "/data".toPath()))
+        val storeA = FileStore(fileSystem, "/data".toPath())
+        val routesA = RouteRepository(storeA)
         val source = "/camera/start.jpg".toPath()
         fileSystem.createDirectories("/camera".toPath())
         fileSystem.write(source) { write(byteArrayOf(9, 8, 7)) }
         routesA.save(Fixtures.L_ROUTE, mapOf("a_start" to source))
         val transport = FakeTransport()
-        val phoneB = RouteRepository(FileStore(FakeFileSystem(), "/phoneB".toPath()))
+        val storeB = FileStore(FakeFileSystem(), "/phoneB".toPath())
+        val phoneB = RouteRepository(storeB)
         val at = { 1_762_000_000_000L }
         return Setup(
+            storeA = storeA,
             phoneB = phoneB,
+            storeB = storeB,
             transport = transport,
             serviceA = TransferService(
                 transport = transport,
                 routes = routesA,
+                store = storeA,
                 randomBytes = { size -> ByteArray(size) { (it + 1).toByte() } },
                 nowMs = at,
             ),
-            serviceB = TransferService(transport = transport, routes = phoneB, nowMs = at),
+            serviceB = TransferService(transport = transport, routes = phoneB, store = storeB, nowMs = at),
         )
     }
 
     @Test
     fun ignoresNonEchoUris() = runTest(dispatcher) {
         val setup = setup()
-        val vm = ReceiveViewModel(setup.serviceB)
+        val vm = ReceiveViewModel(setup.serviceB, FakeFileSharing())
         vm.onScanned("https://example.com/not-a-route")
         advanceUntilIdle()
 
@@ -101,7 +125,7 @@ class ReceiveViewModelTest {
     fun scanFetchesPreviewWithoutSaving() = runTest(dispatcher) {
         val setup = setup()
         val offer = setup.serviceA.offer(Fixtures.L_ROUTE.routeId)
-        val vm = ReceiveViewModel(setup.serviceB)
+        val vm = ReceiveViewModel(setup.serviceB, FakeFileSharing())
         vm.onScanned(offer.qrUri)
         advanceUntilIdle()
 
@@ -116,7 +140,7 @@ class ReceiveViewModelTest {
     fun duplicateScanIgnored() = runTest(dispatcher) {
         val setup = setup()
         val offer = setup.serviceA.offer(Fixtures.L_ROUTE.routeId)
-        val vm = ReceiveViewModel(setup.serviceB)
+        val vm = ReceiveViewModel(setup.serviceB, FakeFileSharing())
         vm.onScanned(offer.qrUri)
         advanceUntilIdle()
         vm.onScanned(offer.qrUri)
@@ -129,7 +153,7 @@ class ReceiveViewModelTest {
     fun savePersistsPreviewedBody() = runTest(dispatcher) {
         val setup = setup()
         val offer = setup.serviceA.offer(Fixtures.L_ROUTE.routeId)
-        val vm = ReceiveViewModel(setup.serviceB)
+        val vm = ReceiveViewModel(setup.serviceB, FakeFileSharing())
         vm.onScanned(offer.qrUri)
         advanceUntilIdle()
 
@@ -152,7 +176,7 @@ class ReceiveViewModelTest {
         val offer = setup.serviceA.offer(Fixtures.L_ROUTE.routeId)
         val payload = QrPayload.parse(offer.qrUri).getOrThrow()
         val badToken = payload.copy(token = ByteArray(16)).build()
-        val vm = ReceiveViewModel(setup.serviceB)
+        val vm = ReceiveViewModel(setup.serviceB, FakeFileSharing())
         vm.onScanned(badToken)
         advanceUntilIdle()
 
@@ -165,7 +189,7 @@ class ReceiveViewModelTest {
         val setup = setup()
         val offer = setup.serviceA.offer(Fixtures.L_ROUTE.routeId)
         val payload = QrPayload.parse(offer.qrUri).getOrThrow()
-        val vm = ReceiveViewModel(setup.serviceB)
+        val vm = ReceiveViewModel(setup.serviceB, FakeFileSharing())
         vm.onScanned(payload.copy(token = ByteArray(16)).build())
         advanceUntilIdle()
 
@@ -175,5 +199,55 @@ class ReceiveViewModelTest {
 
         assertEquals(null, vm.ui.value.error)
         assertEquals(Fixtures.L_ROUTE.name, vm.ui.value.preview?.name)
+    }
+
+    @Test
+    fun importFileDecodesPreviewWithoutSaving() = runTest(dispatcher) {
+        val setup = setup()
+        val exportPath = setup.serviceA.exportFile(Fixtures.L_ROUTE.routeId)
+        val bytes = setup.storeA.readBytes(exportPath.toString())!!
+        val sharing = FakeFileSharing().apply { pickResult = bytes }
+        val vm = ReceiveViewModel(setup.serviceB, sharing)
+
+        vm.importFile()
+        advanceUntilIdle()
+
+        assertEquals(Fixtures.L_ROUTE.name, vm.ui.value.preview?.name)
+        assertNull(vm.ui.value.error)
+        assertNull(setup.phoneB.get(Fixtures.L_ROUTE.routeId))
+    }
+
+    @Test
+    fun importFileCancelledRestartsQuietly() = runTest(dispatcher) {
+        val setup = setup()
+        val sharing = FakeFileSharing() // pickDocument() → null (cancel)
+        val vm = ReceiveViewModel(setup.serviceB, sharing)
+
+        vm.importFile()
+        advanceUntilIdle()
+
+        assertNull(vm.ui.value.preview)
+        assertNull(vm.ui.value.error)
+
+        // The scanner re-arms and a subsequent scan still works.
+        val offer = setup.serviceA.offer(Fixtures.L_ROUTE.routeId)
+        vm.onScanned(offer.qrUri)
+        advanceUntilIdle()
+        assertEquals(Fixtures.L_ROUTE.name, vm.ui.value.preview?.name)
+    }
+
+    @Test
+    fun importFileBadBytesShowsError() = runTest(dispatcher) {
+        val setup = setup()
+        val sharing = FakeFileSharing().apply {
+            pickResult = "not a bundle".encodeToByteArray()
+        }
+        val vm = ReceiveViewModel(setup.serviceB, sharing)
+
+        vm.importFile()
+        advanceUntilIdle()
+
+        assertNull(vm.ui.value.preview)
+        assertNotNull(vm.ui.value.error)
     }
 }

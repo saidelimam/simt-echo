@@ -15,6 +15,7 @@ import kotlin.random.Random
 import app.simt.echo.AppGraph
 import app.simt.echo.data.listRecoverable
 import app.simt.echo.platform.currentEpochMs
+import app.simt.echo.platform.rememberFileSharing
 import app.simt.echo.platform.rememberMediaTools
 import app.simt.echo.platform.rememberHaptics
 import app.simt.echo.ui.screens.HomeScreen
@@ -124,12 +125,14 @@ fun EchoNavHost(
                 routeId = route.routeId,
                 service = graph.transferService,
                 haptics = rememberHaptics(),
+                sharing = rememberFileSharing(),
                 onClose = { navController.popBackStack() },
             )
         }
         composable<EchoRoute.Receive> {
             ReceiveScreen(
                 service = graph.transferService,
+                sharing = rememberFileSharing(),
                 onImported = { navController.navigateTo(EchoRoute.RouteDetail(it)) },
             )
         }
