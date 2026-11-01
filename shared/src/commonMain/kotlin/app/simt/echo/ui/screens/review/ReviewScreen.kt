@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
@@ -49,6 +50,9 @@ import app.simt.echo.ui.components.CropImage
 import app.simt.echo.ui.components.Minimap
 import app.simt.echo.ui.components.PillButton
 import kotlin.math.roundToInt
+
+/** Semantics tag for the draw canvas (headless UI gate target). */
+const val DrawCanvasTag = "drawCanvas"
 
 /**
  * Review + manual landmark editor (plan W2-01): the segmented path stays
@@ -378,10 +382,11 @@ private fun HeroImage(
 /**
  * Full-screen draw overlay: drag a rectangle over the hero, name it,
  * confirm. Coordinates are normalised to 0..1 so the crop never depends
- * on screen size.
+ * on screen size. Internal (not private) so the W6-03 headless UI gate
+ * can drive the real gesture path in androidHostTest; behaviour unchanged.
  */
 @Composable
-private fun DrawOverlay(
+internal fun DrawOverlay(
     nodeId: String,
     nodeLabel: String,
     heroBytes: ByteArray?,
@@ -412,6 +417,7 @@ private fun DrawOverlay(
                 Canvas(
                     modifier = Modifier
                         .fillMaxSize()
+                        .testTag(DrawCanvasTag)
                         .pointerInput(nodeId) {
                             detectDragGestures(
                                 onDragStart = { start = it },
