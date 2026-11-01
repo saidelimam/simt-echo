@@ -5,6 +5,7 @@ import type { Env } from "./index";
 import { JobResultSchema, ManifestSchema, type JobResult, type Manifest } from "./types";
 import { putError, putProgress } from "./jobs";
 import { runScout, ScoutError, type ScoutResult } from "./scout";
+import { runGround } from "./ground";
 
 export interface PipelineParams {
   jobId: string;
@@ -16,9 +17,10 @@ const STEP_OPTS = {
   timeout: "4 minutes" as const,
 };
 
-/** Load → scout (Workers AI, W3-04) → ground → assemble. W3-05 owns
- * ground-*, W3-06 owns assemble's content; the scout step already seals its
- * compact result + raw evidence to R2 for them to consume. */
+/** Load → scout (Workers AI, W3-04) → ground (W3-05) → assemble. W3-05 owns
+ * ground-*: box-only default + SAM 3.1 when keyed, ranked per §6.6.
+ * W3-06 owns assemble's content; ground seals ranked candidates to
+ * `jobs/<id>/ground.json` for it to consume. */
 export class EchoPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
   override async run(
     event: Readonly<WorkflowEvent<PipelineParams>>,
@@ -27,8 +29,8 @@ export class EchoPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
     const { jobId } = event.payload;
     try {
       const manifest = await step.do("load", STEP_OPTS, () => loadManifest(this.env, jobId));
-      await step.do("scout", STEP_OPTS, () => runScoutStep(this.env, jobId, manifest));
-      await step.do("ground", STEP_OPTS, () => putProgress(this.env, jobId, "grounding"));
+      const scout = await step.do("scout", STEP_OPTS, () => runScoutStep(this.env, jobId, manifest));
+      await step.do("ground", STEP_OPTS, () => runGroundStep(this.env, jobId, manifest, scout));
       return await step.do("assemble", STEP_OPTS, () => assembleEmpty(this.env, jobId, manifest));
     } catch (e) {
       await putError(this.env, jobId, e instanceof Error ? e.message : String(e));
@@ -67,4 +69,9 @@ async function assembleEmpty(env: Env, jobId: string, manifest: Manifest): Promi
   await env.MEDIA.put(`jobs/${jobId}/result.json`, JSON.stringify(result));
   await putProgress(env, jobId, "complete");
   return result;
+}
+
+async function runGroundStep(env: Env, jobId: string, manifest: Manifest, scout: ScoutResult): Promise<void> {
+  await putProgress(env, jobId, "grounding");
+  await runGround(env, jobId, manifest, scout);
 }
