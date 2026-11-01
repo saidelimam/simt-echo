@@ -31,4 +31,58 @@ data class EchoConfig(
     val markMergeDistanceM: Double = 3.0,
     /** CHECKPOINT/LEVEL nodes closer than this to the previous node drop, metres. */
     val minNodeSpacingM: Double = 4.0,
+
+    // Navigator (§6.4). W4-02 tunes these alongside step-length calibration.
+    /** Fraction of leg length at which a turn enters APPROACH. */
+    val navApproachFraction: Double = 0.15,
+    /** Minimum remaining distance for APPROACH, metres. */
+    val navApproachMinM: Double = 4.0,
+    /** Default landmark-card visibility when a landmark has none, metres. */
+    val navLandmarkVisibleDefaultM: Double = 8.0,
+    /** Floor for landmark-card visibility, metres. */
+    val navLandmarkVisibleMinM: Double = 6.0,
+    /** Remaining distance that arms the "I'm here" arrival prompt, metres. */
+    val navArrivePromptM: Double = 2.0,
+    /** Walking this far past the destination arrives without a prompt, metres. */
+    val navArriveAutoPastM: Double = 3.0,
+    /** Minimum overshoot past a leg that raises UNCERTAIN, metres. */
+    val navUncertainOvershootMinM: Double = 5.0,
+    /** Overshoot as a fraction of leg length that raises UNCERTAIN. */
+    val navUncertainOvershootFraction: Double = 0.30,
+    /** Odometer uncertainty at an anchor, metres (σ model). */
+    val navUncertaintyBaseM: Double = 0.5,
+    /** Odometer uncertainty growth per metre since the last anchor. */
+    val navUncertaintyPerMetre: Double = 0.08,
+    /** Uncertainty above which navigation is UNCERTAIN, metres. */
+    val navUncertaintyMaxM: Double = 6.0,
+    /** Extra metres after a CONFIRM prompt at which the leg auto-advances. */
+    val navConfirmAutoAdvanceM: Double = 8.0,
+    /** A matching turn only advances at or past this leg fraction. */
+    val navTurnMinProgressFraction: Double = 0.5,
+    /** Distance on the first leg after which a wrong start can be called, metres. */
+    val navWrongStartDistanceM: Double = 6.0,
+    /** Heading error that marks a wrong start, degrees. */
+    val navWrongStartHeadingErrorDeg: Double = 50.0,
+    /** Trailing distance window for corridor snapping, metres. */
+    val navCorridorWindowM: Double = 4.0,
+    /** Maximum yaw spread inside the corridor window, degrees. */
+    val navCorridorYawStdDeg: Double = 8.0,
+    /** Maximum arrow error corridor snapping will correct, degrees. */
+    val navCorridorArrowMaxDeg: Double = 25.0,
+    /** Fraction of the arrow error absorbed per motion update while snapping. */
+    val navCorridorCorrection: Double = 0.05,
+
+    // Online turn detector (§6.5).
+    /** Yaw history retained by the detector, milliseconds. */
+    val turnHistoryMs: Long = 6_000L,
+    /** Reference window start, milliseconds before now. */
+    val turnRefStartMs: Long = 4_000L,
+    /** Reference window end, milliseconds before now. */
+    val turnRefEndMs: Long = 2_500L,
+    /** Recent window judged for stability, milliseconds. */
+    val turnRecentMs: Long = 1_000L,
+    /** Maximum yaw spread in the recent window for a turn to fire, degrees. */
+    val turnRecentMaxStdDeg: Double = 12.0,
+    /** Quiet period after a detected turn, milliseconds. */
+    val turnCooldownMs: Long = 2_000L,
 )
