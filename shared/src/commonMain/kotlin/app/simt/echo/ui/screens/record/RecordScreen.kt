@@ -24,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
@@ -181,8 +182,8 @@ private fun FinishForm(onSave: (String, String) -> Unit) {
 
 /**
  * Long-press (≥ 600 ms is the gesture recognizer's long-press) to finish.
- * 48 dp target with a Button role so TalkBack can activate it via the
- * custom long-click action; sighted touch users keep the gesture.
+ * 48 dp target with a Button role; the semantics onClick gives TalkBack a
+ * standard activation path, while sighted touch users keep the gesture.
  */
 @Composable
 private fun FinishButton(onFinish: () -> Unit) {
@@ -194,6 +195,7 @@ private fun FinishButton(onFinish: () -> Unit) {
             .semantics(mergeDescendants = true) {
                 role = Role.Button
                 contentDescription = "Hold to finish"
+                onClick { onFinish(); true }
                 onLongClick { onFinish(); true }
             }
             .padding(vertical = 8.dp)

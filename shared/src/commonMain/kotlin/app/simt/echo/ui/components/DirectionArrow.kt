@@ -2,6 +2,7 @@ package app.simt.echo.ui.components
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.size
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -39,7 +40,7 @@ internal fun wrapPi(angleRad: Float): Float {
 fun DirectionArrow(
     angleRad: Float,
     modifier: Modifier = Modifier,
-    color: Color = Color(0xFFC6F432),
+    color: Color = MaterialTheme.colorScheme.primary,
     contentDescription: String? = null,
 ) {
     val animated = remember { Animatable(angleRad) }

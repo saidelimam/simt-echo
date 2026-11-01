@@ -108,7 +108,8 @@ fun NavigateScreen(
             if (!online) StatusChip(text = "Offline ✓")
             StatusChip(text = "±${oneDecimal(nav.uncertaintyM)} m")
         }
-        DirectionArrow(angleRad = nav.arrowRad.toFloat(), contentDescription = nav.instruction)
+        // Decorative here: the instruction Text below carries the semantics.
+        DirectionArrow(angleRad = nav.arrowRad.toFloat(), contentDescription = null)
         AnimatedContent(targetState = nav.instruction, label = "instruction") { instruction ->
             Text(text = instruction, style = MaterialTheme.typography.titleLarge)
         }
