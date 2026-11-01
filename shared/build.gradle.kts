@@ -72,6 +72,8 @@ kotlin {
             implementation(libs.kotlinx.coroutines.core)
             // Repository tests (W0-04) run on the host against okio's fake.
             implementation(libs.okio.fakefilesystem)
+            // runTest for flow-collecting engine tests (W1-01).
+            implementation(libs.kotlinx.coroutines.test)
         }
     }
 }
