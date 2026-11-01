@@ -15,8 +15,21 @@ import type { Env } from "./index";
 
 const RESPONSES_URL = "https://api.meta.ai/v1/responses";
 
+/** One collected Meta response: output text plus vendor usage, when the
+ * `response.completed` event carries it (plan §10 W3-06 usage). */
+export interface MetaResponse {
+  text: string;
+  /** `usage.video_frames_processed` from response.completed, if sent. */
+  videoFramesProcessed?: number;
+}
+
 /** POST a streaming Responses request and collect the output text. */
 export async function metaResponses(env: Env, body: object): Promise<string> {
+  return (await metaResponsesDetailed(env, body)).text;
+}
+
+/** As [metaResponses], but also surfaces the vendor usage counters. */
+export async function metaResponsesDetailed(env: Env, body: object): Promise<MetaResponse> {
   const key = env.META_API_KEY;
   if (!key) throw new NonRetryableError("meta: META_API_KEY is not configured");
   const res = await fetch(RESPONSES_URL, {
@@ -38,6 +51,7 @@ export async function metaResponses(env: Env, body: object): Promise<string> {
   let buf = "";
   let out = "";
   let sawDelta = false;
+  let videoFramesProcessed: number | undefined;
   for (let r = await reader.read(); !r.done; r = await reader.read()) {
     buf += r.value;
     let i: number;
@@ -58,10 +72,16 @@ export async function metaResponses(env: Env, body: object): Promise<string> {
           out += j.text;
         } else if (j.type === "response.failed" || j.type === "error") {
           throw new Error(data.slice(0, 500));
+        } else if (j.type === "response.completed") {
+          const frames = (j as { response?: { usage?: { video_frames_processed?: unknown } } })
+            .response?.usage?.video_frames_processed;
+          if (typeof frames === "number" && Number.isFinite(frames) && frames >= 0) {
+            videoFramesProcessed = frames;
+          }
         }
       }
       buf = buf.slice(i + 2);
     }
   }
-  return out;
+  return { text: out, ...(videoFramesProcessed !== undefined ? { videoFramesProcessed } : {}) };
 }

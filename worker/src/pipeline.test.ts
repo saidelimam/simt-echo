@@ -112,11 +112,13 @@ describe("assembleFromGround", () => {
       "job1",
       manifestWithClip(),
       ground,
-      { scoutMs: 21000, samMs: 9000 },
+      { scoutMs: 21000 },
     );
 
     expect(result.checkpoints[0].candidates.map((c) => c.title)).toEqual(["Strong", "Weak"]);
-    expect(result.usage).toEqual({ scoutMs: 21000, samMs: 9000 });
+    // Ground measured no SAM usage: samMs is absent, never invented.
+    expect(result.usage).toEqual({ scoutMs: 21000 });
+    expect(result.usage.samMs).toBeUndefined();
     // Box-only path sends no frames to SAM: no samFrames claim.
     expect(result.usage.samFrames).toBeUndefined();
     const sealed = JSON.parse(new TextDecoder().decode(media.store.get("jobs/job1/result.json")!));
@@ -125,19 +127,43 @@ describe("assembleFromGround", () => {
     expect(progress.stage).toBe("complete");
   });
 
-  it("counts clip frames as samFrames when SAM grounded the job", async () => {
+  it("carries ground's measured SAM usage through, never a proxy", async () => {
     const media = new FakeR2();
     const ground = JobResultSchema.parse({
       ...groundResult([candidate({ candidateId: "n2_0", source: "AI_GROUNDED", models: "m + sam-3.1" })]),
       models: { scout: "muse-spark-1.3", ground: "sam-3.1" },
+      usage: { samFrames: 240, samMs: 1800 },
     });
 
     const result = await assembleFromGround(envFor(media), "job1", manifestWithClip(), ground, {
       scoutMs: 1000,
-      samMs: 2000,
     });
 
-    expect(result.usage.samFrames).toBe(50);
+    // Two video sends reported 240 vendor frames — not the manifest's
+    // single-clip 50 the old proxy claimed.
+    expect(result.usage).toEqual({ samFrames: 240, scoutMs: 1000, samMs: 1800 });
+  });
+
+  it("keeps manifest checkpoints ground never produced, as empty", async () => {
+    const media = new FakeR2();
+    const manifest = manifestWithClip();
+    (manifest.checkpoints as unknown[]).push({
+      nodeId: "n3",
+      type: "DESTINATION",
+      atDistanceM: 45,
+      tMs: 60000,
+      heroKeyframeId: "kf_n2_1",
+      keyframes: [{ id: "kf_n2_1", tMs: 1000 }],
+      approach: [],
+    });
+    const ground = groundResult([candidate({ candidateId: "n2_0" })]);
+
+    const result = await assembleFromGround(envFor(media), "job1", manifest, ground, {
+      scoutMs: 10,
+    });
+
+    expect(result.checkpoints.map((c) => c.nodeId)).toEqual(["n2", "n3"]);
+    expect(result.checkpoints[1].candidates).toEqual([]);
   });
 
   it("assembles the box-only ground chain end to end", async () => {
@@ -182,7 +208,7 @@ describe("assembleFromGround", () => {
     } as never;
 
     const ground = await runGround(env, "job1", manifest, scout);
-    const result = await assembleFromGround(env, "job1", manifest, ground, { scoutMs: 5, samMs: 7 });
+    const result = await assembleFromGround(env, "job1", manifest, ground, { scoutMs: 5 });
 
     expect(result.models).toEqual({ scout: "scout-model", ground: "none" });
     expect(result.checkpoints[0].candidates.map((c) => c.title)).toEqual(["Strong", "Weak"]);

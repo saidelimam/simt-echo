@@ -296,6 +296,33 @@ describe("runGround SAM path", () => {
     expect(top.frameW).toBe(720);
   });
 
+  it("reports vendor frames per video send and real SAM time in usage", async () => {
+    const { manifest, env } = groundedSetup();
+    vi.stubGlobal("fetch", async () => {
+      const events =
+        `data: ${JSON.stringify({ type: "response.output_text.done", text: SAM_VIDEO })}\n\n` +
+        `data: ${JSON.stringify({ type: "response.completed", response: { usage: { video_frames_processed: 120 } } })}\n\n` +
+        "data: [DONE]\n\n";
+      return new Response(events, { status: 200 });
+    });
+    const scout = {
+      model: "scout-model",
+      checkpoints: [
+        {
+          nodeId: "n2",
+          candidates: [scoutCandidate(), scoutCandidate({ title: "Second", distinctiveness: 0.5 })],
+        },
+      ],
+    } as never;
+
+    const result = await runGround(env, "job1", manifest, scout);
+
+    // Two candidates = two video sends = 2 x 120 vendor frames (the old
+    // per-checkpoint proxy would have claimed a single clip's 50).
+    expect(result.usage.samFrames).toBe(240);
+    expect(typeof result.usage.samMs).toBe("number");
+  });
+
   it("degrades to box-only when Meta refuses, never crashes", async () => {
     const { manifest, env } = groundedSetup();
     stubMeta(new Response("forbidden", { status: 403 }), SAM_IMAGE);
@@ -309,6 +336,19 @@ describe("runGround SAM path", () => {
     const c = result.checkpoints[0].candidates[0];
     expect(c.source).toBe("AI_BOX_ONLY");
     expect(c.maskSvgPath).toBeNull();
+  });
+
+  it("retryable Meta failures propagate instead of silently degrading", async () => {
+    const { manifest, env } = groundedSetup();
+    stubMeta(new Response("busy", { status: 503 }), SAM_IMAGE);
+    const scout = {
+      model: "scout-model",
+      checkpoints: [{ nodeId: "n2", candidates: [scoutCandidate()] }],
+    } as never;
+
+    // 5xx is the Workflow's retry signal: the job must not pretend the
+    // candidates were grounded or quietly fall back to box-only.
+    await expect(runGround(env, "job1", manifest, scout)).rejects.toThrow(/retryable meta 503/);
   });
 
   it("zero video observations fall back to the hero image with null track fields", async () => {

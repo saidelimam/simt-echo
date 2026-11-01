@@ -13,7 +13,7 @@
 import { NonRetryableError } from "cloudflare:workflows";
 import { decodeMaskToSVGPath, formats, frameIndexOf, recordsOfKind } from "@meta-sam/parser";
 import type { Env } from "./index";
-import { metaResponses } from "./meta";
+import { metaResponses, metaResponsesDetailed } from "./meta";
 import { parseSam, type SamObs } from "./samParse";
 import {
   JobResultSchema,
@@ -145,6 +145,10 @@ export async function runGround(
   const samEnabled = samOrdered && Boolean(env.META_API_KEY);
   const scoutByNode = new Map(scout.checkpoints.map((c) => [c.nodeId, c]));
   const checkpoints: JobResult["checkpoints"] = [];
+  // Honest usage (review 0004 R1): video frames actually sent to SAM
+  // (vendor-reported when response.completed carries usage, else the
+  // sent clip's frame count per send) and Meta wall time actually spent.
+  const usage = { videoFrames: 0, samMs: 0 };
 
   for (const cp of manifest.checkpoints) {
     const kept = scoutByNode.get(cp.nodeId)?.candidates ?? [];
@@ -179,7 +183,7 @@ export async function runGround(
     kept.forEach((sc, k) => {
       jobs.push(
         (async () => {
-          candidates.push(await groundOne(env, jobId, scout.model, cp, sc, k, clip));
+          candidates.push(await groundOne(env, jobId, scout.model, cp, sc, k, clip, usage));
         })(),
       );
     });
@@ -195,7 +199,10 @@ export async function runGround(
       ground: samEnabled ? "sam-3.1" : "none",
     },
     checkpoints,
-    usage: {},
+    usage: {
+      ...(usage.videoFrames > 0 ? { samFrames: Math.round(usage.videoFrames) } : {}),
+      ...(samEnabled && usage.samMs > 0 ? { samMs: Math.round(usage.samMs) } : {}),
+    },
   });
   await env.MEDIA.put(`jobs/${jobId}/ground.json`, JSON.stringify(result));
   return result;
@@ -209,6 +216,7 @@ async function groundOne(
   sc: ScoutCandidate,
   k: number,
   clip: { clipB64: string; fps: number; heroIdx: number; heroTMs: number } | null,
+  usage: { videoFrames: number; samMs: number },
 ): Promise<Candidate> {
   const evidenceKey = `jobs/${jobId}/sam/${cp.nodeId}_${k}.txt`;
   const fallback: Candidate = {
@@ -246,9 +254,10 @@ async function groundOne(
   try {
     if (!clip) {
       // Fallback a from the start: no clip to ground against.
-      return await groundViaImage(env, jobId, cp, sc, k, evidenceKey, fallback);
+      return await groundViaImage(env, jobId, cp, sc, k, evidenceKey, fallback, usage);
     }
-    const text = await metaResponses(env, {
+    const callStart = Date.now();
+    const detailed = await metaResponsesDetailed(env, {
       model: "sam-3.1",
       metadata: { include_confidence: "true", mask_encoding: "one_bit" },
       input: [
@@ -262,11 +271,16 @@ async function groundOne(
         },
       ],
     });
+    usage.samMs += Date.now() - callStart;
+    // Vendor-reported frames when present; otherwise the frames of the
+    // clip this call actually sent (per candidate, not per checkpoint).
+    usage.videoFrames += detailed.videoFramesProcessed ?? (cp.clip?.frameCount ?? 0);
+    const text = detailed.text;
     await env.MEDIA.put(evidenceKey, text);
     const obs = parseSam(text);
     if (obs.length === 0) {
       // Fallback a (plan §10 W3-05): same phrase on the hero keyframe.
-      return await groundViaImage(env, jobId, cp, sc, k, evidenceKey, fallback);
+      return await groundViaImage(env, jobId, cp, sc, k, evidenceKey, fallback, usage);
     }
     return toGrounded(cp, sc, k, evidenceKey, obs, clip, fallback, false);
   } catch (e) {
@@ -289,10 +303,12 @@ async function groundViaImage(
   k: number,
   evidenceKey: string,
   fallback: Candidate,
+  usage: { videoFrames: number; samMs: number },
 ): Promise<Candidate> {
   const heroObj = await env.MEDIA.get(`jobs/${jobId}/in/${sc.imageId}`);
   if (!heroObj) return fallback;
   const heroB64 = toBase64(new Uint8Array(await heroObj.arrayBuffer()));
+  const callStart = Date.now();
   const heroText = await metaResponses(env, {
     model: "sam-3.1",
     metadata: { include_confidence: "true", mask_encoding: "one_bit" },
@@ -307,6 +323,7 @@ async function groundViaImage(
       },
     ],
   });
+  usage.samMs += Date.now() - callStart;
   await env.MEDIA.put(evidenceKey, heroText);
   const heroObs = parseSam(heroText);
   if (heroObs.length === 0) return fallback;

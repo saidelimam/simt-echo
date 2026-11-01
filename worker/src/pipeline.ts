@@ -36,9 +36,8 @@ export class EchoPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
       const scout = await step.do("scout", STEP_OPTS, () => runScoutStep(this.env, jobId, manifest));
       const scoutMs = Date.now() - t0;
       const ground = await step.do("ground", STEP_OPTS, () => runGroundStep(this.env, jobId, manifest, scout));
-      const samMs = Date.now() - t0 - scoutMs;
       return await step.do("assemble", STEP_OPTS, () =>
-        assembleFromGround(this.env, jobId, manifest, ground, { scoutMs, samMs }),
+        assembleFromGround(this.env, jobId, manifest, ground, { scoutMs }),
       );
     } catch (e) {
       await putError(this.env, jobId, e instanceof Error ? e.message : String(e));
@@ -69,35 +68,40 @@ async function runScoutStep(env: Env, jobId: string, manifest: Manifest): Promis
 
 /**
  * Assemble the public result (plan §7.1 step 4, slice W3-06): re-sort every
- * checkpoint's candidates by §6.6 rank (ground already ranks; the re-sort is
- * the cheap invariant the Review screen's preselect depends on), attach
- * measured usage, and seal `jobs/<id>/result.json`. `samFrames` counts clip
- * frames sent to SAM — a billing proxy, since the text-only SSE collector
- * does not surface `response.completed` usage; it is absent on the box-only
- * path. Exported for the slice's vitest.
+ * checkpoint's candidates by §6.6 rank, attach measured usage, and seal
+ * `jobs/<id>/result.json`. Rank amendment (review 0004): ground computes
+ * §6.6 rank; assemble only sorts (deterministically) — recomputing here
+ * is impossible anyway, since Candidate no longer carries the §6.6
+ * inputs. Usage: `samFrames`/`samMs` are ground's measured Meta usage
+ * (vendor frames when reported, actual sends otherwise); `samMs` is
+ * absent when SAM never ran, never a step wall-time proxy. Every
+ * manifest checkpoint appears, empty when ground produced none.
+ * Exported for the slice's vitest.
  */
 export async function assembleFromGround(
   env: Env,
   jobId: string,
   manifest: Manifest,
   ground: JobResult,
-  timings: { scoutMs: number; samMs: number },
+  timings: { scoutMs: number },
 ): Promise<JobResult> {
-  const samRan = ground.models.ground !== "none";
-  const samFrames = samRan
-    ? manifest.checkpoints.reduce((sum, cp) => sum + (cp.clip?.frameCount ?? 0), 0)
-    : undefined;
+  const groundByNode = new Map(ground.checkpoints.map((c) => [c.nodeId, c]));
   const result = JobResultSchema.parse({
     ...ground,
     jobId,
-    checkpoints: ground.checkpoints.map((c) => ({
-      nodeId: c.nodeId,
-      candidates: [...c.candidates].sort((a, b) => b.rank - a.rank || (a.candidateId < b.candidateId ? -1 : 1)),
-    })),
+    checkpoints: manifest.checkpoints.map((cp) => {
+      const c = groundByNode.get(cp.nodeId);
+      return {
+        nodeId: cp.nodeId,
+        candidates: [...(c?.candidates ?? [])].sort(
+          (a, b) => b.rank - a.rank || (a.candidateId < b.candidateId ? -1 : 1),
+        ),
+      };
+    }),
     usage: {
-      ...(samFrames !== undefined && samFrames > 0 ? { samFrames } : {}),
+      ...(ground.usage.samFrames ? { samFrames: ground.usage.samFrames } : {}),
       scoutMs: Math.max(0, timings.scoutMs),
-      samMs: Math.max(0, timings.samMs),
+      ...(ground.usage.samMs !== undefined ? { samMs: ground.usage.samMs } : {}),
     },
   });
   await env.MEDIA.put(`jobs/${jobId}/result.json`, JSON.stringify(result));
