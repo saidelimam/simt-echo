@@ -1,5 +1,6 @@
 package app.simt.echo
 
+import app.simt.echo.data.ConfigRepository
 import app.simt.echo.data.DraftRepository
 import app.simt.echo.data.FileStore
 import app.simt.echo.data.RouteRepository
@@ -39,6 +40,10 @@ class AppGraph(
 
     val routeRepository: RouteRepository by lazy { RouteRepository(fileStore) }
     val draftRepository: DraftRepository by lazy { DraftRepository(fileStore) }
+
+    /** Persisted tunables (W4-02): capture, navigation and Settings all
+     * read the calibrated step-K from here — never a hard-coded default. */
+    val configRepository: ConfigRepository by lazy { ConfigRepository(fileStore) }
 
     /** Cloud API client (W3-02): consent upload, job polling, deletion. */
     val apiClient: EchoApiClient by lazy {

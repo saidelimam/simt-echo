@@ -27,6 +27,14 @@ class ConfigRepositoryTest {
     }
 
     @Test
+    fun absurdStoredStepKFallsBackToDefault() {
+        configs.set(EchoConfig(stepK = 48.0))
+        assertEquals(0.48, configs.get().stepK)
+        configs.set(EchoConfig(stepK = -3.0))
+        assertEquals(0.48, configs.get().stepK)
+    }
+
+    @Test
     fun corruptFileDegradesToDefaults() {
         store.writeText("config/echo.json", "{not json")
         assertEquals(EchoConfig(), configs.get())

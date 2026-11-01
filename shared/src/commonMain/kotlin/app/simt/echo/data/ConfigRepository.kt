@@ -1,5 +1,7 @@
 package app.simt.echo.data
 
+import app.simt.echo.capture.STEP_K_DEFAULT
+import app.simt.echo.capture.isPlausibleStepK
 import app.simt.echo.model.EchoConfig
 import app.simt.echo.model.EchoJson
 import kotlinx.serialization.encodeToString
@@ -49,7 +51,13 @@ class ConfigRepository(store: FileStore) {
         encode = { EchoJson.encodeToString(it) },
     )
 
-    fun get(): EchoConfig = docs.get(EchoConfig())
+    /** Persisted config, sanitised: an absurd stored stepK (hand-edited
+     * or written by a bad calibration) falls back to the default rather
+     * than silently saturating the PDR clamp on every walk. */
+    fun get(): EchoConfig {
+        val stored = docs.get(EchoConfig())
+        return if (isPlausibleStepK(stored.stepK)) stored else stored.copy(stepK = STEP_K_DEFAULT)
+    }
 
     fun set(config: EchoConfig) {
         docs.set(config)

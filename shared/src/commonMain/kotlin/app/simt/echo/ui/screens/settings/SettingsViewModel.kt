@@ -35,10 +35,7 @@ private const val CALIBRATION_WALK_M = 10.0
 class SettingsViewModel(private val configs: ConfigRepository) : ViewModel() {
 
     private val _ui = MutableStateFlow(
-        SettingsUi(
-            stepK = configs.get().stepK,
-            baselineMode = configs.get().baselineMode,
-        ),
+        configs.get().let { SettingsUi(stepK = it.stepK, baselineMode = it.baselineMode) },
     )
     val ui: StateFlow<SettingsUi> = _ui.asStateFlow()
 
@@ -55,7 +52,12 @@ class SettingsViewModel(private val configs: ConfigRepository) : ViewModel() {
         val current = configs.get()
         val next = measured?.let { calibrateK(current.stepK, CALIBRATION_WALK_M, it) }
         if (next == null) {
-            _ui.update { it.copy(calibrationNote = "Enter the measured metres first.") }
+            val note = if (measured == null) {
+                "Enter the measured metres first."
+            } else {
+                "That walk would put K outside the plausible range — check the measured metres."
+            }
+            _ui.update { it.copy(calibrationNote = note) }
             return
         }
         configs.update { it.copy(stepK = next) }

@@ -21,6 +21,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import app.simt.echo.data.RouteRepository
+import app.simt.echo.model.EchoConfig
 import app.simt.echo.nav.NavPhase
 import app.simt.echo.nav.NavUi
 import app.simt.echo.platform.KeepScreenOn
@@ -50,6 +51,7 @@ fun NavigateScreen(
     onArrived: (String) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    config: EchoConfig = EchoConfig(),
 ) {
     val motion = rememberMotionSource()
     val haptics = rememberHaptics()
@@ -62,7 +64,7 @@ fun NavigateScreen(
         key = routeId,
         factory = viewModelFactory {
             addInitializer(NavigateViewModel::class) {
-                NavigateViewModel(routeId, routes, motion, haptics, onArrived)
+                NavigateViewModel(routeId, routes, motion, haptics, config, onArrived)
             }
         },
     )

@@ -36,6 +36,14 @@ class CaptureSessionTest {
         suspend fun emit(update: MotionUpdate) = flow.emit(update)
     }
 
+    private class FakeCalibratableMotion : MotionSource, StepCalibratable {
+        val flow = MutableSharedFlow<MotionUpdate>(extraBufferCapacity = 64)
+        override val updates: Flow<MotionUpdate> = flow
+        override var stepK: Double = 0.48
+        override fun start() = Unit
+        override fun stop() = Unit
+    }
+
     private class FakeCamera : CameraRecorder {
         var photoPath: Path? = null
         var videoPath: Path? = null
@@ -133,6 +141,28 @@ class CaptureSessionTest {
         assertEquals(log, drafts.loadCapture("draft-1"))
         assertEquals(listOf("draft-1"), drafts.listDraftIds())
         assertNotNull(session.hud.value)
+    }
+
+    @Test
+    fun configuredStepKReachesCalibratableMotionAtStart() = runTest {
+        // W4-02 wiring: the persisted config's K is pushed into the motion
+        // source when capture starts — calibration must not be a no-op.
+        val drafts = DraftRepository(FileStore(FakeFileSystem(), "/data".toPath()))
+        val motion = FakeCalibratableMotion()
+        val session = CaptureSession(
+            motion = motion,
+            camera = FakeCamera(),
+            haptics = FakeHaptics(),
+            drafts = drafts,
+            scope = this,
+            nowMs = { 1_762_000_000_000L },
+            newDraftId = { "draft-1" },
+            config = app.simt.echo.model.EchoConfig(stepK = 0.62),
+        )
+        session.ready()
+        session.start()
+        assertEquals(0.62, motion.stepK)
+        session.finish("Walk", "Door")
     }
 
     @Test
