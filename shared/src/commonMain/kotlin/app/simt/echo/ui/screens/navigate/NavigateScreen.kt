@@ -24,9 +24,11 @@ import app.simt.echo.data.RouteRepository
 import app.simt.echo.nav.NavPhase
 import app.simt.echo.nav.NavUi
 import app.simt.echo.platform.KeepScreenOn
+import app.simt.echo.platform.rememberCameraRecorder
 import app.simt.echo.platform.rememberHaptics
 import app.simt.echo.platform.rememberMotionSource
 import app.simt.echo.platform.rememberOnline
+import app.simt.echo.ui.components.CameraNavigateOverlay
 import app.simt.echo.ui.components.CropImage
 import app.simt.echo.ui.components.DirectionArrow
 import app.simt.echo.ui.components.DistanceReadout
@@ -35,6 +37,7 @@ import app.simt.echo.ui.components.LandmarkCard
 import app.simt.echo.ui.components.PillButton
 import app.simt.echo.ui.components.StatusChip
 import app.simt.echo.ui.components.oneDecimal
+import app.simt.echo.ui.components.overlayScrimAlpha
 
 /**
  * Navigate screen (plan §8.3 / W2-06): arrow, instruction + distance,
@@ -50,6 +53,7 @@ fun NavigateScreen(
     onArrived: (String) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    useCameraOverlay: Boolean = false,
 ) {
     val motion = rememberMotionSource()
     val haptics = rememberHaptics()
@@ -83,6 +87,19 @@ fun NavigateScreen(
             Text(text = "No saved route $routeId", style = MaterialTheme.typography.titleLarge)
             EchoButton(text = "Back", onClick = onBack, modifier = Modifier.fillMaxWidth())
         }
+        return
+    }
+
+    if (useCameraOverlay) {
+        NavigateOverlayBody(
+            nav = nav,
+            routes = routes,
+            routeId = routeId,
+            online = online,
+            legCount = viewModel.legCount,
+            viewModel = viewModel,
+            modifier = modifier,
+        )
         return
     }
 
@@ -123,6 +140,42 @@ fun NavigateScreen(
         )
         NavigateActions(nav = nav, viewModel = viewModel)
     }
+}
+
+@Composable
+private fun NavigateOverlayBody(
+    nav: NavUi,
+    routes: RouteRepository,
+    routeId: String,
+    online: Boolean,
+    legCount: Int,
+    viewModel: NavigateViewModel,
+    modifier: Modifier = Modifier,
+) {
+    val camera = rememberCameraRecorder()
+    val landmark = nav.landmark
+    val cropBytes = remember(landmark?.cropAssetId) {
+        landmark?.cropAssetId?.let { routes.readAsset(routeId, it) }
+    }
+    val distanceM = maxOf(0.0, nav.distanceToNextM)
+    CameraNavigateOverlay(
+        arrowRad = nav.arrowRad.toFloat(),
+        instruction = nav.instruction,
+        distanceText = "${oneDecimal(distanceM)} m",
+        uncertaintyText = "±${oneDecimal(nav.uncertaintyM)} m",
+        offline = !online,
+        landmarkTitle = landmark?.title,
+        landmarkCue = landmark?.cue,
+        landmarkStats = landmark?.let { "in ~${oneDecimal(distanceM)} m" },
+        cropBytes = cropBytes,
+        cropDescription = landmark?.title,
+        progress01 = nav.progress01.toFloat(),
+        legText = "Leg ${nav.legIndex + 1} of $legCount",
+        scrimAlpha = overlayScrimAlpha(distanceM),
+        preview = { camera.Preview(modifier = Modifier.fillMaxSize()) },
+        actions = { NavigateActions(nav = nav, viewModel = viewModel) },
+        modifier = modifier,
+    )
 }
 
 @Composable
