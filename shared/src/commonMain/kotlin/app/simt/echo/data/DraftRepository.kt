@@ -31,6 +31,13 @@ class DraftRepository(private val store: FileStore) {
         return EchoJson.decodeFromString<EchoRoute>(text)
     }
 
+    /**
+     * Raw bytes of a file inside draft [draftId], or null (keyframe heroes,
+     * start photo, manual crops). Reads, never writes.
+     */
+    fun readDraftFile(draftId: String, fileName: String): ByteArray? =
+        store.readBytes("$DRAFTS_DIR/$draftId/$fileName")
+
     /** Draft ids with a capture present, newest directory name last. */
     fun listDraftIds(): List<String> =
         store.list(DRAFTS_DIR).map { it.name }.sorted()

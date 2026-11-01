@@ -187,7 +187,7 @@ class CaptureSession(
         )
     }
 
-    private companion object {
+    companion object {
         const val START_PHOTO = "start.jpg"
         const val VIDEO_FILE = "video.mp4"
         const val HEARTBEAT_NS = 500_000_000L
