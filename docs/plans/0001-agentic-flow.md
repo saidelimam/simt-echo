@@ -178,7 +178,7 @@ slices. A slice is `done` only with its evidence recorded, per Plan §0.
 
 | ID | State | Slice | Tier | Lane | Depends on | Evidence |
 |---|---|---|---|---|---|---|
-| W0-01 | Queued | Repo recon: settle Track/Connect reuse + version alignment (§4) | S | A | — | — |
+| W0-01 | Complete | Repo recon: settle Track/Connect reuse + version alignment (§4) | S | A | — | f944f22542714e070e409a80a43cecda02c56a81 · check: 0 _tbd_ rows in Plan §2.1; decisions verified against simt-app source (PdrEngine StateFlows, Link String-only send, AGP 9.5.0/Kotlin 2.4.21) |
 | W0-02 | Complete | KMP scaffold (verify existing root `shared/` + `androidApp`) | F (S) | A | W0-01 | aa6d306af993833ba654563a653af16a2b82435e · test: JAVA_HOME=/Users/saidelimam/.sdkman/candidates/java/21.0.12-tem DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer ./gradlew clean :shared:testAndroidHostTest :shared:compileKotlinIosArm64 :shared:compileKotlinIosSimulatorArm64 :shared:compileTestKotlinIosSimulatorArm64 :androidApp:assembleDebug :androidApp:lintDebug (BUILD SUCCESSFUL, ScaffoldSmokeTest 2/2); worker: npm run typecheck + npm test (1/1) |
 | W0-03 | Complete | Design system + nav shell on `core/ui` conventions | F | A | W0-02 | 8f4b38ba4709fc69e8b5a087ccd7be91f92f3c83 · test: :shared:testAndroidHostTest --rerun-tasks (11/11: ScaffoldSmokeTest 2, RouteSerializationTest 3, ShellMathTest 6), :androidApp:assembleDebug, :shared:compileKotlinIosArm64, :shared:compileKotlinIosSimulatorArm64 — BUILD SUCCESSFUL |
 | W0-04 | Queued | Domain model, `FileStore`, `RouteRepository`, `L_ROUTE` fixture — contract freeze | S | A | W0-02 | — |
