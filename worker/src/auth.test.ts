@@ -52,16 +52,16 @@ describe("W0-05 auth + rate limit gate", () => {
     expect(await res.json()).toEqual({ ok: false, error: "rate_limited" });
   });
 
-  it("passes valid credentials through the gate (falls to 404, no routes yet)", async () => {
+  it("passes valid credentials through the gate (falls to 404, no such route)", async () => {
     const allowed = {
       limit: async () => ({ success: true }),
     };
     const res = await app.request(
-      "/v1/jobs",
+      "/v1/no-such-route",
       { headers: { Authorization: `Bearer ${TOKEN}` } },
       { ECHO_APP_TOKEN: TOKEN, RL: allowed } as never,
     );
-    // No jobs routes in the scaffold: reaching notFound proves the gate passed.
+    // No such route in the API: reaching notFound proves the gate passed.
     expect(res.status).toBe(404);
   });
 });
