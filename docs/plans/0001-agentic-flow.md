@@ -184,7 +184,7 @@ slices. A slice is `done` only with its evidence recorded, per Plan §0.
 | W0-04 | Queued | Domain model, `FileStore`, `RouteRepository`, `L_ROUTE` fixture — contract freeze | S | A | W0-02 | — |
 | W0-05 | In progress | Worker scaffold: Hono, auth, rate limit, R2, deploy | F (S) | D | — | — |
 | W1-01 | Queued | `TrackPlusMotionSource` adapter over `PdrEngine` (+ built-in fallback) | S | B | W0-04 | — |
-| W1-02 | Queued | `CameraRecorder`: CameraX silent video, `core/ui-camera` where it fits | F | B | W0-03 | — |
+| W1-02 | Complete | `CameraRecorder`: CameraX silent video, `core/ui-camera` where it fits | F | B | W0-03 | 00db42bf4c39d913c645aad319233a693206fbb8 · test: :shared:testAndroidHostTest (RecorderLogicTest 7/7, suite 18/18), :androidApp:assembleDebug, :shared:compileKotlinIosArm64, :shared:compileKotlinIosSimulatorArm64 — BUILD SUCCESSFUL |
 | W1-03 | Queued | Record screen + `CaptureSession` + Finish | F | B | W1-01, W1-02 | — |
 | W1-04 | Queued | `Segmenter` → draft `EchoRoute` + minimap | L (S) | B | W1-03 | — |
 | W1-05 | Queued | `MediaTools`: keyframes + crop | L (F) | B | W1-02 | — |
