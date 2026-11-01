@@ -24,7 +24,7 @@ private class StubCameraRecorder : CameraRecorder {
     private var lastOut: Path = "".toPath()
 
     @Composable
-    override fun Preview(modifier: Modifier) = Unit
+    override fun Preview(modifier: Modifier, onError: (String) -> Unit) = Unit
 
     override suspend fun takePhoto(out: Path): Path = out
 

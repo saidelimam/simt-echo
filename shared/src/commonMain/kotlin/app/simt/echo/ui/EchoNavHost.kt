@@ -13,7 +13,9 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import kotlin.random.Random
 import app.simt.echo.AppGraph
+import app.simt.echo.data.listRecoverable
 import app.simt.echo.platform.currentEpochMs
+import app.simt.echo.platform.rememberFileSharing
 import app.simt.echo.platform.rememberMediaTools
 import app.simt.echo.platform.rememberHaptics
 import app.simt.echo.ui.screens.HomeScreen
@@ -23,12 +25,12 @@ import app.simt.echo.ui.screens.detail.RouteDetailScreen
 import app.simt.echo.ui.screens.navigate.NavigateScreen
 import app.simt.echo.ui.screens.processing.ProcessingScreen
 import app.simt.echo.ui.screens.processing.ProcessingViewModel
-import app.simt.echo.ui.screens.PlaceholderScreen
-import app.simt.echo.ui.screens.PlaceholderViewModel
 import app.simt.echo.ui.screens.receive.ReceiveScreen
 import app.simt.echo.ui.screens.record.RecordScreen
 import app.simt.echo.ui.screens.review.ReviewScreen
 import app.simt.echo.ui.screens.review.ReviewViewModel
+import app.simt.echo.ui.screens.settings.SettingsScreen
+import app.simt.echo.ui.screens.settings.SettingsViewModel
 import app.simt.echo.ui.screens.share.ShareScreen
 
 /**
@@ -52,12 +54,16 @@ fun EchoNavHost(
                 draftIds = graph.draftRepository.listDraftIds(),
                 savedRoutes = graph.routeRepository.list(),
                 onOpen = navController::navigateTo,
+                recoverableDrafts = listRecoverable(graph.draftRepository),
             )
         }
-        composable<EchoRoute.Record> {
+        composable<EchoRoute.Record> { entry ->
+            val route = entry.toRoute<EchoRoute.Record>()
             RecordScreen(
                 drafts = graph.draftRepository,
                 onSaved = { navController.popBackStack() },
+                config = graph.configRepository.get(),
+                resumeDraftId = route.resumeDraftId,
             )
         }
         composable<EchoRoute.Review> { entry ->
@@ -71,6 +77,7 @@ fun EchoNavHost(
                     media = mediaTools,
                     nowMs = ::currentEpochMs,
                     newId = { "lm-${Random.nextLong()}" },
+                    api = graph.apiClient,
                 )
             }
             ReviewScreen(
@@ -119,12 +126,14 @@ fun EchoNavHost(
                 routeId = route.routeId,
                 service = graph.transferService,
                 haptics = rememberHaptics(),
+                sharing = rememberFileSharing(),
                 onClose = { navController.popBackStack() },
             )
         }
         composable<EchoRoute.Receive> {
             ReceiveScreen(
                 service = graph.transferService,
+                sharing = rememberFileSharing(),
                 onImported = { navController.navigateTo(EchoRoute.RouteDetail(it)) },
             )
         }
@@ -144,6 +153,10 @@ fun EchoNavHost(
                 routes = graph.routeRepository,
                 onArrived = { navController.navigateTo(EchoRoute.Arrived(it)) },
                 onBack = { navController.popBackStack() },
+                config = graph.configRepository.get(),
+                trials = graph.trialRepository,
+                device = graph.platform.name,
+                baselineMode = graph.configRepository.get().baselineMode,
             )
         }
         composable<EchoRoute.Arrived> { entry ->
@@ -152,11 +165,23 @@ fun EchoNavHost(
                 routeId = route.routeId,
                 routes = graph.routeRepository,
                 onDone = { navController.popBackStack(EchoRoute.Home, false) },
+                trials = graph.trialRepository,
             )
         }
         composable<EchoRoute.Settings> {
-            val vm = remember { PlaceholderViewModel("Settings", "Calibration lands in W4-02.") }
-            PlaceholderScreen(vm, "Back home", { navController.popBackStack() })
+            // Back-stack-scoped like every other screen ViewModel
+            // (review 0001 pattern; review 0002 R2 for this regression).
+            val vm: SettingsViewModel = viewModel(
+                factory = viewModelFactory {
+                    addInitializer(SettingsViewModel::class) {
+                        SettingsViewModel(graph.configRepository)
+                    }
+                },
+            )
+            SettingsScreen(
+                viewModel = vm,
+                onBack = { navController.popBackStack() },
+            )
         }
     }
 }

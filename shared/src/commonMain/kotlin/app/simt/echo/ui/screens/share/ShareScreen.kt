@@ -16,9 +16,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import app.simt.echo.platform.FileSharing
 import app.simt.echo.platform.Haptics
 import app.simt.echo.transfer.TransferService
 import app.simt.echo.ui.components.EchoButton
+import app.simt.echo.ui.components.PillButton
 import app.simt.echo.ui.components.QrCard
 import app.simt.echo.ui.components.StatusChip
 import io.github.alexzhirkevich.qrose.rememberQrCodePainter
@@ -26,17 +28,22 @@ import io.github.alexzhirkevich.qrose.rememberQrCodePainter
 /**
  * Share screen (plan §8.3 / W2-04): white QR card with the offer URI,
  * "Waiting for the other phone…" until the peer downloads, then "Sent ✓".
- * Serving stops when the screen leaves ("Share as file" is W2-07).
+ * "Share as file" (W2-07) raises the plain-file privacy warning first and
+ * only writes the `.echo` container after confirmation. Serving stops when
+ * the screen leaves.
  */
 @Composable
 fun ShareScreen(
     routeId: String,
     service: TransferService,
     haptics: Haptics,
+    sharing: FileSharing,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val viewModel = remember(routeId) { ShareViewModel(routeId, service, haptics) }
+    val viewModel = remember(routeId, sharing) {
+        ShareViewModel(routeId, service, haptics, sharing)
+    }
     val ui by viewModel.ui.collectAsState()
     DisposableEffect(service) {
         onDispose { service.stopOffer() }
@@ -81,6 +88,43 @@ fun ShareScreen(
         }
         if (ui.relayOffered) {
             StatusChip(text = "Relay code in QR — works off this Wi-Fi")
+        }
+        if (ui.fileWarning) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = "Share as file?",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    text = FILE_WARNING_COPY,
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                EchoButton(
+                    text = "Share anyway",
+                    onClick = viewModel::confirmFileShare,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                PillButton(
+                    text = "Cancel",
+                    onClick = viewModel::dismissFileShare,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+        if (ui.fileShared) {
+            StatusChip(text = "File shared ✓")
+        }
+        if (!ui.fileShared) {
+            PillButton(
+                text = "Share as file",
+                onClick = viewModel::requestFileShare,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
         EchoButton(text = "Back", onClick = onClose, modifier = Modifier.fillMaxWidth())
     }

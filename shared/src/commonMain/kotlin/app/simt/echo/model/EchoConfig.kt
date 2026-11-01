@@ -1,12 +1,35 @@
 package app.simt.echo.model
 
+import kotlinx.serialization.Serializable
+
 /**
  * Tunable thresholds (plan §5: `EchoConfig` is owned by W4-02 after W2-06;
  * algorithms read config and do not hard-code past it). Defaults are the
  * verbatim plan §6.3 values; W4-02 extends this with step-length
  * calibration — the segmenter is the first reader.
  */
+@Serializable
 data class EchoConfig(
+    /**
+     * Weinberg step-length constant (§6.2 step 3, slice W4-02).
+     * Calibrated by a taped 10 m walk (`calibrateK`); every reader —
+     * [app.simt.echo.capture.PdrEngine] via the [app.simt.echo.capture.StepCalibratable]
+     * seam, the segmenter, the navigator — scales from this one scalar.
+     */
+    val stepK: Double = 0.48,
+    /**
+     * Baseline navigation mode (§10 W4-01): landmark cards hidden,
+     * `SeeLandmark` disabled — turns and distance only. Recorded per
+     * trial by the trial writer; this is the global Settings default.
+     */
+    val baselineMode: Boolean = false,
+    /**
+     * Camera HUD on Navigate (W5-02): live preview behind the navigation
+     * HUD with the landmark crop (and its SAM mask, when persisted) over
+     * it. Opt-in, default off; never a live-frame projection — no camera
+     * pose or tracking exists in this app (review 0004 R4).
+     */
+    val cameraOverlayEnabled: Boolean = false,
     /** Resample distance per path point, metres (§6.3 step 1). */
     val resampleStepM: Double = 0.5,
     /** Circular yaw-smoothing window radius, metres (§6.3 step 2). */

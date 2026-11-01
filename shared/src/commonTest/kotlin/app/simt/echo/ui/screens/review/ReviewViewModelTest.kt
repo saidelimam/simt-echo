@@ -15,6 +15,11 @@ import app.simt.echo.model.RouteLeg
 import app.simt.echo.model.RouteNode
 import app.simt.echo.model.StartAnchor
 import app.simt.echo.model.TurnDir
+import app.simt.echo.transfer.CloudApi
+import app.simt.echo.transfer.JobPoll
+import app.simt.echo.transfer.JobRecord
+import app.simt.echo.transfer.JobStage
+import app.simt.echo.transfer.UploadFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -85,6 +90,7 @@ class ReviewViewModelTest {
         val drafts: DraftRepository,
         val routes: RouteRepository,
         val media: FakeMediaTools,
+        val api: FakeCloudApi = FakeCloudApi(),
         val draftId: String = "draft-1",
         var ids: Int = 0,
     ) {
@@ -95,8 +101,42 @@ class ReviewViewModelTest {
             media = media,
             nowMs = { 1_762_000_100_000L },
             newId = { "lm-test-${ids++}" },
+            api = api,
         )
     }
+
+    /** Scripted cloud API: the completed job returns the canned result. */
+    private class FakeCloudApi(var resultRaw: String? = null) : CloudApi {
+        var gotten: String? = null
+
+        override suspend fun submit(manifestJson: String, files: List<UploadFile>): String = "job-1"
+
+        override suspend fun get(jobId: String): JobPoll {
+            gotten = jobId
+            return JobPoll(status = "complete", stage = JobStage.COMPLETE, resultRaw = resultRaw)
+        }
+
+        override suspend fun delete(jobId: String) = Unit
+
+        override suspend fun samEnabled(): Boolean = false
+    }
+
+    private fun candidateJson(rank: Double, title: String = "Red pillar") = """
+        {"candidateId":"n1_0","title":"$title","description":"A red pillar.",
+        "cue":"Turn right at the red pillar","samPhrase":"red pillar","signText":null,
+        "privacyRisk":false,"keyframeId":"kf_n1_1","box":[412,230,590,900],
+        "frameW":720,"frameH":1280,"maskSvgPath":"M 10 20 L 30 20 L 30 40 Z",
+        "maskW":4,"maskH":3,"samConfidence":0.86,"trackability":0.78,
+        "visibleFromM":9.4,"distinctiveness":0.9,"permanence":0.95,
+        "rank":$rank,"source":"AI_GROUNDED","models":"muse-spark-1.3 + sam-3.1",
+        "evidenceKey":"jobs/job-1/sam/n1_0.txt"}""".replace("\n", "")
+
+    private fun resultJson() = """
+        {"jobId":"job-1","models":{"scout":"muse-spark-1.3","ground":"sam-3.1"},
+        "checkpoints":[
+        {"nodeId":"n1","candidates":[${candidateJson(0.2)},${candidateJson(0.9)}]},
+        {"nodeId":"n99","candidates":[${candidateJson(0.9, "Ghost")}]}],
+        "usage":{"samFrames":50,"scoutMs":1,"samMs":2}}""".replace("\n", "")
 
     private fun draftRoute(): EchoRoute = EchoRoute(
         routeId = "draft-1",
@@ -283,5 +323,119 @@ class ReviewViewModelTest {
         )
         advanceUntilIdle()
         assertEquals(true, vm.ui.value.missing)
+    }
+
+    // ── W3-07: AI suggestions ────────────────────────────────────────────
+
+    @Test
+    fun suggestionsPreselectTopCandidateFromCompletedJob() = runTest(dispatcher) {
+        val h = harness()
+        h.api.resultRaw = resultJson()
+        h.drafts.saveJobRecord("draft-1", JobRecord("job-1", "complete", 1L))
+        val vm = h.vm()
+        advanceUntilIdle()
+
+        assertEquals("job-1", h.api.gotten)
+        val ui = vm.ui.value
+        // Unknown node n99 dropped; n1 keeps both, rank-descending, top first.
+        assertEquals(listOf("n1"), ui.suggestions.keys.toList())
+        assertEquals(listOf(0.9, 0.2), ui.suggestions.getValue("n1").map { it.rank })
+        assertEquals(0, ui.suggestionIndex.getValue("n1"))
+        assertEquals("muse-spark-1.3 + sam-3.1", ui.aiModels)
+    }
+
+    @Test
+    fun noSuggestionsWithoutCompletedJob() = runTest(dispatcher) {
+        val h = harness()
+        h.api.resultRaw = resultJson()
+        val vm = h.vm()
+        advanceUntilIdle()
+
+        assertTrue(vm.ui.value.suggestions.isEmpty())
+        assertNull(vm.ui.value.aiModels)
+        assertNull(h.api.gotten)
+    }
+
+    @Test
+    fun useSuggestionMintsVerifiedLandmarkWithoutMovingGeometry() = runTest(dispatcher) {
+        val h = harness()
+        h.api.resultRaw = resultJson()
+        h.drafts.saveJobRecord("draft-1", JobRecord("job-1", "complete", 1L))
+        val vm = h.vm()
+        advanceUntilIdle()
+
+        val before = vm.ui.value
+        val nodesBefore = before.nodes.map { it.node }
+        val legsBefore = draftRoute().legs
+        val pathBefore = draftRoute().path
+
+        vm.useSuggestion("n1")
+        advanceUntilIdle()
+
+        val ui = vm.ui.value
+        val node = ui.nodes[1]
+        assertEquals(1, node.landmarks.size)
+        val landmark = node.landmarks.single()
+        assertEquals(Confirmation.CREATOR_VERIFIED, landmark.confirmation)
+        assertEquals(LandmarkSource.AI_GROUNDED, landmark.source)
+        assertEquals("Red pillar", landmark.title)
+        assertEquals("muse-spark-1.3 + sam-3.1", landmark.models)
+        assertEquals(0.86, landmark.samConfidence!!, 0.001)
+        assertEquals(listOf(landmark.id), node.node.landmarkIds)
+        assertNotNull(h.drafts.readDraftFile("draft-1", landmark.cropAssetId!!))
+        // The used option is consumed; the next-best preselects.
+        assertEquals(1, ui.suggestions.getValue("n1").size)
+        // Provenance filled; geometry untouched.
+        val saved = h.drafts.loadDraftRoute("draft-1")!!
+        assertEquals("job-1", saved.ai!!.jobId)
+        assertEquals("muse-spark-1.3", saved.ai!!.scoutModel)
+        val nodesAfter = ui.nodes.map { it.node }
+        assertEquals(nodesBefore.map { it.id }, nodesAfter.map { it.id })
+        assertEquals(nodesBefore.filter { it.id != "n1" }, nodesAfter.filter { it.id != "n1" })
+        assertEquals(
+            nodesBefore.first { it.id == "n1" }.copy(landmarkIds = listOf(landmark.id)),
+            nodesAfter.first { it.id == "n1" },
+        )
+        assertEquals(legsBefore, saved.legs)
+        assertEquals(pathBefore, saved.path)
+    }
+
+    @Test
+    fun nextAndSkipCycleSuggestions() = runTest(dispatcher) {
+        val h = harness()
+        h.api.resultRaw = resultJson()
+        h.drafts.saveJobRecord("draft-1", JobRecord("job-1", "complete", 1L))
+        val vm = h.vm()
+        advanceUntilIdle()
+
+        vm.nextSuggestion("n1")
+        advanceUntilIdle()
+        assertEquals(1, vm.ui.value.suggestionIndex.getValue("n1"))
+        vm.nextSuggestion("n1")
+        advanceUntilIdle()
+        assertEquals(0, vm.ui.value.suggestionIndex.getValue("n1"))
+
+        vm.skipSuggestions("n1")
+        advanceUntilIdle()
+        assertTrue(vm.ui.value.suggestions.isEmpty())
+        // Skipping touches nothing on disk: no landmarks, no crops.
+        assertTrue(h.drafts.loadDraftRoute("draft-1")!!.landmarks.isEmpty())
+        assertTrue(h.media.cropped.isEmpty())
+    }
+
+    @Test
+    fun unparseableResultKeepsManualFlow() = runTest(dispatcher) {
+        val h = harness()
+        h.api.resultRaw = "garbage {{{"
+        h.drafts.saveJobRecord("draft-1", JobRecord("job-1", "complete", 1L))
+        val vm = h.vm()
+        advanceUntilIdle()
+
+        assertTrue(vm.ui.value.suggestions.isEmpty())
+        assertNotNull(vm.ui.value.error)
+        // Manual editing still works underneath the error line.
+        vm.renameNode("n1", "arch")
+        advanceUntilIdle()
+        assertEquals("arch", vm.ui.value.nodes[1].node.label)
     }
 }

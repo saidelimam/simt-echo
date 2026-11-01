@@ -14,7 +14,7 @@ sealed interface EchoRoute {
     data object Home : EchoRoute
 
     @Serializable
-    data object Record : EchoRoute
+    data class Record(val resumeDraftId: String? = null) : EchoRoute
 
     @Serializable
     data class Review(val draftId: String) : EchoRoute

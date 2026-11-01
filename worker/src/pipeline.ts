@@ -5,6 +5,7 @@ import type { Env } from "./index";
 import { JobResultSchema, ManifestSchema, type JobResult, type Manifest } from "./types";
 import { putError, putProgress } from "./jobs";
 import { runScout, ScoutError, type ScoutResult } from "./scout";
+import { runGround } from "./ground";
 
 export interface PipelineParams {
   jobId: string;
@@ -16,9 +17,10 @@ const STEP_OPTS = {
   timeout: "4 minutes" as const,
 };
 
-/** Load → scout (Workers AI, W3-04) → ground → assemble. W3-05 owns
- * ground-*, W3-06 owns assemble's content; the scout step already seals its
- * compact result + raw evidence to R2 for them to consume. */
+/** Load → scout (W3-04, plus W3-09 meta-spark) → ground (W3-05) → assemble.
+ * Ground seals ranked candidates to `jobs/<id>/ground.json`; assemble (this
+ * slice, W3-06) re-sorts by §6.6 rank, attaches measured usage and seals
+ * `jobs/<id>/result.json` for the app to poll. */
 export class EchoPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
   override async run(
     event: Readonly<WorkflowEvent<PipelineParams>>,
@@ -27,9 +29,16 @@ export class EchoPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
     const { jobId } = event.payload;
     try {
       const manifest = await step.do("load", STEP_OPTS, () => loadManifest(this.env, jobId));
-      await step.do("scout", STEP_OPTS, () => runScoutStep(this.env, jobId, manifest));
-      await step.do("ground", STEP_OPTS, () => putProgress(this.env, jobId, "grounding"));
-      return await step.do("assemble", STEP_OPTS, () => assembleEmpty(this.env, jobId, manifest));
+      // Wall-clock usage for result.json (plan §10 W3-06: timings). Measured
+      // around the steps so the numbers are real even though the Workflow
+      // scheduler owns the gaps between them.
+      const t0 = Date.now();
+      const scout = await step.do("scout", STEP_OPTS, () => runScoutStep(this.env, jobId, manifest));
+      const scoutMs = Date.now() - t0;
+      const ground = await step.do("ground", STEP_OPTS, () => runGroundStep(this.env, jobId, manifest, scout));
+      return await step.do("assemble", STEP_OPTS, () =>
+        assembleFromGround(this.env, jobId, manifest, ground, { scoutMs }),
+      );
     } catch (e) {
       await putError(this.env, jobId, e instanceof Error ? e.message : String(e));
       throw e;
@@ -57,14 +66,55 @@ async function runScoutStep(env: Env, jobId: string, manifest: Manifest): Promis
   }
 }
 
-async function assembleEmpty(env: Env, jobId: string, manifest: Manifest): Promise<JobResult> {
+/**
+ * Assemble the public result (plan §7.1 step 4, slice W3-06): re-sort every
+ * checkpoint's candidates by §6.6 rank, attach measured usage, and seal
+ * `jobs/<id>/result.json`. Rank amendment (review 0004): ground computes
+ * §6.6 rank; assemble only sorts (deterministically) — recomputing here
+ * is impossible anyway, since Candidate no longer carries the §6.6
+ * inputs. Usage: `samFrames`/`samMs` are ground's measured Meta usage
+ * (vendor frames when reported, actual sends otherwise); `samMs` is
+ * absent when SAM never ran, never a step wall-time proxy. Every
+ * manifest checkpoint appears, empty when ground produced none.
+ * Exported for the slice's vitest.
+ */
+export async function assembleFromGround(
+  env: Env,
+  jobId: string,
+  manifest: Manifest,
+  ground: JobResult,
+  timings: { scoutMs: number },
+): Promise<JobResult> {
+  const groundByNode = new Map(ground.checkpoints.map((c) => [c.nodeId, c]));
   const result = JobResultSchema.parse({
+    ...ground,
     jobId,
-    models: { scout: "none", ground: "none" },
-    checkpoints: manifest.checkpoints.map((c) => ({ nodeId: c.nodeId, candidates: [] })),
-    usage: {},
+    checkpoints: manifest.checkpoints.map((cp) => {
+      const c = groundByNode.get(cp.nodeId);
+      return {
+        nodeId: cp.nodeId,
+        candidates: [...(c?.candidates ?? [])].sort(
+          (a, b) => b.rank - a.rank || (a.candidateId < b.candidateId ? -1 : 1),
+        ),
+      };
+    }),
+    usage: {
+      ...(ground.usage.samFrames ? { samFrames: ground.usage.samFrames } : {}),
+      scoutMs: Math.max(0, timings.scoutMs),
+      ...(ground.usage.samMs !== undefined ? { samMs: ground.usage.samMs } : {}),
+    },
   });
   await env.MEDIA.put(`jobs/${jobId}/result.json`, JSON.stringify(result));
   await putProgress(env, jobId, "complete");
   return result;
+}
+
+async function runGroundStep(
+  env: Env,
+  jobId: string,
+  manifest: Manifest,
+  scout: ScoutResult,
+): Promise<JobResult> {
+  await putProgress(env, jobId, "grounding");
+  return runGround(env, jobId, manifest, scout);
 }

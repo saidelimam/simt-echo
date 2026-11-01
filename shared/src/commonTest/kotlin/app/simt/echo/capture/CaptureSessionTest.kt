@@ -36,13 +36,21 @@ class CaptureSessionTest {
         suspend fun emit(update: MotionUpdate) = flow.emit(update)
     }
 
+    private class FakeCalibratableMotion : MotionSource, StepCalibratable {
+        val flow = MutableSharedFlow<MotionUpdate>(extraBufferCapacity = 64)
+        override val updates: Flow<MotionUpdate> = flow
+        override var stepK: Double = 0.48
+        override fun start() = Unit
+        override fun stop() = Unit
+    }
+
     private class FakeCamera : CameraRecorder {
         var photoPath: Path? = null
         var videoPath: Path? = null
         var stopCalls = 0
 
         @androidx.compose.runtime.Composable
-        override fun Preview(modifier: androidx.compose.ui.Modifier) = Unit
+        override fun Preview(modifier: androidx.compose.ui.Modifier, onError: (String) -> Unit) = Unit
 
         override suspend fun takePhoto(out: Path): Path {
             photoPath = out
@@ -85,6 +93,53 @@ class CaptureSessionTest {
         nowMs = { 1_762_000_000_000L },
         newDraftId = { "draft-1" },
     )
+
+    @Test
+    fun resumeReloadsAutosavedLogAndContinuesSameDraft() = runTest {
+        // Kill-mid-record, simulated: an autosaved log exists, the app died.
+        val drafts = DraftRepository(FileStore(FakeFileSystem(), "/data".toPath()))
+        drafts.saveCapture(
+            app.simt.echo.model.CaptureLog(
+                draftId = "draft-1",
+                startedAtEpochMs = 42L,
+                motionSource = "echo_builtin_pdr",
+                videoStartNs = 0L,
+                samples = listOf(
+                    app.simt.echo.model.CaptureSample(tNs = 600_000_000L, d = 0.7, yaw = 0.0, p = null),
+                ),
+                marks = listOf(app.simt.echo.model.Mark(tNs = 600_000_000L, d = 0.7, label = "Spot 1")),
+                startPhoto = "start.jpg",
+            ),
+        )
+        val motion = FakeMotion()
+        val session = newSession(motion, FakeCamera(), FakeHaptics(), drafts, this)
+
+        assertTrue(session.resume("draft-1"))
+        assertEquals(CaptureState.READY, session.state.value)
+        assertEquals(0.7, session.hud.value.distanceM)
+        assertEquals(1, session.hud.value.marks)
+
+        session.start()
+        runCurrent()
+        motion.emit(update(1_200_000_000L, 1.4, step = true, count = 1))
+        runCurrent()
+        val log = session.finish("Walk", "Door")
+
+        // Same draft, original samples first, new samples appended.
+        assertEquals("draft-1", log.draftId)
+        assertEquals(42L, log.startedAtEpochMs)
+        assertTrue(log.samples.size >= 2)
+        assertEquals(0.7, log.samples.first().d)
+        assertEquals("draft-1", drafts.loadCapture("draft-1")?.draftId)
+    }
+
+    @Test
+    fun resumeOfMissingDraftReturnsFalse() = runTest {
+        val drafts = DraftRepository(FileStore(FakeFileSystem(), "/data".toPath()))
+        val session = newSession(FakeMotion(), FakeCamera(), FakeHaptics(), drafts, this)
+        assertEquals(false, session.resume("nope"))
+        assertEquals(CaptureState.IDLE, session.state.value)
+    }
 
     @Test
     fun fullLifecycleWritesCompleteCaptureLog() = runTest {
@@ -133,6 +188,28 @@ class CaptureSessionTest {
         assertEquals(log, drafts.loadCapture("draft-1"))
         assertEquals(listOf("draft-1"), drafts.listDraftIds())
         assertNotNull(session.hud.value)
+    }
+
+    @Test
+    fun configuredStepKReachesCalibratableMotionAtStart() = runTest {
+        // W4-02 wiring: the persisted config's K is pushed into the motion
+        // source when capture starts — calibration must not be a no-op.
+        val drafts = DraftRepository(FileStore(FakeFileSystem(), "/data".toPath()))
+        val motion = FakeCalibratableMotion()
+        val session = CaptureSession(
+            motion = motion,
+            camera = FakeCamera(),
+            haptics = FakeHaptics(),
+            drafts = drafts,
+            scope = this,
+            nowMs = { 1_762_000_000_000L },
+            newDraftId = { "draft-1" },
+            config = app.simt.echo.model.EchoConfig(stepK = 0.62),
+        )
+        session.ready()
+        session.start()
+        assertEquals(0.62, motion.stepK)
+        session.finish("Walk", "Door")
     }
 
     @Test

@@ -8,6 +8,7 @@ import android.hardware.SensorManager
 import android.os.SystemClock
 import app.simt.echo.capture.ImuSample
 import app.simt.echo.capture.PdrEngine
+import app.simt.echo.capture.StepCalibratable
 import app.simt.echo.capture.PressureSample
 import app.simt.echo.capture.RotSample
 import kotlinx.coroutines.flow.Flow
@@ -22,11 +23,20 @@ import kotlinx.coroutines.flow.Flow
  * vector at game rate (~50 Hz), barometer at UI rate; sensor events feed
  * the engine directly, in delivery order.
  */
-class BuiltInPdrMotionSource(context: Context) : MotionSource {
+class BuiltInPdrMotionSource(context: Context) : MotionSource, StepCalibratable {
 
     private val sensorManager =
         context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
     private val engine = PdrEngine()
+
+    /** Calibration reaches the engine it wraps (W4-02): without this
+     * forward, `CaptureSession`'s step-K push silently no-ops on the
+     * shipping Android source. */
+    override var stepK: Double
+        get() = engine.stepK
+        set(value) {
+            engine.stepK = value
+        }
 
     override val updates: Flow<MotionUpdate> = engine.updates
 

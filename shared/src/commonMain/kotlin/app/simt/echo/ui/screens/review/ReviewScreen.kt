@@ -24,12 +24,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import app.simt.echo.ai.AiCandidate
+import app.simt.echo.ai.CandidateMerger
+import app.simt.echo.ai.MaskPath
 import app.simt.echo.media.CropBox
 import app.simt.echo.model.Landmark
 import app.simt.echo.model.NodeType
@@ -102,13 +110,23 @@ fun ReviewScreen(
             )
         }
         ui.nodes.filter { it.node.type != NodeType.START }.forEach { reviewNode ->
+            val nodeSuggestions = ui.suggestions[reviewNode.node.id].orEmpty()
+            val selected = nodeSuggestions.getOrNull(ui.suggestionIndex[reviewNode.node.id] ?: 0)
             NodeCard(
+                suggestionImage = selected?.let { ui.suggestionImages[it.candidateId] },
                 reviewNode = reviewNode,
+                suggestion = selected,
+                suggestionPosition = (ui.suggestionIndex[reviewNode.node.id] ?: 0) + 1,
+                suggestionCount = nodeSuggestions.size,
+                aiModels = ui.aiModels,
                 onLabel = { viewModel.renameNode(reviewNode.node.id, it) },
                 onCue = { viewModel.editCue(reviewNode.node.id, it) },
                 onDraw = { viewModel.openDraw(reviewNode.node.id) },
                 onEditLandmark = { id, title, cue -> viewModel.editLandmark(id, title, cue) },
                 onDeleteLandmark = viewModel::deleteLandmark,
+                onUseSuggestion = { viewModel.useSuggestion(reviewNode.node.id) },
+                onNextSuggestion = { viewModel.nextSuggestion(reviewNode.node.id) },
+                onSkipSuggestions = { viewModel.skipSuggestions(reviewNode.node.id) },
             )
         }
         ui.error?.let {
@@ -151,11 +169,19 @@ private fun StartCard(
 @Composable
 private fun NodeCard(
     reviewNode: ReviewNode,
+    suggestion: AiCandidate?,
+    suggestionImage: ByteArray? = null,
+    suggestionPosition: Int,
+    suggestionCount: Int,
+    aiModels: String?,
     onLabel: (String) -> Unit,
     onCue: (String) -> Unit,
     onDraw: () -> Unit,
     onEditLandmark: (String, String, String) -> Unit,
     onDeleteLandmark: (String) -> Unit,
+    onUseSuggestion: () -> Unit,
+    onNextSuggestion: () -> Unit,
+    onSkipSuggestions: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val node = reviewNode.node
@@ -177,6 +203,18 @@ private fun NodeCard(
             label = { Text(text = "Spoken cue") },
             modifier = Modifier.fillMaxWidth(),
         )
+        if (suggestion != null) {
+            SuggestionCard(
+                candidate = suggestion,
+                heroBytes = suggestionImage ?: reviewNode.heroBytes,
+                position = suggestionPosition,
+                count = suggestionCount,
+                aiModels = aiModels,
+                onUse = onUseSuggestion,
+                onNext = onNextSuggestion,
+                onSkip = onSkipSuggestions,
+            )
+        }
         reviewNode.landmarks.forEach { landmark ->
             LandmarkRow(
                 landmark = landmark,
@@ -185,6 +223,96 @@ private fun NodeCard(
             )
         }
         PillButton(text = "Draw landmark", onClick = onDraw, modifier = Modifier.fillMaxWidth())
+    }
+}
+
+/**
+ * One preselected AI suggestion (plan W3-07): the keyframe with the
+ * candidate box (2 dp accent stroke) and the SAM mask at 35 % accent fill,
+ * stat chips when SAM ran, the model footnote, and Use / Next / Skip.
+ * Unreviewed suggestions never enter the route, so Skip needs no export
+ * filter downstream.
+ */
+@Composable
+private fun SuggestionCard(
+    candidate: AiCandidate,
+    heroBytes: ByteArray?,
+    position: Int,
+    count: Int,
+    aiModels: String?,
+    onUse: () -> Unit,
+    onNext: () -> Unit,
+    onSkip: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        val bitmap = remember(heroBytes) { heroBytes?.let(::decodeImage) }
+        val accent = MaterialTheme.colorScheme.primary
+        val accentFill = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+        val strokePx = with(LocalDensity.current) { 2.dp.toPx() }
+        if (bitmap != null) {
+            val box = CandidateMerger.candidateCropBox(candidate)
+            val mask = candidate.maskSvgPath
+                ?.takeIf { candidate.maskW != null && candidate.maskH != null }
+                ?.let { MaskPath.parseSvgPath(it) }
+            Canvas(
+                modifier = Modifier.fillMaxWidth().height(160.dp).semantics {
+                    contentDescription = "AI suggestion: ${candidate.title}"
+                },
+            ) {
+                drawImage(
+                    image = bitmap,
+                    dstOffset = IntOffset.Zero,
+                    dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt()),
+                )
+                // Box: normalised crop mapped onto the canvas.
+                drawRect(
+                    color = accent,
+                    topLeft = Offset(box.left * size.width, box.top * size.height),
+                    size = Size(
+                        (box.right - box.left) * size.width,
+                        (box.bottom - box.top) * size.height,
+                    ),
+                    style = Stroke(width = strokePx),
+                )
+                // Mask: SVG raster px → keyframe px (kfW/maskW, kfH/maskH) →
+                // canvas px. An unreadable mask draws nothing (box-only).
+                val maskW = candidate.maskW
+                val maskH = candidate.maskH
+                if (mask != null && maskW != null && maskH != null && maskW > 0 && maskH > 0) {
+                    for (subpath in mask) {
+                        val path = Path()
+                        subpath.points.forEachIndexed { i, point ->
+                            // Float scaling: mask raster → canvas directly
+                            // (the raster covers the frame the canvas shows).
+                            val x = point.x * (size.width / maskW.toFloat())
+                            val y = point.y * (size.height / maskH.toFloat())
+                            if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                        }
+                        if (subpath.closed) path.close()
+                        drawPath(path = path, color = accentFill, style = Fill)
+                    }
+                }
+            }
+        }
+        Text(
+            text = "AI suggestion${
+                if (count > 1) " $position of $count" else ""
+            }: ${candidate.title}",
+            style = MaterialTheme.typography.titleMedium,
+        )
+        Text(text = candidate.cue, style = MaterialTheme.typography.bodyMedium)
+        CandidateMerger.statLine(candidate)?.let {
+            Text(text = it, style = MaterialTheme.typography.bodySmall)
+        }
+        aiModels?.let {
+            Text(text = "Suggested by $it", style = MaterialTheme.typography.bodySmall)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            EchoButton(text = "Use", onClick = onUse)
+            if (count > 1) PillButton(text = "Next option", onClick = onNext)
+            PillButton(text = "Skip", onClick = onSkip)
+        }
     }
 }
 

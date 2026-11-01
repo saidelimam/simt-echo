@@ -14,7 +14,9 @@ class DraftRepository(private val store: FileStore) {
         store.resolvePath("$DRAFTS_DIR/$draftId/$fileName")
 
     fun saveCapture(log: CaptureLog) {
-        store.writeText(captureFile(log.draftId), EchoJson.encodeToString(log))
+        // Atomic: the 10 s autosave is exactly what a kill mid-record
+        // leaves behind; a torn write must not destroy the last good log.
+        store.writeTextAtomic(captureFile(log.draftId), EchoJson.encodeToString(log))
     }
 
     fun loadCapture(draftId: String): CaptureLog? {

@@ -1,8 +1,10 @@
 package app.simt.echo
 
+import app.simt.echo.data.ConfigRepository
 import app.simt.echo.data.DraftRepository
 import app.simt.echo.data.FileStore
 import app.simt.echo.data.RouteRepository
+import app.simt.echo.data.TrialRepository
 import app.simt.echo.platform.PeerTransport
 import app.simt.echo.platform.Platform
 import app.simt.echo.platform.createHttpClient
@@ -40,6 +42,13 @@ class AppGraph(
     val routeRepository: RouteRepository by lazy { RouteRepository(fileStore) }
     val draftRepository: DraftRepository by lazy { DraftRepository(fileStore) }
 
+    /** Persisted tunables (W4-02): capture, navigation and Settings all
+     * read the calibrated step-K from here — never a hard-coded default. */
+    val configRepository: ConfigRepository by lazy { ConfigRepository(fileStore) }
+
+    /** Field-protocol trials (W4-01): baseline/drift logging + CSV export. */
+    val trialRepository: TrialRepository by lazy { TrialRepository(fileStore) }
+
     /** Cloud API client (W3-02): consent upload, job polling, deletion. */
     val apiClient: EchoApiClient by lazy {
         EchoApiClient(createHttpClient(), apiBaseUrl, appToken)
@@ -56,6 +65,7 @@ class AppGraph(
         TransferService(
             transport = peerTransport,
             routes = routeRepository,
+            store = fileStore,
             nowMs = { currentEpochMs() },
         )
     }

@@ -20,23 +20,28 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
+import app.simt.echo.platform.CameraPermissionGate
+import app.simt.echo.platform.FileSharing
 import app.simt.echo.platform.QrScannerView
 import app.simt.echo.transfer.TransferService
 import app.simt.echo.ui.components.EchoButton
+import app.simt.echo.ui.components.PillButton
 import app.simt.echo.ui.components.oneDecimal
 
 /**
  * Receive screen (plan §8.3 / W2-04): scanner with a rounded cutout, fetch
  * spinner, import sheet (name, length, landmarks, creator, expiry) as an
  * inline panel — no dialog windows — then Save and a Received badge.
+ * "Import file" (W2-07) feeds a picked plain `.echo` into the same sheet.
  */
 @Composable
 fun ReceiveScreen(
     service: TransferService,
+    sharing: FileSharing,
     onImported: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val viewModel = remember(service) { ReceiveViewModel(service) }
+    val viewModel = remember(service, sharing) { ReceiveViewModel(service, sharing) }
     val ui by viewModel.ui.collectAsState()
 
     Column(
@@ -67,23 +72,30 @@ fun ReceiveScreen(
 
             else -> {
                 if (!ui.fetching) {
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier
-                            .size(280.dp)
-                            .clip(RoundedCornerShape(24.dp))
-                            .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(24.dp)),
-                    ) {
-                        androidx.compose.runtime.key(ui.generation) {
-                            QrScannerView(
-                                onScanned = viewModel::onScanned,
-                                modifier = Modifier.fillMaxSize(),
-                            )
+                    CameraPermissionGate {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .size(280.dp)
+                                .clip(RoundedCornerShape(24.dp))
+                                .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(24.dp)),
+                        ) {
+                            androidx.compose.runtime.key(ui.generation) {
+                                QrScannerView(
+                                    onScanned = viewModel::onScanned,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
                         }
                     }
                     Text(
                         text = "Scan the QR on the other phone",
                         style = MaterialTheme.typography.bodyLarge,
+                    )
+                    PillButton(
+                        text = "Import file",
+                        onClick = viewModel::importFile,
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
                 if (ui.fetching) {

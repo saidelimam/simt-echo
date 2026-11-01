@@ -1,15 +1,20 @@
 import { z } from "zod";
+import { NonRetryableError } from "cloudflare:workflows";
 import type { Env } from "./index";
+import { metaResponses } from "./meta";
 import { JobIdSchema, type Checkpoint, type Manifest } from "./types";
 
-// Workers AI scout chain (plan §7.2, slice W3-04).
+// Scout chain (plan §7, slices W3-04 + W3-09).
 //
 // Generic provider plumbing: `runScout` walks SCOUT_ORDER and lets the first
-// registered, enabled provider propose candidates for every checkpoint. Only
-// `workers-ai` is registered here; `meta-spark` stays unregistered until W3-09
-// implements it, so the default `"workers-ai,meta-spark"` order degrades to
-// Workers AI alone without branching at the call site. The single model that
-// ran is recorded on the result (plan §7: the ids that ran go to result.models).
+// registered, enabled provider propose candidates. `workers-ai` proposes per
+// checkpoint (§7.2); `meta-spark` proposes for the whole job in one call
+// (§7.1, W3-09). Both share SYSTEM, the SCHEMA candidate shape, zod
+// validation and `cleanCandidates`, so Spark candidates are
+// indistinguishable in shape from W3-04 candidates downstream. A provider id
+// with no credentials is skipped without branching at the call site. The
+// single model that ran is recorded on the result (plan §7: the ids that ran
+// go to result.models).
 
 /** Verbatim SYSTEM prompt shared by every scout (plan §7.1). */
 export const SYSTEM = `You help pedestrians follow an indoor route recorded by another person. For each checkpoint you get 2–3 photos taken while walking toward it. The travel direction at each checkpoint is MEASURED BY SENSORS and given to you; never infer or change directions or distances. Propose up to 3 landmarks per checkpoint that a stranger can spot from several metres away. Prefer permanent structure: pillars, doors, elevators, stairs, ramps, signs, painted floor markings, pipes, fire equipment, distinctive walls. Never use vehicles, people, faces, license plates or temporary objects. samPhrase: 1–4 word concrete noun phrase with colour/material, no positions or verbs ("red pillar", "green exit sign", "yellow stair railing"). box: [x1,y1,x2,y2] on a 0–1000 grid of the named image. distinctiveness: how unique it is ALONG THIS ROUTE (a red pillar seen at three checkpoints is low). permanence: 1 = building structure, 0 = movable. Copy legible sign text exactly into signText, else null. Set privacyRisk true if the crop would show people, faces, plates or screens. cue: one short instruction combining the given direction and the landmark, e.g. "Turn left at the red pillar". If nothing suitable is visible, return an empty list.`;
@@ -65,6 +70,43 @@ export const ScoutResultSchema = z.object({
 export type ScoutResult = z.infer<typeof ScoutResultSchema>;
 
 /**
+ * Shared candidate JSON-schema fragment (plan §7.1 SCHEMA candidate fields).
+ * `CHECKPOINT_JSON_SCHEMA` (per-checkpoint, §7.2) and `SPARK_JSON_SCHEMA`
+ * (whole-job, §7.1) compose from it, so the wire shape cannot drift between
+ * providers; zod validates either way.
+ */
+const CANDIDATE_JSON_SCHEMA = {
+  type: "object",
+  properties: {
+    title: { type: "string" },
+    samPhrase: { type: "string" },
+    description: { type: "string" },
+    imageId: { type: "string" },
+    box: { type: "array", items: { type: "integer" }, minItems: 4, maxItems: 4 },
+    distinctiveness: { type: "number", minimum: 0, maximum: 1 },
+    permanence: { type: "number", minimum: 0, maximum: 1 },
+    signText: { type: ["string", "null"] },
+    ambiguous: { type: "boolean" },
+    privacyRisk: { type: "boolean" },
+    cue: { type: "string" },
+  },
+  required: [
+    "title",
+    "samPhrase",
+    "description",
+    "imageId",
+    "box",
+    "distinctiveness",
+    "permanence",
+    "signText",
+    "ambiguous",
+    "privacyRisk",
+    "cue",
+  ],
+  additionalProperties: false,
+} as const;
+
+/**
  * JSON Schema sent as `response_format` (plan §7.2). This is the schema form
  * of `ScoutCheckpointSchema` above: zod validates either way, so a model that
  * rejects `response_format` is retried once without it and still validated.
@@ -76,41 +118,59 @@ export const CHECKPOINT_JSON_SCHEMA = {
     candidates: {
       type: "array",
       maxItems: 3,
-      items: {
-        type: "object",
-        properties: {
-          title: { type: "string" },
-          samPhrase: { type: "string" },
-          description: { type: "string" },
-          imageId: { type: "string" },
-          box: { type: "array", items: { type: "integer" }, minItems: 4, maxItems: 4 },
-          distinctiveness: { type: "number", minimum: 0, maximum: 1 },
-          permanence: { type: "number", minimum: 0, maximum: 1 },
-          signText: { type: ["string", "null"] },
-          ambiguous: { type: "boolean" },
-          privacyRisk: { type: "boolean" },
-          cue: { type: "string" },
-        },
-        required: [
-          "title",
-          "samPhrase",
-          "description",
-          "imageId",
-          "box",
-          "distinctiveness",
-          "permanence",
-          "signText",
-          "ambiguous",
-          "privacyRisk",
-          "cue",
-        ],
-        additionalProperties: false,
-      },
+      items: CANDIDATE_JSON_SCHEMA,
     },
   },
   required: ["nodeId", "candidates"],
   additionalProperties: false,
 } as const;
+
+/** Whole-job JSON Schema (plan §7.1 SCHEMA): `checkpoints[]` of the shared
+ * item above, all properties required, `additionalProperties: false` at
+ * every level. */
+export const SPARK_JSON_SCHEMA = {
+  type: "object",
+  properties: {
+    checkpoints: { type: "array", items: CHECKPOINT_JSON_SCHEMA },
+  },
+  required: ["checkpoints"],
+  additionalProperties: false,
+} as const;
+
+/** Loosened whole-job schema for the plan's schema-rejection fallback: no
+ * `minItems`/`maxItems`, no nullable type arrays. Zod enforces the dropped
+ * constraints after parsing. */
+function loosenedSparkSchema(): object {
+  const candidate = {
+    ...CANDIDATE_JSON_SCHEMA,
+    properties: {
+      ...CANDIDATE_JSON_SCHEMA.properties,
+      box: { type: "array", items: { type: "integer" } },
+      signText: { type: "string" },
+    },
+  };
+  const item = {
+    type: "object",
+    properties: {
+      nodeId: { type: "string" },
+      candidates: { type: "array", items: candidate },
+    },
+    required: ["nodeId", "candidates"],
+    additionalProperties: false,
+  };
+  return {
+    type: "object",
+    properties: { checkpoints: { type: "array", items: item } },
+    required: ["checkpoints"],
+    additionalProperties: false,
+  };
+}
+
+/** Standard Spark model id (plan §7.1). */
+export const SPARK_MODEL = "muse-spark-1.3";
+
+/** Cap on inline images per Spark call (plan §7.1: ≤ 48). */
+export const SPARK_MAX_IMAGES = 48;
 
 // R2 layout (plan §5.3, owned by the W3-03 freeze): inputs under
 // `jobs/<id>/in/`, scout evidence under `jobs/<id>/scout/`.
@@ -136,8 +196,11 @@ interface ImageInput {
   b64: string;
 }
 
-/** A scout provider: one entry of SCOUT_ORDER. W3-09 adds `meta-spark`
- * by registering here; the chain below needs no change. */
+/** A scout provider: one entry of SCOUT_ORDER. Per-checkpoint providers
+ * (`workers-ai`) propose one checkpoint per call; whole-job providers
+ * (`meta-spark`) propose the whole manifest in one call via
+ * `BatchScoutProvider` below. The chain dispatches on registration, so
+ * adding a provider never branches the call site. */
 interface ScoutProvider {
   readonly id: string;
   enabled(env: Env): boolean;
@@ -147,6 +210,13 @@ interface ScoutProvider {
     images: ImageInput[],
     context: string,
   ): Promise<{ model: string; raw: unknown; result: ScoutCheckpoint }>;
+}
+
+/** A whole-job scout provider: one call for all keyframes (plan §7.1). */
+interface BatchScoutProvider {
+  readonly id: string;
+  enabled(env: Env): boolean;
+  proposeAll(env: Env, jobId: string, manifest: Manifest): Promise<ScoutResult>;
 }
 
 /** `workers-ai` provider: Llama 4 Scout first, then Gemma fallback
@@ -247,6 +317,195 @@ const PROVIDERS: Record<string, ScoutProvider> = {
   "workers-ai": workersAiProvider,
 };
 
+/** Whole-job `checkpoints[]` response (plan §7.1 SCHEMA). Same validation
+ * as W3-04: the item schema is shared, so Spark output is held to the same
+ * bar as Workers AI output. */
+const SparkResponseSchema = z.object({
+  checkpoints: z.array(ScoutCheckpointSchema),
+});
+
+/** Relative timing of one image against its checkpoint (shared by the
+ * single- and whole-job CONTEXT forms so the phrasing cannot drift). */
+function describeImage(id: string, tMs: number, refTMs: number): string {
+  const relMs = tMs - refTMs;
+  const when =
+    relMs === 0 ? "at the checkpoint" : `${Math.abs(relMs / 1000).toFixed(1)} s ${relMs < 0 ? "before" : "after"}`;
+  return `${id} (${when})`;
+}
+
+/** Whole-job user context (plan §7.1 CONTEXT verbatim). Only loaded images
+ * are named: the model must never reference a photo it was not sent. */
+export function sparkContext(
+  routeContext: string,
+  checkpoints: Array<{ cp: Checkpoint; loaded: Array<{ id: string; tMs: number }> }>,
+): string {
+  const lines = checkpoints.map(
+    ({ cp, loaded }) =>
+      `- ${cp.nodeId}: ${turnLabel(cp)} at ${cp.atDistanceM} m (sensor-measured). Images: ${loaded.map((l) => describeImage(l.id, l.tMs, cp.tMs)).join(", ")}.`,
+  );
+  return `Route: ${routeContext}. Checkpoints in walking order:\n${lines.join("\n")}`;
+}
+
+/** One Spark request body (plan §7.1 verbatim). `reasoning.effort` and the
+ * schema are parameters so the low→medium and strict→loosened retries share
+ * the shape instead of rebuilding it. */
+function sparkBody(
+  context: string,
+  images: Array<{ id: string; b64: string }>,
+  opts: { effort: "low" | "medium"; schema: object; instructions?: string },
+): object {
+  const content: unknown[] = [
+    { type: "input_text", text: context },
+    ...images.flatMap((img) => [
+      { type: "input_text", text: `imageId=${img.id}` },
+      { type: "input_image", image_url: `data:image/jpeg;base64,${img.b64}` },
+    ]),
+  ];
+  const system = { type: "message", role: "system", content: [{ type: "input_text", text: SYSTEM }] };
+  const user = { type: "message", role: "user", content };
+  return {
+    model: SPARK_MODEL,
+    reasoning: { effort: opts.effort },
+    ...(opts.instructions !== undefined ? { instructions: opts.instructions } : {}),
+    input: opts.instructions !== undefined ? [user] : [system, user],
+    text: { format: { type: "json_schema", name: "echo_landmarks", strict: true, schema: opts.schema } },
+  };
+}
+
+function mentionsRole(e: unknown): boolean {
+  return /\brole\b|instructions/i.test(errorMessage(e));
+}
+
+function mentionsSchema(e: unknown): boolean {
+  return /json_schema|additionalProperties|minItems|maxItems|nullable/i.test(errorMessage(e));
+}
+
+/**
+ * Muse Spark scout (plan §10 W3-09): one call for all keyframes (≤ 48
+ * images), SYSTEM/SCHEMA verbatim, `reasoning.effort = "low"`, through the
+ * generic `metaResponses` SSE collector. Same validation and
+ * `cleanCandidates` shaping as W3-04, so candidates are indistinguishable
+ * downstream. On JSON parse failure retries once with `"medium"`; on a 400
+ * that mentions the role moves SYSTEM to top-level `instructions`; on a
+ * schema rejection drops `minItems`/`maxItems` and nullable arrays and
+ * enforces them with zod. Evidence mirrors the per-checkpoint path:
+ * `scout.json` plus the single raw output under `scout/raw/spark.0.json`.
+ * Throws `ScoutError` with the closed code set — never raw model text.
+ */
+export async function metaSparkScout(env: Env, jobId: string, manifest: Manifest): Promise<ScoutResult> {
+  const images: Array<{ id: string; b64: string }> = [];
+  const loadedByCp = new Map<string, Array<{ id: string; tMs: number }>>();
+  for (const cp of manifest.checkpoints) {
+    const loaded: Array<{ id: string; tMs: number }> = [];
+    // ≤ 3 images per checkpoint (mirrors §7.2); the 48-image cap below is
+    // the plan's per-request bound.
+    for (const ref of cp.keyframes.slice(0, 3)) {
+      if (images.length >= SPARK_MAX_IMAGES) break;
+      const obj = await env.MEDIA.get(inputKey(jobId, ref.id));
+      if (!obj) continue;
+      images.push({ id: ref.id, b64: toBase64(new Uint8Array(await obj.arrayBuffer())) });
+      loaded.push({ id: ref.id, tMs: ref.tMs });
+    }
+    loadedByCp.set(cp.nodeId, loaded);
+  }
+  if (images.length === 0) {
+    throw new ScoutError(
+      "media_missing",
+      `no keyframe bytes for job ${jobId} under jobs/${jobId}/in/`,
+    );
+  }
+  const context = sparkContext(
+    manifest.routeContext,
+    manifest.checkpoints.map((cp) => ({ cp, loaded: loadedByCp.get(cp.nodeId) ?? [] })),
+  );
+
+  let text: string;
+  try {
+    try {
+      text = await metaResponses(env, sparkBody(context, images, { effort: "low", schema: SPARK_JSON_SCHEMA }));
+    } catch (e) {
+      // Plan §7.1 fallbacks, in order: role rejection moves SYSTEM to
+      // `instructions`; schema rejection loosens the schema. Anything else
+      // (including retryable 429/5xx, which the Workflow would retry)
+      // falls through to the next provider via the chain.
+      if (e instanceof NonRetryableError && mentionsRole(e) && !mentionsSchema(e)) {
+        text = await metaResponses(
+          env,
+          sparkBody(context, images, { effort: "low", schema: SPARK_JSON_SCHEMA, instructions: SYSTEM }),
+        );
+      } else if (e instanceof NonRetryableError && mentionsSchema(e)) {
+        text = await metaResponses(
+          env,
+          sparkBody(context, images, { effort: "low", schema: loosenedSparkSchema() }),
+        );
+      } else {
+        throw e;
+      }
+    }
+  } catch (e) {
+    if (e instanceof ScoutError) throw e;
+    // A retryable Meta 429/5xx must reach the Workflow's step retry as
+    // itself — wrapping it in a typed ScoutError would be converted to
+    // NonRetryableError by the pipeline and kill the job (review 0004).
+    if (isRetryableMetaError(e)) throw e;
+    throw new ScoutError("all_models_failed", `meta-spark: request failed: ${errorMessage(e)}`);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // Plan §10 W3-09: on JSON parse failure retry once with "medium".
+    try {
+      text = await metaResponses(env, sparkBody(context, images, { effort: "medium", schema: SPARK_JSON_SCHEMA }));
+      parsed = JSON.parse(text);
+    } catch (e) {
+      if (isRetryableMetaError(e)) throw e;
+      throw new ScoutError("all_models_failed", `meta-spark: unparseable output: ${errorMessage(e)}`);
+    }
+  }
+
+  let response: z.infer<typeof SparkResponseSchema>;
+  try {
+    response = SparkResponseSchema.parse(parsed);
+  } catch (e) {
+    throw new ScoutError(
+      "all_models_failed",
+      `meta-spark: schema-invalid output: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+  const knownNodes = new Set(manifest.checkpoints.map((c) => c.nodeId));
+  if (!response.checkpoints.some((c) => knownNodes.has(c.nodeId))) {
+    throw new ScoutError(
+      "all_models_failed",
+      "meta-spark: answered for unknown checkpoints; trying next provider",
+    );
+  }
+  const byNode = new Map(response.checkpoints.map((c) => [c.nodeId, c]));
+  const checkpoints = manifest.checkpoints.map((cp) => ({
+    nodeId: cp.nodeId,
+    // Same shaping as W3-04, per checkpoint: only images loaded AND sent
+    // for THIS checkpoint may be boxed — never another checkpoint's
+    // keyframes (review 0004 R2, the review-0001 invariant).
+    candidates: cleanCandidates(
+      byNode.get(cp.nodeId) ?? { nodeId: cp.nodeId, candidates: [] },
+      new Set((loadedByCp.get(cp.nodeId) ?? []).map((l) => l.id)),
+    ),
+  }));
+  const result = ScoutResultSchema.parse({ model: SPARK_MODEL, checkpoints });
+  await env.MEDIA.put(scoutKey(jobId), JSON.stringify(result));
+  await env.MEDIA.put(rawKey(jobId, "spark", 0), JSON.stringify({ model: SPARK_MODEL, raw: parsed }));
+  return result;
+}
+
+const BATCH_PROVIDERS: Record<string, BatchScoutProvider> = {
+  "meta-spark": {
+    id: "meta-spark",
+    enabled: (env) => Boolean(env.META_API_KEY),
+    proposeAll: metaSparkScout,
+  },
+};
+
 function extractResponse(out: unknown): unknown {
   if (typeof out === "object" && out !== null && "response" in out) {
     const response = (out as { response: unknown }).response;
@@ -323,14 +582,7 @@ export function checkpointContext(
   cp: Checkpoint,
   loaded: Array<{ id: string; tMs: number }>,
 ): string {
-  const imgs = loaded
-    .map(({ id, tMs }) => {
-      const relMs = tMs - cp.tMs;
-      const when =
-        relMs === 0 ? "at the checkpoint" : `${Math.abs(relMs / 1000).toFixed(1)} s ${relMs < 0 ? "before" : "after"}`;
-      return `${id} (${when})`;
-    })
-    .join(", ");
+  const imgs = loaded.map(({ id, tMs }) => describeImage(id, tMs, cp.tMs)).join(", ");
   return (
     `Route: ${routeContext}. Checkpoint in walking order: ` +
     `- ${cp.nodeId}: ${turnLabel(cp)} at ${cp.atDistanceM} m (sensor-measured). Images: ${imgs}.`
@@ -365,6 +617,16 @@ export function cleanCandidates(
  * `Candidate` rows are W3-05/W3-06's expansion. Throws `ScoutError` with a
  * closed code set — never raw model text.
  */
+/** True for the Meta transport's retryable (429/5xx) signal: a plain
+ * Error the Workflow step is supposed to retry, not a typed failure. */
+function isRetryableMetaError(e: unknown): boolean {
+  return (
+    !(e instanceof ScoutError) &&
+    !(e instanceof NonRetryableError) &&
+    errorMessage(e).startsWith("retryable meta")
+  );
+}
+
 export async function runScout(env: Env, jobId: string, manifest: Manifest): Promise<ScoutResult> {
   const order = (env.SCOUT_ORDER ?? "workers-ai")
     .split(",")
@@ -373,6 +635,26 @@ export async function runScout(env: Env, jobId: string, manifest: Manifest): Pro
   const skipped: string[] = [];
   let lastError: unknown = null;
   for (const id of order) {
+    // Whole-job providers (meta-spark) run the manifest in one call;
+    // per-checkpoint providers (workers-ai) loop below. Registration
+    // decides the shape, so the chain never branches on provider names.
+    const batch = BATCH_PROVIDERS[id];
+    if (batch) {
+      if (!batch.enabled(env)) {
+        skipped.push(id);
+        continue;
+      }
+      try {
+        return await batch.proposeAll(env, jobId, manifest);
+      } catch (e) {
+        lastError = e;
+        if (e instanceof ScoutError && e.code === "media_missing") throw e;
+        // Retryable transport errors go back to the Workflow step retry,
+        // not silently to the next provider (review 0004 R2).
+        if (isRetryableMetaError(e)) throw e;
+        continue;
+      }
+    }
     const provider = PROVIDERS[id];
     if (!provider || !provider.enabled(env)) {
       skipped.push(id);

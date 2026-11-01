@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- W2-07: FileProvider root for exported `.echo` containers. Only the
+     app-private `exports/` directory is ever exposed to other apps. -->
+<paths>
+    <files-path name="echo-exports" path="exports/" />
+</paths>

@@ -23,9 +23,11 @@ import app.simt.echo.ui.theme.EchoCardRadius
 fun DistanceReadout(
     text: String,
     modifier: Modifier = Modifier,
+    color: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color.Unspecified,
 ) {
     Text(
         text = text,
+        color = color,
         style = MaterialTheme.typography.displayLarge.copy(
             fontFeatureSettings = "tnum",
         ),
@@ -83,6 +85,14 @@ fun LandmarkCard(
 fun oneDecimal(value: Double): String {
     val tenths = (value * 10).toLong()
     return "${tenths / 10}.${tenths % 10}"
+}
+
+/** Three-decimal display for the step constant (K ≈ 0.480). Same truncation pattern as [oneDecimal]. */
+fun threeDecimals(value: Double): String {
+    val thousandths = (value * 1000).toLong()
+    val whole = thousandths / 1000
+    val frac = (thousandths % 1000).toString().padStart(3, '0')
+    return "$whole.$frac"
 }
 
 /**
