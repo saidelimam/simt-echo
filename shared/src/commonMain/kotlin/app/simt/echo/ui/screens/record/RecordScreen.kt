@@ -25,6 +25,8 @@ import androidx.compose.ui.unit.dp
 import app.simt.echo.capture.CaptureSession
 import app.simt.echo.capture.CaptureState
 import app.simt.echo.data.DraftRepository
+import app.simt.echo.platform.CameraPermissionGate
+import app.simt.echo.platform.KeepScreenOn
 import app.simt.echo.platform.currentEpochMs
 import app.simt.echo.platform.rememberCameraRecorder
 import app.simt.echo.platform.rememberHaptics
@@ -43,6 +45,9 @@ import kotlin.random.Random
  * Record screen (plan §8.3 / W1-03): live preview, giant distance,
  * Mark spot, long-press Finish, then the finish form (route name +
  * destination) as an inline panel — no dialog windows.
+ *
+ * W4-03: keeps the screen on while recording and fails closed behind
+ * [CameraPermissionGate] (denied camera shows rationale, never a crash).
  */
 @Composable
 fun RecordScreen(
@@ -67,47 +72,50 @@ fun RecordScreen(
     val viewModel = remember(session) { RecordViewModel(session) }
     val uiState by viewModel.uiState.collectAsState()
     LaunchedEffect(Unit) { viewModel.onPreviewReady() }
+    KeepScreenOn()
 
-    Box(modifier = modifier.fillMaxSize()) {
-        camera.Preview(modifier = Modifier.fillMaxSize())
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(24.dp),
-            verticalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                StatusChip(text = "${formatElapsed(uiState.hud.elapsedMs)}")
-                StatusChip(text = "${uiState.hud.steps} steps")
-                if (uiState.hud.marks > 0) StatusChip(text = "${uiState.hud.marks} spots")
-            }
+    CameraPermissionGate {
+        Box(modifier = modifier.fillMaxSize()) {
+            camera.Preview(modifier = Modifier.fillMaxSize())
             Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(24.dp),
+                verticalArrangement = Arrangement.SpaceBetween,
             ) {
-                DistanceReadout(text = "${oneDecimal(uiState.hud.distanceM)} m")
-                when (uiState.state) {
-                    CaptureState.READY -> RoundActionButton(
-                        text = "Start",
-                        onClick = viewModel::start,
-                    )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StatusChip(text = "${formatElapsed(uiState.hud.elapsedMs)}")
+                    StatusChip(text = "${uiState.hud.steps} steps")
+                    if (uiState.hud.marks > 0) StatusChip(text = "${uiState.hud.marks} spots")
+                }
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    DistanceReadout(text = "${oneDecimal(uiState.hud.distanceM)} m")
+                    when (uiState.state) {
+                        CaptureState.READY -> RoundActionButton(
+                            text = "Start",
+                            onClick = viewModel::start,
+                        )
 
-                    CaptureState.RECORDING -> {
-                        PillButton(text = "Mark spot", onClick = viewModel::mark)
-                        FinishButton(onFinish = viewModel::beginFinish)
+                        CaptureState.RECORDING -> {
+                            PillButton(text = "Mark spot", onClick = viewModel::mark)
+                            FinishButton(onFinish = viewModel::beginFinish)
+                        }
+
+                        CaptureState.FINISHING, CaptureState.SAVED -> FinishForm(
+                            onSave = { name, destination ->
+                                viewModel.finish(name, destination, onSaved)
+                            },
+                        )
+
+                        else -> Text(
+                            text = "Stand at the start, face where you'll walk",
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
                     }
-
-                    CaptureState.FINISHING, CaptureState.SAVED -> FinishForm(
-                        onSave = { name, destination ->
-                            viewModel.finish(name, destination, onSaved)
-                        },
-                    )
-
-                    else -> Text(
-                        text = "Stand at the start, face where you'll walk",
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
                 }
             }
         }

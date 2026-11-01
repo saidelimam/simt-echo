@@ -20,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
+import app.simt.echo.platform.CameraPermissionGate
 import app.simt.echo.platform.QrScannerView
 import app.simt.echo.transfer.TransferService
 import app.simt.echo.ui.components.EchoButton
@@ -67,18 +68,20 @@ fun ReceiveScreen(
 
             else -> {
                 if (!ui.fetching) {
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier
-                            .size(280.dp)
-                            .clip(RoundedCornerShape(24.dp))
-                            .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(24.dp)),
-                    ) {
-                        androidx.compose.runtime.key(ui.generation) {
-                            QrScannerView(
-                                onScanned = viewModel::onScanned,
-                                modifier = Modifier.fillMaxSize(),
-                            )
+                    CameraPermissionGate {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .size(280.dp)
+                                .clip(RoundedCornerShape(24.dp))
+                                .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(24.dp)),
+                        ) {
+                            androidx.compose.runtime.key(ui.generation) {
+                                QrScannerView(
+                                    onScanned = viewModel::onScanned,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
                         }
                     }
                     Text(
