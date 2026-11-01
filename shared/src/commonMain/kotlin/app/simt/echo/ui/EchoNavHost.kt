@@ -23,12 +23,13 @@ import app.simt.echo.ui.screens.detail.RouteDetailScreen
 import app.simt.echo.ui.screens.navigate.NavigateScreen
 import app.simt.echo.ui.screens.processing.ProcessingScreen
 import app.simt.echo.ui.screens.processing.ProcessingViewModel
-import app.simt.echo.ui.screens.PlaceholderScreen
-import app.simt.echo.ui.screens.PlaceholderViewModel
 import app.simt.echo.ui.screens.receive.ReceiveScreen
 import app.simt.echo.ui.screens.record.RecordScreen
 import app.simt.echo.ui.screens.review.ReviewScreen
 import app.simt.echo.ui.screens.review.ReviewViewModel
+import app.simt.echo.data.ConfigRepository
+import app.simt.echo.ui.screens.settings.SettingsScreen
+import app.simt.echo.ui.screens.settings.SettingsViewModel
 import app.simt.echo.ui.screens.share.ShareScreen
 
 /**
@@ -155,8 +156,11 @@ fun EchoNavHost(
             )
         }
         composable<EchoRoute.Settings> {
-            val vm = remember { PlaceholderViewModel("Settings", "Calibration lands in W4-02.") }
-            PlaceholderScreen(vm, "Back home", { navController.popBackStack() })
+            val vm = remember { SettingsViewModel(ConfigRepository(graph.fileStore)) }
+            SettingsScreen(
+                viewModel = vm,
+                onBack = { navController.popBackStack() },
+            )
         }
     }
 }

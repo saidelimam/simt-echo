@@ -85,6 +85,14 @@ fun oneDecimal(value: Double): String {
     return "${tenths / 10}.${tenths % 10}"
 }
 
+/** Three-decimal display for the step constant (K ≈ 0.480). Same truncation pattern as [oneDecimal]. */
+fun threeDecimals(value: Double): String {
+    val thousandths = (value * 1000).toLong()
+    val whole = thousandths / 1000
+    val frac = (thousandths % 1000).toString().padStart(3, '0')
+    return "$whole.$frac"
+}
+
 /**
  * Vertical route timeline (plan Review screen): one row per node chip,
  * e.g. "Turn left · 23 m". Stateless; progress highlighting is W2-06.
