@@ -59,6 +59,13 @@ kotlin {
         }
         androidMain.dependencies {
             implementation(libs.androidx.activity.compose)
+            // W1-02 CameraRecorder (CameraX). ImageCapture ships inside
+            // camera-core; preview uses camera-compose's CameraXViewfinder.
+            implementation(libs.camerax.core)
+            implementation(libs.camerax.camera2)
+            implementation(libs.camerax.lifecycle)
+            implementation(libs.camerax.video)
+            implementation(libs.camerax.compose)
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
