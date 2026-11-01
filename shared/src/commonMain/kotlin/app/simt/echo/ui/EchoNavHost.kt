@@ -11,6 +11,7 @@ import androidx.navigation.toRoute
 import kotlin.random.Random
 import app.simt.echo.AppGraph
 import app.simt.echo.platform.currentEpochMs
+import app.simt.echo.platform.rememberMediaTools
 import app.simt.echo.platform.rememberHaptics
 import app.simt.echo.ui.screens.HomeScreen
 import app.simt.echo.ui.screens.detail.RouteDetailScreen
@@ -53,12 +54,13 @@ fun EchoNavHost(
         }
         composable<EchoRoute.Review> { entry ->
             val route = entry.toRoute<EchoRoute.Review>()
-            val viewModel = remember(route.draftId) {
+            val mediaTools = rememberMediaTools()
+            val viewModel = remember(route.draftId, mediaTools) {
                 ReviewViewModel(
                     draftId = route.draftId,
                     drafts = graph.draftRepository,
                     routes = graph.routeRepository,
-                    media = graph.mediaTools,
+                    media = mediaTools,
                     nowMs = ::currentEpochMs,
                     newId = { "lm-${Random.nextLong()}" },
                 )

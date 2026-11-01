@@ -3,9 +3,7 @@ package app.simt.echo
 import app.simt.echo.data.DraftRepository
 import app.simt.echo.data.FileStore
 import app.simt.echo.data.RouteRepository
-import app.simt.echo.media.MediaTools
 import app.simt.echo.platform.PeerTransport
-import app.simt.echo.platform.createMediaTools
 import app.simt.echo.platform.Platform
 import app.simt.echo.platform.createPeerTransport
 import app.simt.echo.platform.createPlatform
@@ -32,9 +30,6 @@ class AppGraph(
 
     val routeRepository: RouteRepository by lazy { RouteRepository(fileStore) }
     val draftRepository: DraftRepository by lazy { DraftRepository(fileStore) }
-
-    /** Frame extraction + cropping for Review keyframes and crops (W2-01). */
-    val mediaTools: MediaTools by lazy { createMediaTools() }
 
     /** LAN bundle transport + offer/receive service (W2-03). */
     val peerTransport: PeerTransport by lazy { createPeerTransport() }

@@ -3,6 +3,7 @@ package app.simt.echo.ui.screens.review
 import app.simt.echo.data.DraftRepository
 import app.simt.echo.data.FileStore
 import app.simt.echo.data.RouteRepository
+import app.simt.echo.media.ClipInfo
 import app.simt.echo.media.CropBox
 import app.simt.echo.media.MediaTools
 import app.simt.echo.model.Confirmation
@@ -64,6 +65,18 @@ class ReviewViewModelTest {
             cropped += input to box
             out.parent?.let { fileSystem.createDirectories(it) }
             fileSystem.write(out) { write(cropBytes) }
+        }
+
+        override suspend fun cutClip(
+            video: Path,
+            startMs: Long,
+            endMs: Long,
+            maxFps: Int,
+            out: Path,
+        ): ClipInfo {
+            out.parent?.let { fileSystem.createDirectories(it) }
+            fileSystem.write(out) { write(cropBytes) }
+            return ClipInfo(out, frameCount = 0, durationMs = endMs - startMs)
         }
     }
 

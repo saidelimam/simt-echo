@@ -7,6 +7,7 @@ import app.simt.echo.model.NodeType
 import app.simt.echo.model.RouteNode
 import kotlinx.serialization.Serializable
 import okio.Path
+import kotlin.math.roundToInt
 
 /**
  * Silent video clip metadata (implementation plan W3-01). [fps] is derived:
@@ -100,7 +101,7 @@ fun clipWindow(tMs: Long, durationMs: Long? = null): ClipWindow {
  * <levels> level changes" (plan W3-01). Length is rounded to whole metres.
  */
 fun routeContext(route: EchoRoute): String {
-    val len = Math.round(route.totalLengthM).toInt()
+    val len = route.totalLengthM.roundToInt()
     val turns = route.nodes.count { it.type == NodeType.TURN }
     val levels = route.nodes.count { it.type == NodeType.LEVEL_CHANGE }
     return "Indoor walk, $len m, $turns turns, $levels level changes"
