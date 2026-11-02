@@ -4,11 +4,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -27,6 +30,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.testTag
@@ -122,7 +126,10 @@ fun CosmosPrimaryButton(
     }
 }
 
-/** Secondary command: boundary outline, pairs with the primary. Never two primaries. */
+/**
+ * Secondary command: boundary outline, pairs with the primary. Never two
+ * primaries. [icon] is a decorative leading mark — the label names it.
+ */
 @Composable
 fun CosmosSecondaryButton(
     label: String,
@@ -130,6 +137,7 @@ fun CosmosSecondaryButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     loading: Boolean = false,
+    icon: ImageVector? = null,
 ) {
     val shape = MaterialTheme.shapes.small
     val extras = EchoExtras
@@ -155,6 +163,10 @@ fun CosmosSecondaryButton(
                     .semantics { contentDescription = "$label loading" },
             )
         } else {
+            if (icon != null) {
+                Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+            }
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelLarge,

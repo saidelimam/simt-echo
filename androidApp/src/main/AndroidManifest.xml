@@ -16,6 +16,7 @@
         android:label="ECHO"
         android:icon="@mipmap/ic_launcher"
         android:theme="@style/Theme.Echo"
+        android:enableOnBackInvokedCallback="true"
         android:allowBackup="false"
         android:supportsRtl="true">
 

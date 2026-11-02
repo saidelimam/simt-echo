@@ -26,6 +26,8 @@ import app.simt.echo.ui.components.CosmosPrimaryButton
 import app.simt.echo.ui.components.CosmosSecondaryButton
 import app.simt.echo.ui.copy.MISSING_ROUTE_ERROR
 import app.simt.echo.ui.copy.UNTITLED_WALK
+import app.simt.echo.ui.motion.echoSharedElement
+import app.simt.echo.ui.motion.sigilSharedKey
 import app.simt.echo.ui.sigil.RouteSigil
 import app.simt.echo.ui.sigil.routeSigil
 import kotlinx.coroutines.launch
@@ -97,7 +99,12 @@ fun RouteDetailScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            RouteSigil(geometry = sigil, sigilSize = 144.dp, trace = true)
+            RouteSigil(
+                geometry = sigil,
+                sigilSize = 144.dp,
+                trace = true,
+                modifier = Modifier.echoSharedElement(sigilSharedKey(routeId)),
+            )
             Text(
                 text = route.name.ifEmpty { UNTITLED_WALK },
                 style = MaterialTheme.typography.headlineSmall,

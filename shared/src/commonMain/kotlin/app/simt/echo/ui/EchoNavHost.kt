@@ -1,6 +1,10 @@
 package app.simt.echo.ui
 
+import androidx.compose.animation.AnimatedContentScope
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -11,12 +15,13 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import androidx.navigation.NavBackStackEntry
+import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
-import kotlin.random.Random
 import app.simt.echo.AppGraph
 import app.simt.echo.capture.ReplayMotionSource
 import app.simt.echo.capture.captureLogForRoute
@@ -27,11 +32,9 @@ import app.simt.echo.platform.rememberFileSharing
 import app.simt.echo.platform.rememberHaptics
 import app.simt.echo.platform.rememberMediaTools
 import app.simt.echo.platform.rememberMotionSource
-import app.simt.echo.ui.shell.EchoShell
-import app.simt.echo.ui.shell.echoEnterTransition
-import app.simt.echo.ui.shell.echoExitTransition
-import app.simt.echo.ui.shell.shellConfigFor
 import app.simt.echo.ui.atmosphere.cosmosMotionTier
+import app.simt.echo.ui.motion.LocalEchoDestinationScope
+import app.simt.echo.ui.motion.LocalEchoSharedScope
 import app.simt.echo.ui.screens.HomeScreen
 import app.simt.echo.ui.screens.align.AlignScreen
 import app.simt.echo.ui.screens.arrived.ArrivedScreen
@@ -46,12 +49,20 @@ import app.simt.echo.ui.screens.review.ReviewViewModel
 import app.simt.echo.ui.screens.settings.SettingsScreen
 import app.simt.echo.ui.screens.settings.SettingsViewModel
 import app.simt.echo.ui.screens.share.ShareScreen
+import app.simt.echo.ui.shell.EchoShell
+import app.simt.echo.ui.shell.echoEnterTransition
+import app.simt.echo.ui.shell.echoExitTransition
+import app.simt.echo.ui.shell.echoPopEnterTransition
+import app.simt.echo.ui.shell.echoPopExitTransition
+import app.simt.echo.ui.shell.shellConfigFor
+import kotlin.random.Random
 
 /**
  * Navigation shell (plan §8.2). This file is owned by Lane A: screens
  * register destinations here through their owning slices; nobody edits
  * the graph to add screen content.
  */
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun EchoNavHost(
     graph: AppGraph,
@@ -74,18 +85,23 @@ fun EchoNavHost(
         receiveEnabled = currentRoute !is EchoRoute.Receive,
         modifier = modifier,
     ) {
+    // Shared elements (W13-02): one transition scope over the whole graph,
+    // so a route's sigil can fly from its Home record to RouteDetail.
+    SharedTransitionLayout {
+    CompositionLocalProvider(LocalEchoSharedScope provides this) {
     NavHost(
         navController = navController,
         startDestination = EchoRoute.Home,
         modifier = Modifier,
-        // Route-change motif (Cosmos §4.5, freeze §7 durations): the tier
-        // is read once per composition; STATIC settles with no motion.
+        // Route-change motif (Cosmos §4.5, Luminous §3 springs): forward
+        // enters from the end edge, back returns from the start edge; the
+        // tier is read once per composition; STATIC settles with no motion.
         enterTransition = { echoEnterTransition(tier) },
         exitTransition = { echoExitTransition(tier) },
-        popEnterTransition = { echoEnterTransition(tier) },
-        popExitTransition = { echoExitTransition(tier) },
+        popEnterTransition = { echoPopEnterTransition(tier) },
+        popExitTransition = { echoPopExitTransition(tier) },
     ) {
-        composable<EchoRoute.Home> {
+        echoDestination<EchoRoute.Home> {
             LaunchedEffect(Unit) { currentRoute = EchoRoute.Home }
             val draftIds = graph.draftRepository.listDraftIds()
             HomeScreen(
@@ -96,7 +112,7 @@ fun EchoNavHost(
                 recoverableDrafts = listRecoverable(graph.draftRepository),
             )
         }
-        composable<EchoRoute.Record> { entry ->
+        echoDestination<EchoRoute.Record> { entry ->
             val route = entry.toRoute<EchoRoute.Record>()
             LaunchedEffect(route) { currentRoute = route }
             RecordScreen(
@@ -106,7 +122,7 @@ fun EchoNavHost(
                 resumeDraftId = route.resumeDraftId,
             )
         }
-        composable<EchoRoute.Review> { entry ->
+        echoDestination<EchoRoute.Review> { entry ->
             val route = entry.toRoute<EchoRoute.Review>()
             LaunchedEffect(route) { currentRoute = route }
             val mediaTools = rememberMediaTools()
@@ -134,7 +150,7 @@ fun EchoNavHost(
                 onFindLandmarks = { navController.navigateTo(EchoRoute.Processing(route.draftId)) },
             )
         }
-        composable<EchoRoute.Processing> { entry ->
+        echoDestination<EchoRoute.Processing> { entry ->
             val route = entry.toRoute<EchoRoute.Processing>()
             LaunchedEffect(route) { currentRoute = route }
             val mediaTools = rememberMediaTools()
@@ -160,7 +176,7 @@ fun EchoNavHost(
                 onDone = { navController.popBackStack() },
             )
         }
-        composable<EchoRoute.RouteDetail> { entry ->
+        echoDestination<EchoRoute.RouteDetail> { entry ->
             val route = entry.toRoute<EchoRoute.RouteDetail>()
             LaunchedEffect(route) { currentRoute = route }
             RouteDetailScreen(
@@ -176,7 +192,7 @@ fun EchoNavHost(
                 transferService = graph.transferService,
             )
         }
-        composable<EchoRoute.Share> { entry ->
+        echoDestination<EchoRoute.Share> { entry ->
             val route = entry.toRoute<EchoRoute.Share>()
             LaunchedEffect(route) { currentRoute = route }
             ShareScreen(
@@ -187,7 +203,7 @@ fun EchoNavHost(
                 onClose = { navController.popBackStack() },
             )
         }
-        composable<EchoRoute.Receive> {
+        echoDestination<EchoRoute.Receive> {
             LaunchedEffect(Unit) { currentRoute = EchoRoute.Receive }
             ReceiveScreen(
                 service = graph.transferService,
@@ -195,7 +211,7 @@ fun EchoNavHost(
                 onImported = { navController.navigateTo(EchoRoute.RouteDetail(it)) },
             )
         }
-        composable<EchoRoute.Align> { entry ->
+        echoDestination<EchoRoute.Align> { entry ->
             val route = entry.toRoute<EchoRoute.Align>()
             LaunchedEffect(route) { currentRoute = route }
             AlignScreen(
@@ -205,7 +221,7 @@ fun EchoNavHost(
                 onBack = { navController.popBackStack() },
             )
         }
-        composable<EchoRoute.Navigate> { entry ->
+        echoDestination<EchoRoute.Navigate> { entry ->
             val route = entry.toRoute<EchoRoute.Navigate>()
             LaunchedEffect(route) { currentRoute = route }
             // W7-04 Simulate: replay the saved geometry instead of the
@@ -234,7 +250,7 @@ fun EchoNavHost(
                 motionSource = motion,
             )
         }
-        composable<EchoRoute.Arrived> { entry ->
+        echoDestination<EchoRoute.Arrived> { entry ->
             val route = entry.toRoute<EchoRoute.Arrived>()
             LaunchedEffect(route) { currentRoute = route }
             ArrivedScreen(
@@ -244,7 +260,7 @@ fun EchoNavHost(
                 trials = graph.trialRepository,
             )
         }
-        composable<EchoRoute.Settings> {
+        echoDestination<EchoRoute.Settings> {
             LaunchedEffect(Unit) { currentRoute = EchoRoute.Settings }
             val sharing = rememberFileSharing()
             // Back-stack-scoped like every other screen ViewModel
@@ -271,6 +287,17 @@ fun EchoNavHost(
             )
         }
     }
+    }
+    }
+    }
+}
+
+/** A destination that exposes its enter/exit scope to `echoSharedElement` (W13-02). */
+private inline fun <reified T : Any> NavGraphBuilder.echoDestination(
+    noinline content: @Composable AnimatedContentScope.(NavBackStackEntry) -> Unit,
+) {
+    composable<T> { entry ->
+        CompositionLocalProvider(LocalEchoDestinationScope provides this) { content(entry) }
     }
 }
 

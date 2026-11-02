@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -36,13 +37,14 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import app.simt.echo.ui.EchoRoute
 import app.simt.echo.ui.atmosphere.CosmosMotionDurations
-import app.simt.echo.ui.atmosphere.CosmosMotionEasings
 import app.simt.echo.ui.atmosphere.CosmosMotionTier
 import app.simt.echo.ui.atmosphere.EchoField
 import app.simt.echo.ui.atmosphere.EchoRippleState
 import app.simt.echo.ui.atmosphere.LocalEchoRipples
 import app.simt.echo.ui.atmosphere.cosmosMotionTier
 import app.simt.echo.ui.brand.EchoMark
+import app.simt.echo.ui.icons.EchoIcons
+import app.simt.echo.ui.motion.LuminousSprings
 import app.simt.echo.ui.components.CosmosIconButton
 import app.simt.echo.ui.components.CosmosSecondaryButton
 
@@ -116,28 +118,39 @@ fun shellTransitionDurationMs(tier: CosmosMotionTier): Int = when (tier) {
     CosmosMotionTier.STATIC -> 0
 }
 
-/** Route-change enter: fade (+ short horizontal travel on FULL only). */
-fun echoEnterTransition(tier: CosmosMotionTier): EnterTransition {
-    val ms = shellTransitionDurationMs(tier)
-    if (ms <= 0) return EnterTransition.None
-    return if (tier == CosmosMotionTier.FULL) {
-        fadeIn(tween(ms, easing = CosmosMotionEasings.Enter)) +
-            slideInHorizontally(tween(ms, easing = CosmosMotionEasings.Enter)) { it / 8 }
-    } else {
-        fadeIn(tween(ms))
-    }
+/**
+ * Route-change motion (W13-02, luminous-freeze §3): FULL travels on the
+ * [LuminousSprings.spatialSlow] spring with a spring fade, so a back
+ * gesture that interrupts a push retargets instead of jumping. Forward
+ * enters from the right; [echoPopEnterTransition] / [echoPopExitTransition]
+ * mirror it so going back returns from the left. REDUCED is a short fade
+ * with no travel; STATIC settles immediately.
+ */
+fun echoEnterTransition(tier: CosmosMotionTier): EnterTransition = enter(tier, fromStart = false)
+
+/** Forward exit: the screen being left drifts toward the start edge. */
+fun echoExitTransition(tier: CosmosMotionTier): ExitTransition = exit(tier, towardStart = true)
+
+/** Back enter: the previous screen returns from the start edge. */
+fun echoPopEnterTransition(tier: CosmosMotionTier): EnterTransition = enter(tier, fromStart = true)
+
+/** Back exit: the dismissed screen leaves toward the end edge. */
+fun echoPopExitTransition(tier: CosmosMotionTier): ExitTransition = exit(tier, towardStart = false)
+
+private fun enter(tier: CosmosMotionTier, fromStart: Boolean): EnterTransition = when (tier) {
+    CosmosMotionTier.STATIC -> EnterTransition.None
+    CosmosMotionTier.REDUCED -> fadeIn(tween(shellTransitionDurationMs(tier)))
+    CosmosMotionTier.FULL ->
+        fadeIn(LuminousSprings.effectsDefault()) +
+            slideInHorizontally(LuminousSprings.spatialSlow()) { if (fromStart) -it / 6 else it / 6 }
 }
 
-/** Route-change exit: mirror of [echoEnterTransition]. */
-fun echoExitTransition(tier: CosmosMotionTier): ExitTransition {
-    val ms = shellTransitionDurationMs(tier)
-    if (ms <= 0) return ExitTransition.None
-    return if (tier == CosmosMotionTier.FULL) {
-        fadeOut(tween(ms, easing = CosmosMotionEasings.Exit)) +
-            slideOutHorizontally(tween(ms, easing = CosmosMotionEasings.Exit)) { it / 8 }
-    } else {
-        fadeOut(tween(ms))
-    }
+private fun exit(tier: CosmosMotionTier, towardStart: Boolean): ExitTransition = when (tier) {
+    CosmosMotionTier.STATIC -> ExitTransition.None
+    CosmosMotionTier.REDUCED -> fadeOut(tween(shellTransitionDurationMs(tier)))
+    CosmosMotionTier.FULL ->
+        fadeOut(LuminousSprings.effectsDefault()) +
+            slideOutHorizontally(LuminousSprings.spatialSlow()) { if (towardStart) -it / 10 else it / 6 }
 }
 
 /**
@@ -214,22 +227,12 @@ private fun TopChrome(
             EchoChrome.BACK -> CosmosIconButton(
                 onClick = onBack,
                 contentDescription = "Back",
-                icon = {
-                    Text(
-                        text = "←",
-                        style = MaterialTheme.typography.titleLarge,
-                    )
-                },
+                icon = { Icon(EchoIcons.Back, contentDescription = null) },
             )
             EchoChrome.CLOSE -> CosmosIconButton(
                 onClick = onClose,
                 contentDescription = "Close",
-                icon = {
-                    Text(
-                        text = "×",
-                        style = MaterialTheme.typography.titleLarge,
-                    )
-                },
+                icon = { Icon(EchoIcons.Close, contentDescription = null) },
             )
             EchoChrome.NONE -> Unit
         }
@@ -263,12 +266,7 @@ private fun TopChrome(
             CosmosIconButton(
                 onClick = onSettings,
                 contentDescription = "Settings",
-                icon = {
-                    Text(
-                        text = "⚙",
-                        style = MaterialTheme.typography.titleLarge,
-                    )
-                },
+                icon = { Icon(EchoIcons.Settings, contentDescription = null) },
             )
         }
     }
@@ -292,12 +290,14 @@ private fun PrimaryDeck(
     ) {
         CosmosSecondaryButton(
             label = "Record",
+            icon = EchoIcons.Record,
             onClick = onRecord,
             enabled = recordEnabled,
             modifier = Modifier.weight(1f).testTag(EchoShellRecordTag),
         )
         CosmosSecondaryButton(
             label = "Receive",
+            icon = EchoIcons.Receive,
             onClick = onReceive,
             enabled = receiveEnabled,
             modifier = Modifier.weight(1f).testTag(EchoShellReceiveTag),
