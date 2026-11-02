@@ -221,6 +221,10 @@ export type JobBudget = z.infer<typeof JobBudgetSchema>;
 export const CreateJobV11RequestSchema = z.object({
   manifest: ManifestSchema,
   uploadId: z.string().min(1).optional(),
+  // W11-09 ready-on-arrival: per-window upload sessions staged during the
+  // walk; Finish creates the job against all of them. Never alongside
+  // uploadId — one addressing mode per create.
+  uploadIds: z.array(z.string().min(1)).min(1).max(12).optional(),
   budget: JobBudgetSchema.optional(),
   idempotencyKey: z.string().min(1).max(128).optional(),
   resumeOf: z.string().min(1).optional(),

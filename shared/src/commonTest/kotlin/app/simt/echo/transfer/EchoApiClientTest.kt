@@ -261,6 +261,48 @@ class EchoApiClientTest {
     }
 
     @Test
+    fun createJobFromStagedSendsUploadIds() = runTest {
+        var path = ""
+        var body = ""
+        val api = client({ request ->
+            path = request.url.encodedPath
+            body = request.body.toByteArray().decodeToString()
+            respond("""{"ok":true,"jobId":"job-9"}""", HttpStatusCode.Accepted)
+        })
+        val jobId = api.createJobFromStaged("""{"schema":1}""", listOf("up-1", "up-2"), "idem-walk-1")
+        assertEquals("job-9", jobId)
+        assertEquals("/v1/jobs", path)
+        assertTrue(body.contains(""""uploadIds":["up-1","up-2"]"""), body)
+        assertTrue(body.contains(""""idempotencyKey":"idem-walk-1""""), body)
+    }
+
+    @Test
+    fun createJobFromStagedRefusesEmptySessions() = runTest {
+        val api = client({ respond("""{"ok":true,"jobId":"job-9"}""", HttpStatusCode.Accepted) })
+        assertFailsWith<IllegalArgumentException> {
+            api.createJobFromStaged("""{"schema":1}""", emptyList(), "idem-walk-1")
+        }
+    }
+
+    @Test
+    fun deleteUploadTreatsGoneAsGone() = runTest {
+        var path = ""
+        var method: HttpMethod? = null
+        val api = client({ request ->
+            path = request.url.encodedPath
+            method = request.method
+            respond("", HttpStatusCode.NoContent)
+        })
+        api.deleteUpload("up-1")
+        assertEquals("/v1/uploads/up-1", path)
+        assertEquals(HttpMethod.Delete, method)
+        val gone = client({ respond("", HttpStatusCode.NotFound) })
+        gone.deleteUpload("up-1")
+        val broken = client({ respond("boom", HttpStatusCode.InternalServerError) })
+        assertFailsWith<EchoApiError.Server> { broken.deleteUpload("up-1") }
+    }
+
+    @Test
     fun watchEventsParsesFramesAndSendsLastEventId() = runTest {
         val seenIds = mutableListOf<String?>()
         val api = client({ request ->

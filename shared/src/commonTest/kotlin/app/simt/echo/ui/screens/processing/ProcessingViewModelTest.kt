@@ -151,6 +151,20 @@ class ProcessingViewModelTest {
             return "job-1"
         }
 
+        override suspend fun deleteUpload(uploadId: String) {
+            deletes += uploadId
+        }
+
+        override suspend fun createJobFromStaged(
+            manifestJson: String,
+            uploadIds: List<String>,
+            idempotencyKey: String,
+        ): String {
+            jobCreates += Triple(manifestJson, uploadIds.joinToString("+"), idempotencyKey)
+            submits += manifestJson to puts.toList()
+            return "job-1"
+        }
+
         override fun watchEvents(jobId: String, lastEventId: String?): Flow<JobEvent> {
             watchIds += lastEventId
             return flows.removeFirstOrNull() ?: emptyFlow()

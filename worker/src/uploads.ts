@@ -160,9 +160,12 @@ export async function handleCreateJobV11(c: Context<{ Bindings: Env }>): Promise
   if (!parsed.success) {
     return c.json({ ok: false, error: "invalid_request" }, 400);
   }
-  const { manifest, uploadId, budget, idempotencyKey, resumeOf } = parsed.data;
+  const { manifest, uploadId, uploadIds, budget, idempotencyKey, resumeOf } = parsed.data;
   if (!manifest.consent.sendFramesToCloudAi) {
     return c.json({ ok: false, error: "consent_required" }, 400);
+  }
+  if (uploadId !== undefined && uploadIds !== undefined) {
+    return c.json({ ok: false, error: "invalid_request" }, 400);
   }
 
   // Idempotent replay: a stored key returns the original job id without
@@ -177,13 +180,23 @@ export async function handleCreateJobV11(c: Context<{ Bindings: Env }>): Promise
   }
 
   // Staged blobs to move under the job (manifest-only creates skip this).
+  // One session (uploadId) or several per-window sessions (uploadIds,
+  // W11-09): completeness is measured over the union of staged names.
   let staged: Array<{ name: string; bytes: ArrayBuffer }> = [];
-  if (uploadId !== undefined) {
-    const loaded = await loadUploadMeta(c.env, uploadId, Date.now());
-    if ("error" in loaded) {
-      return loaded.error === "expired"
-        ? c.json({ ok: false, error: "upload_expired" }, 410)
-        : c.json({ ok: false, error: "upload_not_found" }, 404);
+  const sessionIds = uploadIds ?? (uploadId !== undefined ? [uploadId] : []);
+  // The move consumes every staging area below: single-use uploads cannot
+  // seed a second job, and replay arrives via the idempotency map above.
+  const consumePrefixes = sessionIds.map(stagingPrefix);
+  if (sessionIds.length > 0) {
+    const loadedBySession: Array<{ id: string; meta: StoredUploadMeta }> = [];
+    for (const sessionId of sessionIds) {
+      const loaded = await loadUploadMeta(c.env, sessionId, Date.now());
+      if ("error" in loaded) {
+        return loaded.error === "expired"
+          ? c.json({ ok: false, error: "upload_expired" }, 410)
+          : c.json({ ok: false, error: "upload_not_found" }, 404);
+      }
+      loadedBySession.push({ id: sessionId, meta: loaded.meta });
     }
     const allowed = new Set(
       manifest.checkpoints.flatMap((k) => [
@@ -191,21 +204,27 @@ export async function handleCreateJobV11(c: Context<{ Bindings: Env }>): Promise
         ...(k.clip ? [k.clip.id] : []),
       ]),
     );
-    const present = await stagedNames(c.env, uploadId);
+    const present = new Set<string>();
+    for (const { id } of loadedBySession) {
+      for (const name of await stagedNames(c.env, id)) present.add(name);
+    }
     const missing = [...allowed].filter((n) => !present.has(n));
     if (missing.length > 0) {
       return c.json({ ok: false, error: "upload_incomplete", missing }, 400);
     }
     // Caps are measured on actual PUT bytes, never the declared sizes.
     let totalBytes = 0;
-    for (const name of allowed) {
-      const obj = await c.env.MEDIA.get(stagingBlobKey(uploadId, name));
-      if (!obj) {
-        return c.json({ ok: false, error: "upload_incomplete", missing: [name] }, 400);
+    const seen = new Set<string>();
+    for (const { id } of loadedBySession) {
+      for (const name of allowed) {
+        if (seen.has(name)) continue;
+        const obj = await c.env.MEDIA.get(stagingBlobKey(id, name));
+        if (!obj) continue;
+        seen.add(name);
+        const bytes = await obj.arrayBuffer();
+        totalBytes += bytes.byteLength;
+        staged.push({ name, bytes });
       }
-      const bytes = await obj.arrayBuffer();
-      totalBytes += bytes.byteLength;
-      staged.push({ name, bytes });
     }
     if (staged.length > 60) {
       return c.json({ ok: false, error: "too_many_files" }, 413);
@@ -242,10 +261,10 @@ export async function handleCreateJobV11(c: Context<{ Bindings: Env }>): Promise
     if (idemHex !== null && idempotencyKey !== undefined) {
       await c.env.MEDIA.put(idemKey(idemHex), JSON.stringify({ jobId, idempotencyKey }));
     }
-    // The move consumes the staging area: single-use uploads cannot seed
+    // The move consumes the staging areas: single-use uploads cannot seed
     // a second job, and replay arrives via the idempotency map above.
-    if (uploadId !== undefined) {
-      await deletePrefix(c.env, stagingPrefix(uploadId));
+    for (const prefix of consumePrefixes) {
+      await deletePrefix(c.env, prefix);
     }
     return c.json({ ok: true, jobId }, 202);
   } catch {
@@ -335,5 +354,14 @@ export function registerUploadRoutes(app: Hono<{ Bindings: Env }>): void {
       return c.json({ ok: false, error: "upload_failed" }, 500);
     }
     return c.json({ ok: true, name });
+  });
+
+  // W11-09 ready-on-arrival: cancel/discard deletes staged uploads.
+  // Idempotent like the job DELETE — unknown or expired sessions are
+  // already gone, so both answer 204 with nothing to sweep.
+  app.delete("/v1/uploads/:uploadId", async (c) => {
+    const uploadId = c.req.param("uploadId");
+    await deletePrefix(c.env, stagingPrefix(uploadId));
+    return new Response(null, { status: 204 });
   });
 }

@@ -80,6 +80,19 @@ interface V11CloudApi : CloudApi {
     /** Creates the job against staged blobs; repeats are idempotent. */
     suspend fun createJob(manifestJson: String, uploadId: String, idempotencyKey: String): String
 
+    /**
+     * Deletes a walk-staged upload session (plan W11-09 discard).
+     * Unknown or expired ids are already gone — never fatal.
+     */
+    suspend fun deleteUpload(uploadId: String)
+
+    /**
+     * Creates the job against already-staged blobs from several
+     * per-window upload sessions (plan W11-09 Finish): no PUT, only
+     * the create. Repeats are idempotent on [idempotencyKey].
+     */
+    suspend fun createJobFromStaged(manifestJson: String, uploadIds: List<String>, idempotencyKey: String): String
+
     /** Cold SSE stream of job events from `lastEventId` (null = from head). */
     fun watchEvents(jobId: String, lastEventId: String?): Flow<JobEvent>
 }

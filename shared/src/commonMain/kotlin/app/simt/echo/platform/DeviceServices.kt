@@ -33,6 +33,15 @@ expect fun createPeerTransport(): PeerTransport
 expect fun rememberOnline(pollMs: Long = 5_000L): Boolean
 
 /**
+ * Whether the active network is unmetered (plan W11-09 Wi-Fi-only
+ * consent). Unknown means metered — the walk uploader fails closed.
+ * iOS reports metered: v1 never claims an unmetered path it cannot
+ * verify.
+ */
+@Composable
+expect fun rememberUnmetered(pollMs: Long = 5_000L): Boolean
+
+/**
  * Keeps the screen on while navigation is visible (plan W2-06). Android
  * sets FLAG_KEEP_SCREEN_ON for the hosting Activity; iOS is a no-op until
  * W5-03 owns the port.

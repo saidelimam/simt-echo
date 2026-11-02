@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -64,6 +66,7 @@ import kotlin.random.Random
 const val RecordInstrumentTag = "RecordInstrument"
 const val RecordPrestartTag = "RecordPrestart"
 const val RecordHeadingTag = "RecordHeading"
+const val RecordOptInTag = "RecordOptIn"
 
 /**
  * Record screen (plan §8.3 / W8-07): personal-orrery grammar (Cosmos §6.3).
@@ -117,6 +120,7 @@ fun RecordScreen(
         },
     )
     val uiState by viewModel.uiState.collectAsState()
+    val readyOptIn by viewModel.readyOptIn.collectAsState()
     LaunchedEffect(Unit) { viewModel.prepare(resumeDraftId) }
     KeepScreenOn()
 
@@ -155,12 +159,17 @@ fun RecordScreen(
                 walkTracker.clearHighlight()
                 walk = walkTracker.snapshot()
             },
-            onStart = viewModel::start,
+            onStart = viewModel::requestStart,
             onMark = viewModel::mark,
             onBeginFinish = viewModel::beginFinish,
             onSave = { name, destination ->
                 viewModel.finish(name, destination, onSaved)
             },
+            readyOptIn = readyOptIn,
+            onOptInChange = viewModel::setReadyOptIn,
+            onGrantConsent = viewModel::grantReadyConsent,
+            onDismissConsent = viewModel::dismissReadyConsent,
+            onDeclineConsent = viewModel::declineReadyConsent,
             modifier = modifier,
             preview = {
                 camera.Preview(modifier = Modifier.fillMaxSize(), onError = viewModel::onCameraError)
@@ -189,6 +198,11 @@ internal fun RecordInstrument(
     walk: EchoWalkSnapshot = EchoWalkSnapshot(),
     onHighlightExpired: () -> Unit = {},
     preview: @Composable () -> Unit = {},
+    readyOptIn: ReadyOptInUiState = ReadyOptInUiState(),
+    onOptInChange: (Boolean) -> Unit = {},
+    onGrantConsent: () -> Unit = {},
+    onDismissConsent: () -> Unit = {},
+    onDeclineConsent: () -> Unit = {},
 ) {
     Box(modifier = modifier.fillMaxSize().testTag(RecordInstrumentTag)) {
         preview()
@@ -224,7 +238,11 @@ internal fun RecordInstrument(
                 RollingDistance(text = "${oneDecimal(hud.distanceM)} m")
                 HeadingTick(yawRad = headingRad)
                 when (state) {
-                    CaptureState.READY, CaptureState.IDLE -> PrestartOverlay(onStart = onStart)
+                    CaptureState.READY, CaptureState.IDLE -> PrestartOverlay(
+                        onStart = onStart,
+                        optIn = readyOptIn.optIn,
+                        onOptInChange = onOptInChange,
+                    )
                     CaptureState.RECORDING -> {
                         CosmosSecondaryButton(label = "Mark spot", onClick = onMark)
                         FinishButton(onFinish = onBeginFinish)
@@ -237,16 +255,29 @@ internal fun RecordInstrument(
     if (state == CaptureState.FINISHING || state == CaptureState.SAVED) {
         FinishSheet(onSave = onSave)
     }
+    if (readyOptIn.consentPending) {
+        ReadyConsentSheet(
+            onGrant = onGrantConsent,
+            onDismiss = onDismissConsent,
+            onDecline = onDeclineConsent,
+        )
+    }
 }
 
 /**
  * Pre-start overlay: one centred task on the live preview, one primary
  * command. The instrument (camera) stays the first read behind it.
+ *
+ * W11-09: the ready-on-arrival opt-in rides here, default off. Ticking
+ * it does not start anything — Start routes through the consent sheet
+ * first ([ReadyConsentSheet]), so consent always precedes recording.
  */
 @Composable
 private fun PrestartOverlay(
     onStart: () -> Unit,
     modifier: Modifier = Modifier,
+    optIn: Boolean = false,
+    onOptInChange: (Boolean) -> Unit = {},
 ) {
     Surface(
         shape = MaterialTheme.shapes.medium,
@@ -268,9 +299,62 @@ private fun PrestartOverlay(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .testTag(RecordOptInTag)
+                    .toggleable(
+                        value = optIn,
+                        onValueChange = onOptInChange,
+                        role = Role.Checkbox,
+                    ),
+            ) {
+                Checkbox(
+                    checked = optIn,
+                    onCheckedChange = null,
+                )
+                Text(
+                    text = "Find landmarks while I walk · Wi-Fi only",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             CosmosRecordButton(label = "Start", onClick = onStart)
         }
     }
+}
+
+/**
+ * Ready-on-arrival consent sheet (plan W11-09) on the shared canopy
+ * surface: appears *before* Start, never after. Allow records consent
+ * and starts recording; Not now starts without upload; dismiss returns
+ * to the overlay with recording never started.
+ */
+@Composable
+internal fun ReadyConsentSheet(
+    onGrant: () -> Unit,
+    onDismiss: () -> Unit,
+    onDecline: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    CosmosSheet(
+        title = "Find landmarks while I walk",
+        onDismiss = onDismiss,
+        primaryLabel = "Allow",
+        onPrimary = onGrant,
+        modifier = modifier,
+        content = {
+            Text(
+                text = "As each checkpoint window closes, face-filtered strips upload " +
+                    "over Wi-Fi only so landmarks are ready when you finish. " +
+                    "Nothing sends before you allow it. " +
+                    "Cancel or discard deletes staged uploads.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            CosmosSecondaryButton(label = "Not now", onClick = onDecline)
+        },
+    )
 }
 
 /**

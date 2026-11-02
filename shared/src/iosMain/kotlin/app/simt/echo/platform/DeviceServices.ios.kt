@@ -63,5 +63,9 @@ actual fun rememberHaptics(): Haptics = remember {
 @Composable
 actual fun rememberOnline(pollMs: Long): Boolean = false
 
+/** iOS is out of v1 scope: never claim an unmetered path (fail closed). */
+@Composable
+actual fun rememberUnmetered(pollMs: Long): Boolean = false
+
 @Composable
 actual fun KeepScreenOn() = Unit

@@ -3,6 +3,7 @@ package app.simt.echo.data
 import app.simt.echo.capture.GlimpseEntry
 import app.simt.echo.model.CaptureLog
 import app.simt.echo.transfer.JobRecord
+import app.simt.echo.transfer.ReadyStagedRecord
 import app.simt.echo.transfer.UploadRecord
 import app.simt.echo.model.EchoJson
 import app.simt.echo.model.EchoRoute
@@ -122,6 +123,27 @@ class DraftRepository(private val store: FileStore) {
     }
 
     /**
+     * Persists the ready-on-arrival staged sessions (`ready-upload.json`,
+     * plan W11-09): one upload id per closed checkpoint window, so a
+     * restart still discards (or finishes against) every staged blob.
+     * Cleared on job create and on discard.
+     */
+    fun saveReadyStagedRecord(draftId: String, record: ReadyStagedRecord) {
+        store.writeText("$DRAFTS_DIR/$draftId/$READY_UPLOAD_FILE", EchoJson.encodeToString(record))
+    }
+
+    /** Staged walk-upload session ids, or null when none were staged, consumed, or corrupt. */
+    fun loadReadyStagedRecord(draftId: String): List<String>? {
+        val text = store.readText("$DRAFTS_DIR/$draftId/$READY_UPLOAD_FILE") ?: return null
+        return runCatching { EchoJson.decodeFromString<ReadyStagedRecord>(text).uploadIds }.getOrNull()
+    }
+
+    /** Clears the staged-session record (job created, discard done). */
+    fun clearReadyStagedRecord(draftId: String) {
+        store.deleteRecursively("$DRAFTS_DIR/$draftId/$READY_UPLOAD_FILE")
+    }
+
+    /**
      * Persists accumulated partial checkpoint candidates
      * (`partials.json`, plan W11-08) as they land on the event stream,
      * so Review can render them before the job completes. Stored as the
@@ -166,6 +188,7 @@ class DraftRepository(private val store: FileStore) {
         const val DRAFTS_DIR = "drafts"
         const val JOB_FILE = "job.json"
         const val UPLOAD_FILE = "upload.json"
+        const val READY_UPLOAD_FILE = "ready-upload.json"
         const val PARTIALS_FILE = "partials.json"
         const val GLIMPSE_ENTRIES_FILE = "glimpse/entries.json"
     }

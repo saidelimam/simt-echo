@@ -123,7 +123,8 @@ private data class CreateJobV11Response(val ok: Boolean = false, val jobId: Stri
 @Serializable
 private data class CreateJobV11Request(
     val manifest: JsonElement,
-    val uploadId: String,
+    val uploadId: String? = null,
+    val uploadIds: List<String>? = null,
     val idempotencyKey: String,
 )
 
@@ -346,24 +347,50 @@ class EchoApiClient(
             ?: throw EchoApiError.InvalidManifest("unparseable manifest")
         val request = apiJson.encodeToString(
             CreateJobV11Request.serializer(),
-            CreateJobV11Request(manifest, uploadId, idempotencyKey),
+            CreateJobV11Request(manifest, uploadId = uploadId, idempotencyKey = idempotencyKey),
         )
+        return postJobCreate(request)
+    }
+
+    /**
+     * Deletes a walk-staged upload session (`DELETE /v1/uploads/:id`,
+     * plan W11-09 discard). 204 and 404 both mean gone.
+     */
+    override suspend fun deleteUpload(uploadId: String) {
+        configured()
         val response = try {
-            http.post("$baseUrl/v1/jobs") {
-                contentType(ContentType.Application.Json)
+            http.delete("$baseUrl/v1/uploads/$uploadId") {
                 headers.append(HttpHeaders.Authorization, "Bearer $appToken")
-                setBody(request)
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             throw EchoApiError.Network(e)
         }
-        val body = response.bodyAsText()
-        if (response.status.value != 202) throwJobCreateError(response.status.value, body)
-        val jobId = runCatching { apiJson.decodeFromString<CreateJobV11Response>(body).jobId }.getOrNull()
-        if (jobId.isNullOrEmpty()) throw EchoApiError.Server(202, body)
-        return jobId
+        if (response.status.value != 204 && response.status.value != 404) {
+            throw EchoApiError.Server(response.status.value, response.bodyAsText())
+        }
+    }
+
+    /**
+     * Creates the job against already-staged blobs from several
+     * per-window upload sessions (JSON `POST /v1/jobs` with
+     * `uploadIds` + `idempotencyKey`, plan W11-09 Finish).
+     */
+    override suspend fun createJobFromStaged(
+        manifestJson: String,
+        uploadIds: List<String>,
+        idempotencyKey: String,
+    ): String {
+        configured()
+        require(uploadIds.isNotEmpty()) { "createJobFromStaged: no staged uploads" }
+        val manifest = runCatching { apiJson.parseToJsonElement(manifestJson) }.getOrNull()
+            ?: throw EchoApiError.InvalidManifest("unparseable manifest")
+        val request = apiJson.encodeToString(
+            CreateJobV11Request.serializer(),
+            CreateJobV11Request(manifest, uploadIds = uploadIds, idempotencyKey = idempotencyKey),
+        )
+        return postJobCreate(request)
     }
 
     /**
@@ -391,7 +418,27 @@ class EchoApiClient(
         parseSseEvents(body).forEach { emit(it) }
     }
 
-    private fun isAllowedBaseUrl(url: String): Boolean {        if (url.startsWith("https://")) return true
+    private suspend fun postJobCreate(request: String): String {
+        val response = try {
+            http.post("$baseUrl/v1/jobs") {
+                contentType(ContentType.Application.Json)
+                headers.append(HttpHeaders.Authorization, "Bearer $appToken")
+                setBody(request)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            throw EchoApiError.Network(e)
+        }
+        val body = response.bodyAsText()
+        if (response.status.value != 202) throwJobCreateError(response.status.value, body)
+        val jobId = runCatching { apiJson.decodeFromString<CreateJobV11Response>(body).jobId }.getOrNull()
+        if (jobId.isNullOrEmpty()) throw EchoApiError.Server(202, body)
+        return jobId
+    }
+
+    private fun isAllowedBaseUrl(url: String): Boolean {
+        if (url.startsWith("https://")) return true
         if (!url.startsWith("http://")) return false
         val host = url.removePrefix("http://").substringBefore('/').substringBefore(':')
         return host == "localhost" || host == "127.0.0.1" || host == "10.0.2.2"

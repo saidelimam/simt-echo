@@ -23,6 +23,18 @@ data class RecordUiState(
     val error: String? = null,
 )
 
+/**
+ * Ready-on-arrival opt-in state (plan W11-09). Default off: [optIn] is
+ * false until the pre-start overlay toggle, and [consented] is false
+ * until the consent sheet is accepted. Start is blocked while
+ * [consentPending] — the sheet appears *before* Start, never after.
+ */
+data class ReadyOptInUiState(
+    val optIn: Boolean = false,
+    val consentPending: Boolean = false,
+    val consented: Boolean = false,
+)
+
 class RecordViewModel(private val session: CaptureSession) : ViewModel() {
 
     private val error = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
@@ -31,6 +43,9 @@ class RecordViewModel(private val session: CaptureSession) : ViewModel() {
         combine(session.state, session.hud, error) { state, hud, err ->
             RecordUiState(state = state, hud = hud, error = err)
         }.stateIn(viewModelScope, SharingStarted.Eagerly, RecordUiState())
+
+    private val _readyOptIn = kotlinx.coroutines.flow.MutableStateFlow(ReadyOptInUiState())
+    val readyOptIn: StateFlow<ReadyOptInUiState> = _readyOptIn
 
     fun onPreviewReady() = session.ready()
 
@@ -56,6 +71,42 @@ class RecordViewModel(private val session: CaptureSession) : ViewModel() {
             runCatching { session.start() }
                 .onFailure { error.value = recordStartErrorCopy() }
         }
+    }
+
+    /**
+     * Pre-start Start (plan W11-09): with the opt-in toggle on and no
+     * consent recorded, the consent sheet claims the phase instead —
+     * recording starts only after [grantReadyConsent]. Anything else
+     * starts immediately; consent can never trail Start.
+     */
+    fun requestStart() {
+        if (_readyOptIn.value.optIn && !_readyOptIn.value.consented) {
+            _readyOptIn.value = _readyOptIn.value.copy(consentPending = true)
+            return
+        }
+        start()
+    }
+
+    /** Pre-start overlay toggle (plan W11-09); default off. */
+    fun setReadyOptIn(optIn: Boolean) {
+        _readyOptIn.value = _readyOptIn.value.copy(optIn = optIn)
+    }
+
+    /** Consent sheet Allow: records consent, then starts recording. */
+    fun grantReadyConsent() {
+        _readyOptIn.value = _readyOptIn.value.copy(consentPending = false, consented = true)
+        start()
+    }
+
+    /** Consent sheet dismiss: back to the overlay, recording never starts. */
+    fun dismissReadyConsent() {
+        _readyOptIn.value = _readyOptIn.value.copy(consentPending = false)
+    }
+
+    /** Consent sheet Not now: opts out and starts recording without upload. */
+    fun declineReadyConsent() {
+        _readyOptIn.value = _readyOptIn.value.copy(optIn = false, consentPending = false)
+        start()
     }
 
     fun mark() = session.mark()
