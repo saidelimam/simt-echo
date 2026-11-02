@@ -927,7 +927,7 @@ remainder is owed:
 | W11-09 | Ready-on-arrival trigger, Wi-Fi gate and Finish coordination are not wired; `ReadyUploader` has no caller |
 | W12-01 | `HeadingQuality.correctedYaw` is not applied to `PdrEngine` yaw: a ±2°/min estimator error compounds to ~20° over 10 min, so it waits for W14-03 field evidence |
 | W12-04/05 | Device magnetic trace; fingerprint embedder and capture are not wired to the camera; precision table and τ unmeasured |
-| W13-05 | `ReviewViewModel.onCheckpointEvent` has no caller; the shared-element flight is unasserted |
+| W13-05 | The shared-element flight is unasserted. Partials reach Review by replaying the ones Processing persisted (`onCheckpointEvent` stays the live-event seam; Review is not on screen while a job streams) |
 | W13-10 | Processing-side Live Update (`updateProcessing`) is not wired; navigation side is |
 | W13-12 | Plain-View watch screen, not a Wear ongoing activity or tile |
 

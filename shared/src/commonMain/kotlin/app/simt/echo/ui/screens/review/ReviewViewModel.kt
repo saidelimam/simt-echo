@@ -168,6 +168,7 @@ class ReviewViewModel(
             val localFirst = preferLocal && router?.localAvailable == true
             if (localFirst && proposeLocally()) return@launch
             if (loadCloudSuggestions()) return@launch
+            if (replayPersistedPartials()) return@launch
             if (!localFirst && router?.localAvailable == true) {
                 proposeLocally()
             }
@@ -196,6 +197,20 @@ class ReviewViewModel(
             _ui.update { it.copy(error = reviewSuggestionsErrorCopy()) }
             false
         }
+    }
+
+    /**
+     * Interrupted job (W13-05): Processing persists each partial
+     * checkpoint, so leaving it mid-job and coming back to Review keeps
+     * what had already arrived. Replays them through the same merge as a
+     * live arrival; a finished job clears them, so a complete result
+     * never meets stale partials. True when any suggestion was published.
+     */
+    private fun replayPersistedPartials(): Boolean {
+        val raw = drafts.loadPartialResult(draftId) ?: return false
+        val partial = CandidateMerger.parseResult(raw) ?: return false
+        partial.checkpoints.forEach { mergeCheckpoint(it.nodeId, it.candidates) }
+        return _ui.value.suggestions.isNotEmpty()
     }
 
     /**
@@ -431,9 +446,12 @@ class ReviewViewModel(
      * best-effort from the draft files the candidate was grounded on.
      */
     fun onCheckpointEvent(nodeId: String, candidatesRaw: String?) {
+        mergeCheckpoint(nodeId, parseCheckpointCandidates(candidatesRaw))
+    }
+
+    private fun mergeCheckpoint(nodeId: String, incoming: List<AiCandidate>) {
         val current = route ?: return
         val node = current.nodes.firstOrNull { it.id == nodeId } ?: return
-        val incoming = parseCheckpointCandidates(candidatesRaw)
         if (incoming.isEmpty()) return
         val images = mutableMapOf<String, ByteArray>()
         for (candidate in incoming) {

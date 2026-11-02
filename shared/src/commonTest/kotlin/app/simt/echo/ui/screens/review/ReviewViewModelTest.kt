@@ -621,6 +621,59 @@ class ReviewViewModelTest {
         assertTrue(vm.ui.value.suggestions.isEmpty())
     }
 
+    private fun partialsJson() = """
+        {"jobId":"job-1","checkpoints":[
+        {"nodeId":"n1","candidates":[${candidateJson(0.9)}]},
+        {"nodeId":"n99","candidates":[${candidateJson(0.9, "Ghost")}]}]}""".replace("\n", "")
+
+    @Test
+    fun interruptedJobShowsItsPersistedPartials() = runTest(dispatcher) {
+        val h = harness()
+        h.drafts.saveJobRecord("draft-1", JobRecord("job-1", "running", 1L))
+        h.drafts.savePartialResult("draft-1", partialsJson())
+        val before = h.drafts.loadDraftRoute("draft-1")!!
+
+        val vm = h.vm()
+        advanceUntilIdle()
+
+        val ui = vm.ui.value
+        // Unknown node n99 dropped; n1's card is back, preselected, no error.
+        assertEquals(listOf("n1"), ui.suggestions.keys.toList())
+        assertEquals("Red pillar", ui.suggestions.getValue("n1")[0].title)
+        assertEquals(0, ui.suggestionIndex.getValue("n1"))
+        assertNull(ui.error)
+        assertEquals(before, h.drafts.loadDraftRoute("draft-1"))
+        assertNull(h.api.gotten)
+    }
+
+    @Test
+    fun completedResultWinsOverStalePartials() = runTest(dispatcher) {
+        val h = harness()
+        h.api.resultRaw = resultJson()
+        h.drafts.saveJobRecord("draft-1", JobRecord("job-1", "complete", 1L))
+        h.drafts.savePartialResult("draft-1", partialsJson())
+
+        val vm = h.vm()
+        advanceUntilIdle()
+
+        assertEquals("job-1", h.api.gotten)
+        // The full result (two ranked candidates) replaced the lone partial.
+        assertEquals(listOf(0.9, 0.2), vm.ui.value.suggestions.getValue("n1").map { it.rank })
+    }
+
+    @Test
+    fun unreadablePersistedPartialsLeaveReviewManualOnly() = runTest(dispatcher) {
+        val h = harness()
+        h.drafts.saveJobRecord("draft-1", JobRecord("job-1", "running", 1L))
+        h.drafts.savePartialResult("draft-1", "garbage {{{")
+
+        val vm = h.vm()
+        advanceUntilIdle()
+
+        assertTrue(vm.ui.value.suggestions.isEmpty())
+        assertNull(vm.ui.value.error)
+    }
+
     @Test
     fun inspectorOpensAndCloses() = runTest(dispatcher) {
         val h = harness()
