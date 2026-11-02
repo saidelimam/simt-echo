@@ -1,5 +1,10 @@
 package app.simt.echo.media
 
+import app.simt.echo.capture.FaceDetector
+import app.simt.echo.capture.GlimpseEntry
+import app.simt.echo.capture.approachStrip
+import app.simt.echo.capture.isFaceFree
+import app.simt.echo.capture.ledgerKeyframes
 import app.simt.echo.model.CaptureLog
 import app.simt.echo.model.CaptureSample
 import app.simt.echo.model.EchoRoute
@@ -34,10 +39,37 @@ data class ManifestConsent(
     val atEpochMs: Long,
 )
 
+/** Per-frame quality flag the worker understands: only `"bad"` drops the frame. */
+const val FRAME_QUALITY_GOOD = "good"
+
+/** Per-frame quality flag the worker understands: `"bad"` drops the frame before SAM spend. */
+const val FRAME_QUALITY_BAD = "bad"
+
+/**
+ * Per-frame upload flags (plan W11-04), keyed by keyframe id. The worker
+ * (`samLens.frameFailsFlags`) drops a candidate before any SAM spend when
+ * `faceFree == false`, `quality == "bad"`, or `exposureOk == false` —
+ * keeps it when the flags are absent. Defaults are therefore keep: a
+ * keyframe with no scan behind it (e.g. video fallback) uploads exactly
+ * as before, and only a frame the on-device detector actually failed is
+ * flagged.
+ */
+data class FrameFlags(
+    val quality: String = FRAME_QUALITY_GOOD,
+    val faceFree: Boolean = true,
+    val exposureOk: Boolean = true,
+)
+
 @Serializable
 data class ManifestKeyframe(
     val id: String,
     val tMs: Long,
+    /** [FRAME_QUALITY_GOOD] unless the frame carries no usable signal. */
+    val quality: String = FRAME_QUALITY_GOOD,
+    /** False when the on-device scan found (or could not rule out) a face. */
+    val faceFree: Boolean = true,
+    /** False when the frame failed the on-device exposure gate. */
+    val exposureOk: Boolean = true,
 )
 
 @Serializable
@@ -158,7 +190,9 @@ internal fun distanceAt(log: CaptureLog, samples: List<CaptureSample>, tMs: Long
 /**
  * Builds the §5.5 [Manifest] for one draft. Checkpoints are all non-START
  * nodes with a capture time; [clips] maps `nodeId` → [ClipInfo] and is empty
- * when SAM is disabled (then `clip` is omitted, plan W3-01).
+ * when SAM is disabled (then `clip` is omitted, plan W3-01). [frameFlags]
+ * carries the W11-04 per-frame flags by keyframe id; ids absent from the
+ * map keep the keep-defaults (today's manifests behave exactly as before).
  */
 object ManifestBuilder {
 
@@ -168,10 +202,11 @@ object ManifestBuilder {
         specs: List<KeyframeSpec>,
         clips: Map<String, ClipInfo>,
         consent: ManifestConsent,
+        frameFlags: Map<String, FrameFlags> = emptyMap(),
     ): Manifest {
         val specByNode = specs.associateBy { it.nodeId }
         val checkpoints = route.nodes.mapNotNull { node ->
-            checkpoint(node, specByNode[node.id], clips, log)
+            checkpoint(node, specByNode[node.id], clips, log, frameFlags)
         }
         return Manifest(
             draftId = log.draftId,
@@ -186,6 +221,7 @@ object ManifestBuilder {
         spec: KeyframeSpec?,
         clips: Map<String, ClipInfo>,
         log: CaptureLog,
+        frameFlags: Map<String, FrameFlags>,
     ): ManifestCheckpoint? {
         val t = node.captureTMs ?: return null
         if (node.type == NodeType.START) return null
@@ -193,7 +229,10 @@ object ManifestBuilder {
         // Manifest keyframe ids are the W1-05 file names minus the extension
         // and with the directory flattened (see [keyframeId]); the worker
         // maps them to uploaded files by id.
-        val keyframes = spec.timesMs.indices.map { i -> ManifestKeyframe(keyframeId(spec, i), spec.timesMs[i]) }
+        val keyframes = spec.timesMs.indices.map { i ->
+            val flags = frameFlags[keyframeId(spec, i)] ?: FrameFlags()
+            ManifestKeyframe(keyframeId(spec, i), spec.timesMs[i], flags.quality, flags.faceFree, flags.exposureOk)
+        }
         val clip = clips[node.id]?.let { info ->
             val window = clipWindow(t)
             ManifestClip(
@@ -215,5 +254,64 @@ object ManifestBuilder {
             clip = clip,
             approach = approachSamples(log, clipWindow(t)),
         )
+    }
+}
+
+/**
+ * Quality flag for one ledger frame score: [FRAME_QUALITY_BAD] when the
+ * score is zero or negative, [FRAME_QUALITY_GOOD] otherwise. The W11-01
+ * score is exactly 0.0 when the exposure gate fails (or for a degenerate
+ * uniform plane); either way the frame carries no usable signal, so the
+ * worker should spend nothing on it.
+ */
+fun qualityFor(score: Double): String =
+    if (score <= 0.0) FRAME_QUALITY_BAD else FRAME_QUALITY_GOOD
+
+/**
+ * W11-04 per-frame flags for the upload: for every non-START node, the
+ * approach strip is reduced to ledger keyframe slots ([ledgerKeyframes] —
+ * the same picks `ensureKeyframes` copies into `kf/`, in the same order),
+ * and each pick is flagged by its score and verdict. The map is keyed by
+ * manifest keyframe id, for [ManifestBuilder.build]'s [FrameFlags]
+ * parameter.
+ *
+ * The strip is deliberately built *unfiltered* (no [FaceDetector] passed
+ * to [approachStrip]) so the picks line up 1:1 with the `kf/` bytes
+ * `ensureKeyframes` wrote: a face pick flagged here is the same file the
+ * upload path withholds and the worker drops. A scanned UNKNOWN verdict
+ * flags `faceFree = false` (exclude-safe); a zero score flags
+ * `quality = "bad"` and `exposureOk = false`. Slots the ledger cannot
+ * fill stay absent from the map and keep the keep-defaults —
+ * video-fallback frames upload as before.
+ */
+fun frameFlagsFor(
+    route: EchoRoute,
+    specs: List<KeyframeSpec>,
+    ledger: List<GlimpseEntry>,
+    detector: FaceDetector,
+): Map<String, FrameFlags> {
+    val specByNode = specs.associateBy { it.nodeId }
+    return buildMap {
+        for (node in route.nodes) {
+            if (node.type == NodeType.START) continue
+            val spec = specByNode[node.id] ?: continue
+            val picks = ledgerKeyframes(
+                approachStrip(ledger, node.atDistanceM),
+                node.type,
+                node.atDistanceM,
+            )
+            picks.forEachIndexed { index, pick ->
+                if (index >= spec.timesMs.size) return@forEachIndexed
+                val verdict = detector.verdictFor(pick)
+                put(
+                    keyframeId(spec, index),
+                    FrameFlags(
+                        quality = qualityFor(pick.score),
+                        faceFree = verdict.isFaceFree(),
+                        exposureOk = pick.score > 0.0,
+                    ),
+                )
+            }
+        }
     }
 }

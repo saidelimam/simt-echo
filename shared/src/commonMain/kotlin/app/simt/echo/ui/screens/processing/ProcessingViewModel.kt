@@ -3,9 +3,11 @@ package app.simt.echo.ui.screens.processing
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.simt.echo.capture.CaptureSession
+import app.simt.echo.capture.FaceDetector
 import app.simt.echo.data.DraftRepository
 import app.simt.echo.media.ClipInfo
 import app.simt.echo.media.ClipWindow
+import app.simt.echo.media.FrameFlags
 import app.simt.echo.media.KeyframeSpec
 import app.simt.echo.media.ManifestBuilder
 import app.simt.echo.media.ManifestConsent
@@ -14,6 +16,7 @@ import app.simt.echo.media.clipFileName
 import app.simt.echo.media.clipId
 import app.simt.echo.media.clipWindow
 import app.simt.echo.media.ensureKeyframes
+import app.simt.echo.media.frameFlagsFor
 import app.simt.echo.media.keyframeFiles
 import app.simt.echo.media.keyframeSpecs
 import app.simt.echo.model.EchoJson
@@ -21,6 +24,7 @@ import app.simt.echo.model.EchoRoute
 import app.simt.echo.model.NodeType
 import app.simt.echo.transfer.CloudApi
 import app.simt.echo.transfer.EchoApiError
+import app.simt.echo.transfer.FACE_FILTER_DISCLOSURE
 import app.simt.echo.transfer.JobRecord
 import app.simt.echo.transfer.JobStage
 import app.simt.echo.transfer.UploadFile
@@ -73,7 +77,8 @@ fun consentCopy(info: ConsentInfo): String {
         "(Meta's Llama 4 Scout on Workers AI; Meta Model API if enabled) via SIMT ECHO's server " +
         "to suggest landmarks. Files are deleted within 24 h (or now, from this screen). " +
         "If the Meta Model API is enabled, its standard tier is used, not the contributor tier " +
-        "whose inputs may be used for training. Your route shape stays on this phone."
+        "whose inputs may be used for training. Your route shape stays on this phone. " +
+        FACE_FILTER_DISCLOSURE
 }
 
 /**
@@ -102,6 +107,16 @@ class ProcessingViewModel(
      * the network — not even the SAM probe.
      */
     private val aiConfigured: Boolean = true,
+    /**
+     * On-device privacy pre-filter (plan W11-04). Null keeps today's
+     * behavior: no face scan, no flagging, every keyframe uploads with
+     * the keep-default flags. A non-null detector flags strip frames
+     * into the manifest (so the worker drops scout boxes before SAM
+     * spend) and withholds face-flagged keyframe bytes from the upload.
+     * Cut video clips cannot be face-scanned yet (no frame seam in the
+     * Media3 cut path and no ML Kit face dep in the catalog) — owed.
+     */
+    private val faceDetector: FaceDetector? = null,
 ) : ViewModel() {
 
     private val _ui = MutableStateFlow(ProcessingUiState())
@@ -176,14 +191,19 @@ class ProcessingViewModel(
                 val log = checkNotNull(drafts.loadCapture(draftId)) { "Capture log is gone." }
                 val specs = keyframeSpecs(route.nodes)
                 val clips = cutClips(route)
+                val frameFlags = faceDetector?.let { detector ->
+                    val ledger = runCatching { drafts.loadGlimpseEntries(draftId) }.getOrNull() ?: emptyList()
+                    frameFlagsFor(route, specs, ledger, detector)
+                } ?: emptyMap()
                 val manifest = ManifestBuilder.build(
                     route = route,
                     log = log,
                     specs = specs,
                     clips = clips,
                     consent = ManifestConsent(sendFramesToCloudAi = true, atEpochMs = nowMs()),
+                    frameFlags = frameFlags,
                 )
-                val files = collectFiles(specs, clips)
+                val files = collectFiles(specs, clips, frameFlags)
                 if (files.isEmpty()) throw EchoApiError.Server(0, "No keyframes to send.")
                 val manifestJson = EchoJson.encodeToString(manifest)
                 val jobId = api.submit(manifestJson, files)
@@ -331,12 +351,21 @@ class ProcessingViewModel(
         return out
     }
 
+    /**
+     * Upload allow-list: keyframe bytes plus cut clips. Keyframes the
+     * pre-filter flagged `faceFree == false` are withheld — their bytes
+     * never leave the phone (the manifest still carries the flag so the
+     * worker drops the box too). Bad-quality (non-face) frames still
+     * upload; the worker drops those boxes itself.
+     */
     private fun collectFiles(
         specs: List<KeyframeSpec>,
         clips: Map<String, ClipInfo>,
+        frameFlags: Map<String, FrameFlags> = emptyMap(),
     ): List<UploadFile> {
         val files = mutableListOf<UploadFile>()
         for ((id, name) in keyframeFiles(specs)) {
+            if (frameFlags[id]?.faceFree == false) continue
             val bytes = drafts.readDraftFile(draftId, name) ?: continue
             files += UploadFile(id, "image/jpeg", bytes)
         }

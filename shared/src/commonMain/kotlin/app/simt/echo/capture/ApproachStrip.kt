@@ -28,6 +28,11 @@ import app.simt.echo.model.NodeType
  * 5. The start photo fills a missing `start.jpg` only; an existing
  *    creator capture is never overwritten (see `ensureKeyframes`).
  * 6. Every slot the ledger cannot fill falls back to video extraction.
+ * 7. Privacy pre-filter (plan W11-04): when a [FaceDetector] is supplied,
+ *    entries it does not clear as [FaceVerdict.FACE_FREE] are excluded
+ *    before windowing — faces and scan failures alike never reach the
+ *    strip. Decision: exclude, not blur (see `FacePrivacy.kt`).
+ *    A null detector keeps today's behavior (no filtering).
  *
  * Pure and deterministic: no coroutines, no platform imports, no RNG.
  * Consumes the W11-01 [GlimpseLedger] output; the FrameTap seam
@@ -69,6 +74,10 @@ fun keyframeOffsets(nodeType: NodeType): List<Double> =
  * Ties break deterministically (lower odometer, then earlier frame), so
  * the same ledger always yields the same strip. Empty when the window
  * holds no stored frame; callers fall back to video then.
+ *
+ * When [faceDetector] is non-null, entries it does not clear as
+ * [FaceVerdict.FACE_FREE] are dropped before windowing (see
+ * [excludeFaces]); null keeps today's unfiltered behavior.
  */
 fun approachStrip(
     entries: List<GlimpseEntry>,
@@ -77,10 +86,12 @@ fun approachStrip(
     windowAheadM: Double = APPROACH_WINDOW_AHEAD_M,
     maxFrames: Int = APPROACH_MAX_FRAMES,
     minSpacingM: Double = APPROACH_MIN_SPACING_M,
+    faceDetector: FaceDetector? = null,
 ): List<GlimpseEntry> {
+    val faceFree = if (faceDetector == null) entries else excludeFaces(entries, faceDetector)
     val lo = d - windowBehindM
     val hi = d + windowAheadM
-    val inWindow = entries.filter { it.jpegPath != null && it.odometerM in lo..hi }
+    val inWindow = faceFree.filter { it.jpegPath != null && it.odometerM in lo..hi }
     val ranked = inWindow.sortedWith(
         compareByDescending<GlimpseEntry> { it.score }
             .thenBy { it.odometerM }
