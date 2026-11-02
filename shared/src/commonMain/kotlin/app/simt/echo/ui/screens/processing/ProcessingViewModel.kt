@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import app.simt.echo.capture.CaptureSession
 import app.simt.echo.data.DraftRepository
 import app.simt.echo.media.ClipInfo
+import app.simt.echo.media.ClipWindow
 import app.simt.echo.media.KeyframeSpec
 import app.simt.echo.media.ManifestBuilder
 import app.simt.echo.media.ManifestConsent
@@ -108,6 +109,9 @@ class ProcessingViewModel(
 
     private var counts: ConsentInfo = ConsentInfo(0, 0, false)
 
+    /** Cut clips keyed by (draftId, nodeId, window) (W10-02 G5). */
+    private val clipCache = mutableMapOf<Triple<String, String, ClipWindow>, ClipInfo>()
+
     init {
         refresh()
     }
@@ -133,7 +137,7 @@ class ProcessingViewModel(
             val specs = keyframeSpecs(route.nodes)
             val photos = specs.sumOf { spec ->
                 spec.timesMs.indices.count { i ->
-                    drafts.readDraftFile(draftId, spec.fileName(i)) != null
+                    drafts.draftFileExists(draftId, spec.fileName(i))
                 }
             }
             val checkpoints = route.nodes.count { it.type != NodeType.START && it.captureTMs != null }
@@ -291,20 +295,34 @@ class ProcessingViewModel(
         _ui.update { it.copy(phase = ProcessingPhase.Failed(processingJobTimeoutCopy())) }
     }
 
-    /** Cuts one ≤10 fps silent clip per checkpoint when SAM is enabled. */
+    /** Cuts one ≤10 fps silent clip per checkpoint when SAM is enabled.
+     *
+     * Clip ends clamp to the video duration (W10-02 G5), and cuts are cached
+     * per (draftId, nodeId, window): a second Send reuses the file on disk
+     * instead of re-encoding it. The cache entry is only trusted while its
+     * output file still exists.
+     */
     private suspend fun cutClips(route: EchoRoute): Map<String, ClipInfo> {
         if (!counts.samEnabled) return emptyMap()
         val videoFile = CaptureSession.VIDEO_FILE
         val video = drafts.draftFilePath(draftId, videoFile)
-        if (drafts.readDraftFile(draftId, videoFile) == null) return emptyMap()
+        if (!drafts.draftFileExists(draftId, videoFile)) return emptyMap()
+        val durationMs = runCatching { media.videoDurationMs(video) }.getOrNull()
         val out = mutableMapOf<String, ClipInfo>()
         for (node in route.nodes) {
             val t = node.captureTMs ?: continue
             if (node.type == NodeType.START) continue
-            val window = clipWindow(t)
+            val window = clipWindow(t, durationMs)
             val file = clipFileName(node.id)
+            val key = Triple(draftId, node.id, window)
+            val cached = clipCache[key]
+            if (cached != null && drafts.draftFileExists(draftId, file)) {
+                out[node.id] = cached
+                continue
+            }
             try {
                 val info = media.cutClip(video, window.startMs, window.endMs, 10, drafts.draftFilePath(draftId, file))
+                clipCache[key] = info
                 out[node.id] = info
             } catch (e: Exception) {
                 // One bad clip omits that node; the manifest stays valid.

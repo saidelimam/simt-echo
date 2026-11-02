@@ -45,6 +45,18 @@ class DraftRepository(private val store: FileStore) {
     fun readDraftFile(draftId: String, fileName: String): ByteArray? =
         store.readBytes("$DRAFTS_DIR/$draftId/$fileName")
 
+    /**
+     * True when the draft file exists. Metadata only — existence and
+     * counting must use this (or [draftFileSize]), never [readDraftFile],
+     * which loads the whole file into RAM (W10-02 G3).
+     */
+    fun draftFileExists(draftId: String, fileName: String): Boolean =
+        store.exists("$DRAFTS_DIR/$draftId/$fileName")
+
+    /** Size in bytes, or null when absent. Metadata only (W10-02 G3). */
+    fun draftFileSize(draftId: String, fileName: String): Long? =
+        store.size("$DRAFTS_DIR/$draftId/$fileName")
+
     /** Persists the cloud job record (`job.json`) next to the draft. */
     fun saveJobRecord(draftId: String, record: JobRecord) {
         store.writeText("$DRAFTS_DIR/$draftId/$JOB_FILE", EchoJson.encodeToString(record))

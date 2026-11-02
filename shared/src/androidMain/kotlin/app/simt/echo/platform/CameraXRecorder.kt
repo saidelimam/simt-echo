@@ -29,8 +29,9 @@ import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeout
 import okio.Path
 import java.io.File
 import kotlin.coroutines.resume
@@ -60,7 +61,6 @@ class CameraXRecorder(
     private var recording: Recording? = null
     private var activeVideoOut: Path? = null
     private var finalizeSignal: CompletableDeferred<VideoRecordEvent.Finalize>? = null
-    private var startEventNs: Long? = null
 
     /** True once the fallback path is in effect (plan §12 camera risk). */
     var photoFromVideo: Boolean = false
@@ -164,7 +164,7 @@ class CameraXRecorder(
         ensureBound()
         val output = videoCapture ?: error("VideoCapture unavailable after bind")
         val callNs = SystemClock.elapsedRealtimeNanos()
-        startEventNs = null
+        val startSignal = CompletableDeferred<Long>()
         val signal = CompletableDeferred<VideoRecordEvent.Finalize>()
         finalizeSignal = signal
         // Same parent-dir contract as takePhoto above: video output lands
@@ -175,20 +175,22 @@ class CameraXRecorder(
             .start(ContextCompat.getMainExecutor(context)) { event ->
                 when (event) {
                     is VideoRecordEvent.Start ->
-                        startEventNs = SystemClock.elapsedRealtimeNanos()
+                        startSignal.complete(SystemClock.elapsedRealtimeNanos())
                     is VideoRecordEvent.Finalize ->
                         signal.complete(event)
                     else -> Unit
                 }
             }
         activeVideoOut = out
-        // The Start callback may not have fired yet when start() returns;
-        // wait briefly so startNs is the camera's truth, not ours.
-        repeat(20) {
-            if (startEventNs != null) return@repeat
-            delay(50)
+        // Suspend for the camera's own Start event (≤ 1 s) instead of
+        // polling it: startNs is the camera's truth when it arrives, the
+        // call-site clock when it never does (W10-02).
+        val eventNs = try {
+            withTimeout(1_000L) { startSignal.await() }
+        } catch (e: TimeoutCancellationException) {
+            null
         }
-        return resolveVideoStartNs(startEventNs, callNs)
+        return resolveVideoStartNs(eventNs, callNs)
     }
 
     override suspend fun stopVideo(): Path {

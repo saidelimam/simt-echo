@@ -33,6 +33,11 @@ data class KeyframeSpec(
  * Media seam (plan W1-05): frame extraction and cropping against the
  * captured video. The Android actual uses [android.media.MediaMetadataRetriever];
  * tests drive the pure helpers below and a fake [MediaTools].
+ *
+ * Threading (W10-02 G1): every suspend function confines its work off the
+ * caller's dispatcher — decode and file IO on IO, bitmap scaling on Default.
+ * Callers (e.g. `viewModelScope` on Main) must never need their own
+ * `withContext` to stay off the main thread.
  */
 interface MediaTools {
     /**
@@ -41,6 +46,21 @@ interface MediaTools {
      * quality 82 to [out]. [atMs] is clamped to `[0, duration − 100]`.
      */
     suspend fun extractFrame(video: Path, atMs: Long, maxSide: Int, out: Path)
+
+    /**
+     * Extracts every frame in [frames] from [video]. The default loops over
+     * [extractFrame]; the Android actual opens one retriever for the whole
+     * batch instead of one per frame (W10-02 G1).
+     */
+    suspend fun extractFrames(video: Path, frames: List<FrameRequest>) {
+        for (frame in frames) extractFrame(video, frame.atMs, frame.maxSide, frame.out)
+    }
+
+    /**
+     * Video duration in milliseconds, or null when unknown. A metadata
+     * probe only — never decodes frames (W10-02 G5: clip ends clamp to this).
+     */
+    suspend fun videoDurationMs(video: Path): Long? = null
 
     /**
      * Crop [box] from [input] (clamped, padded 8 %), scale to [maxSide],
@@ -55,6 +75,13 @@ interface MediaTools {
      */
     suspend fun cutClip(video: Path, startMs: Long, endMs: Long, maxFps: Int, out: Path): ClipInfo
 }
+
+/** One frame extraction inside an [MediaTools.extractFrames] batch. */
+data class FrameRequest(
+    val atMs: Long,
+    val maxSide: Int,
+    val out: Path,
+)
 
 // ── Pure keyframe helpers (tested in commonTest) ──────────────────────────
 

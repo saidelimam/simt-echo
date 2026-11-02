@@ -5,13 +5,23 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.os.Handler
+import android.os.HandlerThread
 import android.os.SystemClock
 import app.simt.echo.capture.ImuSample
 import app.simt.echo.capture.PdrEngine
 import app.simt.echo.capture.StepCalibratable
 import app.simt.echo.capture.PressureSample
 import app.simt.echo.capture.RotSample
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.launch
 
 /**
  * Android sensors → [PdrEngine] (slice W1-01).
@@ -22,12 +32,30 @@ import kotlinx.coroutines.flow.Flow
  * code in `simt-app` — vendored, ECHO-owned, no dependency. Accelerometer + game rotation
  * vector at game rate (~50 Hz), barometer at UI rate; sensor events feed
  * the engine directly, in delivery order.
+ *
+ * Threading (W10-02 G2): sensors register on a dedicated
+ * `HandlerThread("echo-imu")`, so step detection never competes with
+ * Compose for the main looper. Updates deliver through a buffered channel
+ * — steps need every sample, so the buffer suspends under backpressure
+ * instead of conflating or dropping.
  */
 class BuiltInPdrMotionSource(context: Context) : MotionSource, StepCalibratable {
 
     private val sensorManager =
         context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
     private val engine = PdrEngine()
+
+    private var imuThread: HandlerThread? = null
+    private var imuHandler: Handler? = null
+
+    private val pipe = Channel<MotionUpdate>(
+        capacity = 512,
+        onBufferOverflow = BufferOverflow.SUSPEND,
+    )
+    override val updates: Flow<MotionUpdate> = pipe.receiveAsFlow()
+
+    private val forwardScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var forwardJob: Job? = null
 
     /** Calibration reaches the engine it wraps (W4-02): without this
      * forward, `CaptureSession`'s step-K push silently no-ops on the
@@ -37,8 +65,6 @@ class BuiltInPdrMotionSource(context: Context) : MotionSource, StepCalibratable 
         set(value) {
             engine.stepK = value
         }
-
-    override val updates: Flow<MotionUpdate> = engine.updates
 
     private val listener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent) {
@@ -73,19 +99,30 @@ class BuiltInPdrMotionSource(context: Context) : MotionSource, StepCalibratable 
 
     override fun start() {
         engine.start()
-        register(Sensor.TYPE_ACCELEROMETER, SensorManager.SENSOR_DELAY_GAME)
-        register(Sensor.TYPE_GAME_ROTATION_VECTOR, SensorManager.SENSOR_DELAY_GAME)
-        register(Sensor.TYPE_PRESSURE, SensorManager.SENSOR_DELAY_NORMAL)
+        forwardJob?.cancel()
+        forwardJob = forwardScope.launch { engine.updates.collect { pipe.send(it) } }
+        val thread = HandlerThread("echo-imu").apply { start() }
+        imuThread = thread
+        val handler = Handler(thread.looper)
+        imuHandler = handler
+        register(Sensor.TYPE_ACCELEROMETER, SensorManager.SENSOR_DELAY_GAME, handler)
+        register(Sensor.TYPE_GAME_ROTATION_VECTOR, SensorManager.SENSOR_DELAY_GAME, handler)
+        register(Sensor.TYPE_PRESSURE, SensorManager.SENSOR_DELAY_NORMAL, handler)
     }
 
-    private fun register(type: Int, delay: Int) {
+    private fun register(type: Int, delay: Int, handler: Handler) {
         sensorManager.getDefaultSensor(type)?.let { sensor ->
-            sensorManager.registerListener(listener, sensor, delay)
+            sensorManager.registerListener(listener, sensor, delay, handler)
         }
     }
 
     override fun stop() {
         sensorManager.unregisterListener(listener)
+        forwardJob?.cancel()
+        forwardJob = null
+        imuThread?.quitSafely()
+        imuThread = null
+        imuHandler = null
         engine.stop()
     }
 }
