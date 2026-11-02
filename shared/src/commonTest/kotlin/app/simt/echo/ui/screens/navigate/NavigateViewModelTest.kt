@@ -111,8 +111,9 @@ class NavigateViewModelTest {
     @Test
     fun anchoredLegPersistsTheLearnedStride() = runTest(dispatcher) {
         val configs = ConfigRepository(FileStore(FakeFileSystem(), "/cfg".toPath()))
-        // The follower's odometer reads 10 m for the 20 m opening leg.
-        val source = ReplayMotionSource(walkLog(listOf(10.0 to 0.0)), this)
+        // The follower's odometer reads 14 m for the 20 m opening leg
+        // (r = 1.43, inside the stride learner's outlier gate).
+        val source = ReplayMotionSource(walkLog(listOf(14.0 to 0.0)), this)
         val vm = NavigateViewModel(
             Fixtures.L_ROUTE.routeId, routesWithLRoute(), source, FakeHaptics(), configs = configs,
         ) {}
@@ -127,7 +128,7 @@ class NavigateViewModelTest {
 
         assertEquals(1, configs.get().learnedStrideLegs)
         val learnedK = configs.get().learnedStepK ?: 0.0
-        assertTrue(learnedK in 1.5..1.9, "learned K was $learnedK")
+        assertTrue(learnedK in 1.2..1.5, "learned K was $learnedK")
     }
 
     @Test
