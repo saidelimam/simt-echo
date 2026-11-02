@@ -3,6 +3,7 @@ package app.simt.echo.ui.screens
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -72,7 +73,9 @@ class HostSimulateJourneyTest {
             EchoNavHost(graph = graph, navController = nav)
         }
 
-        compose.onNodeWithText("L route (fixture)", substring = true).performClick()
+        // W8-06: saved walks are Cosmos records — click the record row,
+        // same RouteDetail destination as the pre-Cosmos button.
+        compose.onNodeWithTag("CosmosRecord:L route (fixture)").performClick()
         // W8-05: the shell chrome + persistent deck take vertical space, so
         // the RouteDetail body scrolls inside the shell (same pattern as
         // "Save ECHO" in HostCoreLoopJourneyTest).
@@ -110,7 +113,9 @@ class HostSimulateJourneyTest {
             EchoNavHost(graph = graph, navController = nav)
         }
 
-        compose.onNodeWithText("L route (fixture)", substring = true).performClick()
+        // W8-06: saved walks are Cosmos records — click the record row,
+        // same RouteDetail destination as the pre-Cosmos button.
+        compose.onNodeWithTag("CosmosRecord:L route (fixture)").performClick()
         compose.onNodeWithText("Navigate").performClick()
 
         compose.runOnIdle {

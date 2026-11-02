@@ -1,9 +1,14 @@
 package app.simt.echo.ui.screens
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import app.simt.echo.data.RecoverableDraft
 import app.simt.echo.host.RobolectricActivityRule
 import app.simt.echo.model.EchoRoute
@@ -56,6 +61,8 @@ class HomeScreenTest {
             }
         }
         compose.onNodeWithText("Walk it once. Share the way.").assertIsDisplayed()
+        // First-run Ignition: one centred task, one primary command.
+        compose.onNodeWithText("Record a walk").assertIsDisplayed()
         compose.onNodeWithText("Record").assertIsDisplayed()
         compose.onNodeWithText("Receive").assertIsDisplayed()
         compose.onNodeWithText("Review demo draft").assertDoesNotExist()
@@ -99,11 +106,54 @@ class HomeScreenTest {
                 ),
             )
         }
+        // Above-the-fold records first: route + recovery rows, stats line,
+        // provenance + offline badges (shape + text, never hue-only), and
+        // the recovery section leading before the saved tracks.
         compose.onNodeWithText("Morning walk", substring = true).assertIsDisplayed()
-        compose.onNodeWithText("Evening stroll", substring = true).assertIsDisplayed()
         compose.onNodeWithText("Park loop", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("60.0 m", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("landmarks", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("Own").assertIsDisplayed()
+        compose.onNodeWithText("Offline-ready").assertIsDisplayed()
+        compose.onNodeWithText("Interrupted drafts").assertIsDisplayed()
+        compose.onNodeWithText("Saved walks").assertIsDisplayed()
+        // Draft records sit below the fold in the taller record layout;
+        // scroll the section into view, then assert it by name.
+        compose.onNodeWithText("Evening stroll", substring = true).performScrollTo()
+        compose.onNodeWithText("Drafts").assertIsDisplayed()
+        compose.onNodeWithText("Evening stroll", substring = true).assertIsDisplayed()
+        // One Draft badge on the recovery row, one on the draft row.
+        compose.onAllNodesWithText("Draft").assertCountEquals(2)
         compose.onNodeWithText("route-uuid-1", substring = true).assertDoesNotExist()
         compose.onNodeWithText("draft-uuid-1", substring = true).assertDoesNotExist()
         compose.onNodeWithText("draft-uuid-2", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun recoverySection_leadsAndResumesInterruptedDraft() {
+        var resumed: RecoverableDraft? = null
+        compose.setContent {
+            HomeScreen(
+                onOpen = {},
+                draftNames = mapOf("draft-uuid-9" to "Park loop"),
+                onResumeDraft = { resumed = it },
+                recoverableDrafts = listOf(
+                    RecoverableDraft(
+                        draftId = "draft-uuid-9",
+                        sampleCount = 42,
+                        markCount = 1,
+                        hasRouteDraft = false,
+                        jobStatus = null,
+                    ),
+                ),
+            )
+        }
+        compose.onNodeWithText("Interrupted drafts").assertIsDisplayed()
+        compose.onNodeWithText("Park loop", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("42 samples", substring = true).assertIsDisplayed()
+        // Records are pressable rows: resuming fires the same callback
+        // the pre-Cosmos buttons wired (behavior same, presentation new).
+        compose.onNodeWithTag("CosmosRecord:Park loop").performClick()
+        kotlin.test.assertEquals("draft-uuid-9", resumed?.draftId)
     }
 }
