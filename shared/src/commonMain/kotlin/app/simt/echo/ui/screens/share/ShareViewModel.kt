@@ -12,6 +12,9 @@ import app.simt.echo.transfer.ExportSelection
 import app.simt.echo.transfer.ExportSummary
 import app.simt.echo.transfer.START_PHOTO_ITEM_ID
 import app.simt.echo.transfer.TransferService
+import app.simt.echo.ui.copy.shareErrorCopy
+import app.simt.echo.ui.copy.shareExportErrorCopy
+import app.simt.echo.ui.copy.shareUpdateErrorCopy
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -74,7 +77,7 @@ class ShareViewModel(
                     haptics.play(HapticPattern.CONFIRM)
                 }
             } catch (e: Exception) {
-                _ui.update { it.copy(error = e.message ?: "Could not start sharing") }
+                _ui.update { it.copy(error = shareErrorCopy(e)) }
             }
         }
     }
@@ -118,7 +121,7 @@ class ShareViewModel(
                 val offer = service.offer(routeId, useRelay = relayed, selection = selection)
                 _ui.update { it.copy(qrUri = offer.qrUri, error = null) }
             } catch (e: Exception) {
-                _ui.update { it.copy(error = e.message ?: "Could not update sharing") }
+                _ui.update { it.copy(error = shareUpdateErrorCopy()) }
             }
         }
     }
@@ -136,7 +139,7 @@ class ShareViewModel(
                 val offer = service.offer(routeId, useRelay = true, selection = _ui.value.selection)
                 _ui.update { it.copy(qrUri = offer.qrUri, relayOffered = true, error = null) }
             } catch (e: Exception) {
-                _ui.update { it.copy(error = e.message ?: "Could not start the relay") }
+                _ui.update { it.copy(error = shareUpdateErrorCopy()) }
             }
         }
     }
@@ -167,7 +170,7 @@ class ShareViewModel(
                     )
                 }
             } catch (e: Exception) {
-                _ui.update { it.copy(fileWarning = false, error = e.message ?: "Could not export the file") }
+                _ui.update { it.copy(fileWarning = false, error = shareExportErrorCopy()) }
             }
         }
     }

@@ -7,6 +7,7 @@ import app.simt.echo.data.ConfigRepository
 import app.simt.echo.data.TrialRepository
 import app.simt.echo.platform.CSV_MIME
 import app.simt.echo.platform.FileSharing
+import app.simt.echo.ui.copy.settingsExportErrorCopy
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -137,7 +138,7 @@ class SettingsViewModel(
                     )
                 }
             } catch (e: Exception) {
-                _ui.update { it.copy(exportNote = e.message ?: "Could not export the trials") }
+                _ui.update { it.copy(exportNote = settingsExportErrorCopy()) }
             }
         }
     }

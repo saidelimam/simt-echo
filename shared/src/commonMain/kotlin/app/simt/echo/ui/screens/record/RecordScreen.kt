@@ -143,7 +143,7 @@ fun RecordScreen(
                         )
 
                         else -> Text(
-                            text = "Stand at the start, face where you'll walk",
+                            text = "Stand at the start",
                             style = MaterialTheme.typography.bodyLarge,
                         )
                     }

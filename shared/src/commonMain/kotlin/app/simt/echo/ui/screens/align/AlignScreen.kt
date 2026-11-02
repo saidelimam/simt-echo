@@ -19,6 +19,7 @@ import app.simt.echo.platform.rememberCameraRecorder
 import app.simt.echo.ui.components.CropImage
 import app.simt.echo.ui.components.EchoButton
 import app.simt.echo.ui.components.EmptyState
+import app.simt.echo.ui.copy.MISSING_ROUTE_ERROR
 
 /**
  * Align screen (plan §8.3 / W2-06): start photo, live preview PiP, hint
@@ -39,10 +40,11 @@ fun AlignScreen(
 
     if (route == null) {
         EmptyState(
-            title = "No saved route $routeId",
+            title = MISSING_ROUTE_ERROR.whatHappened,
             actionLabel = "Back",
             onAction = onBack,
             modifier = modifier.fillMaxSize(),
+            body = "${MISSING_ROUTE_ERROR.whatsSafe} ${MISSING_ROUTE_ERROR.nextAction}",
         )
         return
     }

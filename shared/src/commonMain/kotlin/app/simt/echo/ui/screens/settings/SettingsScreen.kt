@@ -53,7 +53,7 @@ fun SettingsScreen(
             style = MaterialTheme.typography.bodyLarge,
         )
         Text(
-            text = "Walk exactly 10 m, enter what ECHO measured.",
+            text = "Walk 10 m, enter the reading",
             style = MaterialTheme.typography.bodyMedium,
         )
         OutlinedTextField(

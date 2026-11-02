@@ -22,6 +22,8 @@ import app.simt.echo.transfer.CloudApi
 import app.simt.echo.transfer.TransferService
 import app.simt.echo.ui.components.EchoButton
 import app.simt.echo.ui.components.PillButton
+import app.simt.echo.ui.copy.MISSING_ROUTE_ERROR
+import app.simt.echo.ui.copy.UNTITLED_WALK
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -72,11 +74,15 @@ fun RouteDetailScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         if (route == null) {
-            Text(text = "No saved route $routeId", style = MaterialTheme.typography.titleLarge)
+            Text(text = MISSING_ROUTE_ERROR.whatHappened, style = MaterialTheme.typography.titleLarge)
+            Text(
+                text = "${MISSING_ROUTE_ERROR.whatsSafe} ${MISSING_ROUTE_ERROR.nextAction}",
+                style = MaterialTheme.typography.bodyLarge,
+            )
             EchoButton(text = "Back home", onClick = onBack, modifier = Modifier.fillMaxWidth())
             return@Column
         }
-        Text(text = route.name.ifEmpty { routeId }, style = MaterialTheme.typography.titleLarge)
+        Text(text = route.name.ifEmpty { UNTITLED_WALK }, style = MaterialTheme.typography.titleLarge)
         Text(
             text = "${route.totalLengthM.roundToInt()} m · ${route.nodes.size} nodes · " +
                 "${route.landmarks.size} landmarks",

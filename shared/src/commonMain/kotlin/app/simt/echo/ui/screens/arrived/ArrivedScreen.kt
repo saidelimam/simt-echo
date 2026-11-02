@@ -24,6 +24,7 @@ import app.simt.echo.model.NodeType
 import app.simt.echo.ui.components.EchoButton
 import app.simt.echo.ui.components.PillButton
 import app.simt.echo.ui.components.oneDecimal
+import app.simt.echo.ui.copy.UNTITLED_WALK
 
 /**
  * Arrived screen (plan §8.3 / W2-06): check mark, destination, summary,
@@ -57,7 +58,7 @@ fun ArrivedScreen(
             Text(text = "Arrived", style = MaterialTheme.typography.titleLarge)
         } else {
             val destination = route.nodes.lastOrNull { it.type == NodeType.DESTINATION }
-                ?.label?.takeIf { it.isNotEmpty() } ?: route.name.ifEmpty { routeId }
+                ?.label?.takeIf { it.isNotEmpty() } ?: route.name.ifEmpty { UNTITLED_WALK }
             Text(text = destination, style = MaterialTheme.typography.titleLarge)
             // Route facts only: this screen observes no confirmations, so it
             // must not claim any (review 0001 R2).
