@@ -8,6 +8,7 @@
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "canary:sam": "node scripts/canary-sam.mjs",
     "types": "wrangler types"
   },
   "dependencies": {

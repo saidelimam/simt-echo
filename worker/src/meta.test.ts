@@ -10,6 +10,24 @@ function sse(events: string[], status = 200): Response {
   return new Response(events.map((e) => `data: ${e}\n\n`).join("") + "data: [DONE]\n\n", { status });
 }
 
+/** An SSE body delivered in arbitrary transport chunks (golden splits). */
+function chunked(body: string, pieces: number[]): Response {
+  const parts: string[] = [];
+  let at = 0;
+  for (const n of pieces) {
+    parts.push(body.slice(at, at + n));
+    at += n;
+  }
+  parts.push(body.slice(at));
+  const stream = new ReadableStream<string>({
+    start(c) {
+      for (const p of parts) c.enqueue(p);
+      c.close();
+    },
+  });
+  return new Response(stream.pipeThrough(new TextEncoderStream()), { status: 200 });
+}
+
 const delta = (text: string) =>
   JSON.stringify({ type: "response.output_text.delta", delta: text });
 const done = (text: string) =>
@@ -39,5 +57,46 @@ describe("metaResponses", () => {
 
   it("fails closed without a key", async () => {
     await expect(metaResponses({} as never, {})).rejects.toBeInstanceOf(NonRetryableError);
+  });
+
+  it("reassembles events split across transport chunks (mid-\\n\\n split)", async () => {
+    const body =
+      `data: ${delta("ab")}\n\n` + `data: ${delta("cd")}\n\n` + `data: ${done("abcd")}\n\n` + "data: [DONE]\n\n";
+    // Splits land mid-event, mid-JSON, and inside the \n\n boundary itself.
+    vi.stubGlobal("fetch", async () => chunked(body, [7, 3, 25, 2, 40, 1]));
+    await expect(metaResponses(env, {})).resolves.toBe("abcd");
+  });
+
+  it("accepts CRLF line endings", async () => {
+    const wire =
+      `data: ${delta("ab")}\r\n\r\n` +
+      `data: ${done("<0f>0<|box;…|>")}\r\n\r\n` +
+      "data: [DONE]\r\n\r\n";
+    vi.stubGlobal("fetch", async () => chunked(wire, [11, 5, 30]));
+    await expect(metaResponses(env, {})).resolves.toBe("ab");
+  });
+
+  it("ignores ':' keep-alive comments and heartbeats", async () => {
+    const wire =
+      ": ping\n\n" +
+      `data: ${delta("xy")}\n\n` +
+      ":keep-alive\n\n" +
+      `\n` +
+      `data: ${done("xy")}\n\n` +
+      "data: [DONE]\n\n";
+    vi.stubGlobal("fetch", async () => chunked(wire, [4, 9, 2, 33]));
+    await expect(metaResponses(env, {})).resolves.toBe("xy");
+  });
+
+  it("fails closed (non-retryable) on response.incomplete", async () => {
+    const incomplete = JSON.stringify({ type: "response.incomplete", reason: "max_output_tokens" });
+    vi.stubGlobal("fetch", async () => sse([delta("ab"), incomplete]));
+    await expect(metaResponses(env, {})).rejects.toBeInstanceOf(NonRetryableError);
+  });
+
+  it("collects a final event with no trailing blank line", async () => {
+    const wire = `data: ${done("<0f>7<|box|>")}`; // no \n\n terminator
+    vi.stubGlobal("fetch", async () => chunked(wire, [10]));
+    await expect(metaResponses(env, {})).resolves.toBe("<0f>7<|box|>");
   });
 });
