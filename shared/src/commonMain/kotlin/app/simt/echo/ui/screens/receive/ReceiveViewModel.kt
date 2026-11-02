@@ -6,8 +6,8 @@ import app.simt.echo.model.BundleBody
 import app.simt.echo.model.NodeType
 import app.simt.echo.platform.FileSharing
 import app.simt.echo.platform.TransferProgress
-import app.simt.echo.platform.bytesPerSecond
 import app.simt.echo.platform.currentEpochMs
+import app.simt.echo.transfer.ProgressRateTracker
 import app.simt.echo.transfer.TransferService
 import app.simt.echo.ui.copy.receiveFileErrorCopy
 import app.simt.echo.ui.copy.receiveSaveErrorCopy
@@ -63,8 +63,7 @@ class ReceiveViewModel(
     private var handledUri: String? = null
     private var previewBody: BundleBody? = null
 
-    private var lastProgress: TransferProgress? = null
-    private var lastProgressMs: Long = 0L
+    private val rate = ProgressRateTracker(viewModelScope, nowMs)
 
     init {
         // Subscribed from construction — long before any scan can move
@@ -72,11 +71,8 @@ class ReceiveViewModel(
         // so even a transport that emits without suspending loses nothing.
         viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
             service.progress.collect { emitted ->
-                val now = nowMs()
-                val rate = lastProgress?.let { bytesPerSecond(it, lastProgressMs, emitted, now) } ?: 0.0
-                lastProgress = emitted
-                lastProgressMs = now
-                _ui.update { it.copy(progress = emitted, bytesPerSecond = rate) }
+                val measured = rate.record(emitted) { _ui.update { it.copy(bytesPerSecond = 0.0) } }
+                _ui.update { it.copy(progress = emitted, bytesPerSecond = measured) }
             }
         }
     }
@@ -159,8 +155,7 @@ class ReceiveViewModel(
 
     /** Drops measured progress so a new scan starts from frozen light. */
     private fun clearProgress() {
-        lastProgress = null
-        lastProgressMs = 0L
+        rate.reset()
     }
 
     private fun summarize(body: BundleBody): ImportPreview {

@@ -9,7 +9,6 @@ import io.ktor.client.request.setBody
 import io.ktor.http.HttpHeaders
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -56,7 +55,7 @@ class KtorRelayClient(
 
     private val relayUrl = baseUrl.trimEnd('/') + "/v1/relay"
     private val json = Json { ignoreUnknownKeys = true }
-    private val progressFlow = MutableSharedFlow<app.simt.echo.platform.TransferProgress>(extraBufferCapacity = 64)
+    private val progressFlow = newProgressFlow()
 
     /** Re-emits measured upload/download progress (W13-14). */
     override val progress: Flow<app.simt.echo.platform.TransferProgress> get() = progressFlow

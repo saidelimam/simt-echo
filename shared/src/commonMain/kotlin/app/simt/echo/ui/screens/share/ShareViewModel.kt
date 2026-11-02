@@ -7,12 +7,12 @@ import app.simt.echo.platform.FileSharing
 import app.simt.echo.platform.HapticPattern
 import app.simt.echo.platform.Haptics
 import app.simt.echo.platform.TransferProgress
-import app.simt.echo.platform.bytesPerSecond
 import app.simt.echo.platform.currentEpochMs
 import app.simt.echo.transfer.ExpiryOption
 import app.simt.echo.transfer.ExportItem
 import app.simt.echo.transfer.ExportSelection
 import app.simt.echo.transfer.ExportSummary
+import app.simt.echo.transfer.ProgressRateTracker
 import app.simt.echo.transfer.START_PHOTO_ITEM_ID
 import app.simt.echo.transfer.TransferService
 import app.simt.echo.ui.copy.shareErrorCopy
@@ -68,19 +68,15 @@ class ShareViewModel(
     private val _ui = MutableStateFlow(ShareUiState())
     val ui: StateFlow<ShareUiState> = _ui.asStateFlow()
 
-    private var lastProgress: TransferProgress? = null
-    private var lastProgressMs: Long = 0L
+    private val rate = ProgressRateTracker(viewModelScope, nowMs)
 
     init {
         // Undispatched: subscribed before any offer can move bytes, so a
         // transport that emits without suspending loses nothing.
         viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
             service.progress.collect { emitted ->
-                val now = nowMs()
-                val rate = lastProgress?.let { bytesPerSecond(it, lastProgressMs, emitted, now) } ?: 0.0
-                lastProgress = emitted
-                lastProgressMs = now
-                _ui.update { it.copy(progress = emitted, bytesPerSecond = rate) }
+                val measured = rate.record(emitted) { _ui.update { it.copy(bytesPerSecond = 0.0) } }
+                _ui.update { it.copy(progress = emitted, bytesPerSecond = measured) }
             }
         }
         viewModelScope.launch {
@@ -262,8 +258,7 @@ class ShareViewModel(
 
     /** Drops measured progress so a new offer starts from frozen light. */
     private fun clearProgress() {
-        lastProgress = null
-        lastProgressMs = 0L
+        rate.reset()
     }
 
     override fun onCleared() {

@@ -1,5 +1,6 @@
 package app.simt.echo.ui.components
 
+import app.simt.echo.platform.TransferProgress
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -33,5 +34,32 @@ class TransferParticlesTest {
     @Test
     fun sameBytesGiveSameStrip() {
         assertEquals(transferParticleOffsets(0.37f), transferParticleOffsets(0.37f))
+    }
+
+    @Test
+    fun descriptionReportsPercentWhileBytesMove() {
+        assertEquals("Transfer 50 percent", transferDescription(TransferProgress(50L, 100L), bytesPerSecond = 80.0))
+    }
+
+    @Test
+    fun descriptionSaysStalledWhenNoBytesMove() {
+        assertEquals(
+            "Transfer 50 percent, stalled",
+            transferDescription(TransferProgress(50L, 100L), bytesPerSecond = 0.0),
+        )
+    }
+
+    @Test
+    fun completedTransferIsNeverStalled() {
+        assertEquals("Transfer 100 percent", transferDescription(TransferProgress(100L, 100L), bytesPerSecond = 0.0))
+    }
+
+    @Test
+    fun unknownTotalDoesNotInventAPercent() {
+        assertEquals("Transfer in progress", transferDescription(TransferProgress(4096L, 0L), bytesPerSecond = 10.0))
+        assertEquals(
+            "Transfer in progress, stalled",
+            transferDescription(TransferProgress(4096L, 0L), bytesPerSecond = 0.0),
+        )
     }
 }

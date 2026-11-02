@@ -36,6 +36,20 @@ fun transferParticleOffsets(fraction: Float, count: Int = PARTICLE_COUNT): List<
         .filter { it > 0f }
 
 /**
+ * Spoken state of the strip: the percent when the total is known, "in
+ * progress" when it is not, and "stalled" once no bytes are moving —
+ * the same signal that dims the particles, never an animation.
+ */
+fun transferDescription(progress: TransferProgress, bytesPerSecond: Double): String {
+    val base = if (progress.totalBytes > 0L) {
+        "Transfer ${(progress.fraction * 100f).roundToInt()} percent"
+    } else {
+        "Transfer in progress"
+    }
+    return if (progress.isComplete || bytesPerSecond > 0.0) base else "$base, stalled"
+}
+
+/**
  * Transfer particle flow (plan W13-14, honest light): two phone glyphs
  * with a track between them. The filled track is [progress.fraction] and
  * the particles ride it; their brightness follows the measured
@@ -55,13 +69,13 @@ fun TransferParticles(
     val lit = scheme.tertiary.copy(alpha = 1f)
     val dim = scheme.tertiary.copy(alpha = 0.35f)
     val dots = if (bytesPerSecond > 0.0 || progress.isComplete) lit else dim
-    val percent = (progress.fraction * 100f).roundToInt()
+    val description = transferDescription(progress, bytesPerSecond)
     Canvas(
         modifier = modifier
             .fillMaxWidth()
             .height(64.dp)
             .testTag(TransferProgressTag)
-            .semantics { contentDescription = "Transfer $percent percent" },
+            .semantics { contentDescription = description },
     ) {
         val phoneW = 26.dp.toPx()
         val phoneH = 48.dp.toPx()

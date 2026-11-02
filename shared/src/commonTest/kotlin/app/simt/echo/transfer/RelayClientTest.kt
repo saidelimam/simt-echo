@@ -12,14 +12,20 @@ import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import kotlinx.coroutines.CoroutineStart
+import app.simt.echo.platform.TransferProgress
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
  * W9-03 gate: the wired [KtorRelayClient] speaks the frozen W4-05 relay
@@ -136,5 +142,62 @@ class RelayClientTest {
         val progress = done.await()
         assertEquals(stored.size.toLong(), progress.totalBytes)
         assertEquals(stored.size.toLong(), progress.bytesSent)
+    }
+
+    @Test
+    fun downloadWithoutContentLengthStaysIndeterminateUntilTheEnd() = runTest {
+        val body = ByteArray(HTTP_PROGRESS_CHUNK_BYTES * 3 + 5) { 1 }
+        val api = client({ _ -> respond(body, HttpStatusCode.OK) })
+        val seen = mutableListOf<TransferProgress>()
+        val collector = launch(start = CoroutineStart.UNDISPATCHED) { api.progress.collect { seen += it } }
+
+        assertEquals(body.size, api.download("ABC234").size)
+        advanceUntilIdle()
+        collector.cancel()
+
+        assertTrue(seen.size >= 2, "chunks plus the final sample: $seen")
+        // Unknown total: nothing may read as finished or part-way mid-stream.
+        for (midStream in seen.dropLast(1)) {
+            assertFalse(midStream.isComplete, "mid-stream sample must not be complete: $midStream")
+            assertEquals(0f, midStream.fraction, "mid-stream sample must be indeterminate: $midStream")
+        }
+        assertEquals(TransferProgress(body.size.toLong(), body.size.toLong()), seen.last())
+    }
+
+    @Test
+    fun downloadWithContentLengthReportsTheDeclaredTotalMidStream() = runTest {
+        val body = ByteArray(HTTP_PROGRESS_CHUNK_BYTES * 3) { 1 }
+        val api = client({ _ ->
+            respond(body, HttpStatusCode.OK, headersOf(HttpHeaders.ContentLength, body.size.toString()))
+        })
+        val seen = mutableListOf<TransferProgress>()
+        val collector = launch(start = CoroutineStart.UNDISPATCHED) { api.progress.collect { seen += it } }
+
+        api.download("ABC234")
+        advanceUntilIdle()
+        collector.cancel()
+
+        val first = seen.first()
+        assertEquals(body.size.toLong(), first.totalBytes)
+        assertFalse(first.isComplete)
+        assertTrue(first.fraction in 0.01f..0.99f, "declared total gives a real fraction: $first")
+    }
+
+    @Test
+    fun aCollectorThatFallsBehindStillSeesTheFinalSample() = runTest {
+        // More chunks than the progress buffer holds, delivered before the
+        // collector gets to run: the final (total, total) must survive.
+        val body = ByteArray(HTTP_PROGRESS_CHUNK_BYTES * 70) { 1 }
+        val api = client({ _ -> respond(body, HttpStatusCode.OK) })
+        val final = async(start = CoroutineStart.UNDISPATCHED) {
+            api.progress.filter { it.isComplete }.first()
+        }
+
+        api.download("ABC234")
+        runCurrent()
+        advanceUntilIdle()
+
+        assertTrue(final.isCompleted, "the final sample was dropped by a full buffer")
+        assertEquals(body.size.toLong(), final.await().totalBytes)
     }
 }

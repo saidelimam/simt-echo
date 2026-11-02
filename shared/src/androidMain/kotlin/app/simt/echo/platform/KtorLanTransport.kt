@@ -1,6 +1,7 @@
 package app.simt.echo.platform
 
 import app.simt.echo.transfer.LanInterface
+import app.simt.echo.transfer.newProgressFlow
 import app.simt.echo.transfer.readWithProgress
 import app.simt.echo.transfer.selectLanIpv4
 import io.ktor.client.HttpClient
@@ -36,7 +37,7 @@ class KtorLanTransport : PeerTransport {
     private var server: EmbeddedServer<*, *>? = null
     private val scope = CoroutineScope(Dispatchers.IO)
     private val downloads = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
-    private val progressFlow = MutableSharedFlow<TransferProgress>(extraBufferCapacity = 64)
+    private val progressFlow = newProgressFlow()
 
     /** Emits once per successful peer download (W2-04 Share "Sent ✓"). */
     override val served: Flow<Unit> get() = downloads

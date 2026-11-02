@@ -13,13 +13,16 @@ import app.simt.echo.platform.TransferProgress
 import app.simt.echo.transfer.ExpiryOption
 import app.simt.echo.transfer.QrPayload
 import app.simt.echo.transfer.RelayClient
+import app.simt.echo.transfer.TRANSFER_STALL_MS
 import app.simt.echo.transfer.TransferService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import okio.Path
@@ -454,5 +457,68 @@ class ShareViewModelTest {
         advanceUntilIdle()
         assertNotNull(vm.ui.value.qrUri)
         assertNull(vm.ui.value.progress)
+    }
+
+    @Test
+    fun stalledTransferZeroesTheRateButKeepsTheFraction() = runTest(dispatcher) {
+        val (service, transport) = serviceWithRoute()
+        var now = 1_000L
+        val vm = ShareViewModel(
+            Fixtures.L_ROUTE.routeId,
+            service,
+            FakeHaptics(),
+            FakeFileSharing(),
+            nowMs = { now },
+        )
+        advanceUntilIdle()
+
+        now = 2_000L
+        transport.progressFlow.emit(TransferProgress(25L, 100L))
+        runCurrent()
+        now = 3_000L
+        transport.progressFlow.emit(TransferProgress(50L, 100L))
+        runCurrent()
+        assertEquals(25.0, vm.ui.value.bytesPerSecond)
+
+        // Just under a second of silence: still lit.
+        advanceTimeBy(TRANSFER_STALL_MS - 1)
+        runCurrent()
+        assertEquals(25.0, vm.ui.value.bytesPerSecond)
+
+        // Stalled: the last positive rate must not keep the particles lit.
+        advanceTimeBy(1)
+        runCurrent()
+        assertEquals(0.0, vm.ui.value.bytesPerSecond)
+        assertEquals(0.5f, vm.ui.value.progress?.fraction)
+
+        // Bytes move again: the rate is measured afresh.
+        now = 5_000L
+        transport.progressFlow.emit(TransferProgress(100L, 100L))
+        runCurrent()
+        assertEquals(25.0, vm.ui.value.bytesPerSecond)
+    }
+
+    @Test
+    fun finishedTransferRestsWithoutAStallTimer() = runTest(dispatcher) {
+        val (service, transport) = serviceWithRoute()
+        var now = 1_000L
+        val vm = ShareViewModel(
+            Fixtures.L_ROUTE.routeId,
+            service,
+            FakeHaptics(),
+            FakeFileSharing(),
+            nowMs = { now },
+        )
+        advanceUntilIdle()
+        now = 2_000L
+        transport.progressFlow.emit(TransferProgress(50L, 100L))
+        runCurrent()
+        now = 3_000L
+        transport.progressFlow.emit(TransferProgress(100L, 100L))
+        runCurrent()
+
+        advanceTimeBy(TRANSFER_STALL_MS * 5)
+        runCurrent()
+        assertEquals(50.0, vm.ui.value.bytesPerSecond, "a completed transfer is not a stall")
     }
 }

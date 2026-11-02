@@ -8,12 +8,15 @@ import app.simt.echo.platform.FileSharing
 import app.simt.echo.platform.PeerTransport
 import app.simt.echo.platform.TransferProgress
 import app.simt.echo.transfer.QrPayload
+import app.simt.echo.transfer.TRANSFER_STALL_MS
 import app.simt.echo.transfer.TransferService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import okio.Path
@@ -356,5 +359,26 @@ class ReceiveViewModelTest {
 
         assertNull(vm.ui.value.progress)
         assertEquals(0.0, vm.ui.value.bytesPerSecond)
+    }
+
+    @Test
+    fun stalledFetchZeroesTheRateAndRescanCancelsTheTimer() = runTest(dispatcher) {
+        val setup = setup()
+        var now = 1_000L
+        val vm = ReceiveViewModel(setup.serviceB, FakeFileSharing(), nowMs = { now })
+        advanceUntilIdle()
+
+        now = 2_000L
+        setup.transport.progressFlow.emit(TransferProgress(10L, 100L))
+        runCurrent()
+        now = 3_000L
+        setup.transport.progressFlow.emit(TransferProgress(60L, 100L))
+        runCurrent()
+        assertEquals(50.0, vm.ui.value.bytesPerSecond)
+
+        advanceTimeBy(TRANSFER_STALL_MS)
+        runCurrent()
+        assertEquals(0.0, vm.ui.value.bytesPerSecond, "no bytes for a second: the light must go dim")
+        assertEquals(0.6f, vm.ui.value.progress?.fraction)
     }
 }
