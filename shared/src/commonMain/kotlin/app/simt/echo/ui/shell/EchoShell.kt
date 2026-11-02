@@ -103,6 +103,7 @@ fun shellConfigFor(route: EchoRoute): EchoShellConfig = when (route) {
     is EchoRoute.Receive -> EchoShellConfig(title = "Receive", chrome = EchoChrome.CLOSE, showSettings = false)
     is EchoRoute.Align -> EchoShellConfig(title = "Align", chrome = EchoChrome.BACK, showSettings = false)
     is EchoRoute.Navigate -> EchoShellConfig(title = "Navigate", chrome = EchoChrome.BACK, showSettings = false)
+    is EchoRoute.Practice -> EchoShellConfig(title = "Practice", chrome = EchoChrome.BACK, showSettings = false)
     is EchoRoute.Arrived -> EchoShellConfig(title = "Arrived", chrome = EchoChrome.NONE, showSettings = false)
     is EchoRoute.Settings -> EchoShellConfig(title = "Settings", chrome = EchoChrome.CLOSE, showSettings = false)
 }

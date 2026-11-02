@@ -40,6 +40,8 @@ import app.simt.echo.ui.screens.align.AlignScreen
 import app.simt.echo.ui.screens.arrived.ArrivedScreen
 import app.simt.echo.ui.screens.detail.RouteDetailScreen
 import app.simt.echo.ui.screens.navigate.NavigateScreen
+import app.simt.echo.ui.screens.navigate.PRACTICE_ROUTE_ID
+import app.simt.echo.ui.screens.navigate.practiceRoute
 import app.simt.echo.ui.screens.processing.ProcessingScreen
 import app.simt.echo.ui.screens.processing.ProcessingViewModel
 import app.simt.echo.ui.screens.receive.ReceiveScreen
@@ -249,6 +251,27 @@ fun EchoNavHost(
                 trials = graph.trialRepository,
                 device = graph.platform.name,
                 baselineMode = graph.configRepository.get().baselineMode,
+                motionSource = motion,
+            )
+        }
+        echoDestination<EchoRoute.Practice> {
+            LaunchedEffect(Unit) { currentRoute = EchoRoute.Practice }
+            // Practice tour: the bundled fixture walk through the real
+            // Navigate instrument. Ephemeral route + null trial sink, so
+            // the tour writes neither `routes/` nor `trials/`; arrival
+            // returns Home (Arrived reads saved routes only).
+            val practice = remember { practiceRoute() }
+            val scope = rememberCoroutineScope()
+            val motion = remember { ReplayMotionSource(captureLogForRoute(practice), scope) }
+            NavigateScreen(
+                routeId = PRACTICE_ROUTE_ID,
+                routes = graph.routeRepository,
+                ephemeralRoute = practice,
+                onArrived = { navController.popBackStack(EchoRoute.Home, false) },
+                onBack = { navController.popBackStack() },
+                config = graph.configRepository.get(),
+                trials = null,
+                device = graph.platform.name,
                 motionSource = motion,
             )
         }

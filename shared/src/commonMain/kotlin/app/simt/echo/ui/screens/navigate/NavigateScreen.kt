@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.data.TrialRepository
 import app.simt.echo.model.EchoConfig
+import app.simt.echo.model.EchoRoute as SavedRoute
 import app.simt.echo.model.shouldShowLandmarkCards
 import app.simt.echo.nav.NavUi
 import app.simt.echo.platform.CameraRecorder
@@ -85,6 +86,12 @@ fun NavigateScreen(
     researchMode: Boolean = false,
     /** Injected source (W7-04 Simulate); null selects the live source. */
     motionSource: MotionSource? = null,
+    /**
+     * Ephemeral route (W13-13 practice tour): handed straight to the
+     * ViewModel, never saved — the tour writes neither `routes/` nor
+     * `trials/` (null [trials] sink). Null for every saved-route walk.
+     */
+    ephemeralRoute: SavedRoute? = null,
 ) {
     val motion = motionSource ?: rememberMotionSource()
     val haptics = rememberHaptics()
@@ -97,7 +104,7 @@ fun NavigateScreen(
         key = routeId,
         factory = viewModelFactory {
             addInitializer(NavigateViewModel::class) {
-                NavigateViewModel(routeId, routes, motion, haptics, config, trials, device, baselineMode, onArrived = onArrived)
+                NavigateViewModel(routeId, routes, motion, haptics, config, trials, device, baselineMode, onArrived = onArrived, ephemeralRoute = ephemeralRoute)
             }
         },
     )

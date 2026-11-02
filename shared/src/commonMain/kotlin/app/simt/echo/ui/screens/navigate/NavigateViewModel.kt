@@ -7,6 +7,7 @@ import app.simt.echo.data.RouteRepository
 import app.simt.echo.data.TrialRepository
 import app.simt.echo.model.DriftMarker
 import app.simt.echo.model.EchoConfig
+import app.simt.echo.model.EchoRoute as SavedRoute
 import app.simt.echo.model.Trial
 import app.simt.echo.model.TrialMode
 import app.simt.echo.nav.NavEvent
@@ -57,10 +58,17 @@ class NavigateViewModel(
      * call sites keep binding their lambda to `onArrived`.
      */
     private val wearNav: (NavWearState) -> Unit = {},
+    /**
+     * Ephemeral route (W13-13 practice tour): used directly, never read
+     * from nor written to the route store. The tour replays a bundled
+     * fixture walk through this same instrument with a null trial sink,
+     * so it writes neither `routes/` nor `trials/`.
+     */
+    ephemeralRoute: SavedRoute? = null,
     private val onArrived: (String) -> Unit,
 ) : ViewModel() {
 
-    private val route = routes.get(routeId)
+    private val route = ephemeralRoute ?: routes.get(routeId)
     private val navigator = route?.let { Navigator(it, config) }
 
     val ui: StateFlow<NavUi?> =

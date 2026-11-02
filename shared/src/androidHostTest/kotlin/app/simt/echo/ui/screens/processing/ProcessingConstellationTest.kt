@@ -112,6 +112,14 @@ class ProcessingConstellationTest {
         override suspend fun createJob(manifestJson: String, uploadId: String, idempotencyKey: String): String =
             "job-1"
 
+        override suspend fun deleteUpload(uploadId: String) = Unit
+
+        override suspend fun createJobFromStaged(
+            manifestJson: String,
+            uploadIds: List<String>,
+            idempotencyKey: String,
+        ): String = "job-1"
+
         override fun watchEvents(jobId: String, lastEventId: String?): Flow<JobEvent> = flow {
             events.forEach { emit(it) }
             awaitCancellation()
