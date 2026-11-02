@@ -61,6 +61,9 @@ const val DrawCanvasTag = "drawCanvas"
  * read-only (sensor-owned geometry is never edited), every card edits
  * names and cues, and "Draw landmark" crops a creator-verified landmark
  * out of the node's keyframe. Save writes the ECHO and leaves.
+ *
+ * W8-05: the shell owns the Review heading and the Back chrome — the
+ * missing-draft recovery action below is a body action, not a top bar.
  */
 @Composable
 fun ReviewScreen(
@@ -155,7 +158,6 @@ fun ReviewScreen(
             modifier = Modifier.fillMaxWidth(),
             enabled = !ui.saving && ui.savedRouteId == null,
         )
-        CosmosSecondaryButton(label = "Back", onClick = onBack, modifier = Modifier.fillMaxWidth())
     }
 }
 

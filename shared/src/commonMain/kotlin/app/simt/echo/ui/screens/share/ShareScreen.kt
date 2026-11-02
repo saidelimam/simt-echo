@@ -43,6 +43,9 @@ import io.github.alexzhirkevich.qrose.rememberQrCodePainter
  * "Share as file" (W2-07) raises the plain-file privacy warning first and
  * only writes the `.echo` container after confirmation. Serving stops when
  * the screen leaves.
+ *
+ * W8-05: the shell owns the Share heading and the Close chrome — [onClose]
+ * stays for hosts that render this screen outside the shell.
  */
 @Composable
 fun ShareScreen(
@@ -68,7 +71,6 @@ fun ShareScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(text = "Share", style = MaterialTheme.typography.titleLarge)
         ExportPreview(
             items = ui.exportItems,
             selection = ui.selection,
@@ -153,7 +155,6 @@ fun ShareScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
-        CosmosPrimaryButton(label = "Back", onClick = onClose, modifier = Modifier.fillMaxWidth())
     }
 }
 

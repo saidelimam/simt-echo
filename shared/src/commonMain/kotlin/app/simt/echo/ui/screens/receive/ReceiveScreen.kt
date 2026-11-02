@@ -36,6 +36,8 @@ import app.simt.echo.ui.copy.expiryCopy
  * spinner, import sheet (name, length, landmarks, creator, expiry) as an
  * inline panel — no dialog windows — then Save and a Received badge.
  * "Import file" (W2-07) feeds a picked plain `.echo` into the same sheet.
+ *
+ * W8-05: the shell owns the Receive heading and the Close chrome.
  */
 @Composable
 fun ReceiveScreen(
@@ -54,7 +56,6 @@ fun ReceiveScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(text = "Receive", style = MaterialTheme.typography.titleLarge)
         val savedId = ui.savedRouteId
         val preview = ui.preview
         when {

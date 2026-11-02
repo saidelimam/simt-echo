@@ -28,6 +28,8 @@ import app.simt.echo.ui.copy.aiUnavailableCopy
  * Uploading · Reading scenes · Grounding · Ready — driven by the job.
  * Errors show Retry and Continue without AI; Cancel leaves the persisted
  * job so re-entering resumes polling.
+ *
+ * W8-05: the shell owns the heading and the Close chrome.
  */
 @Composable
 fun ProcessingScreen(
@@ -43,7 +45,6 @@ fun ProcessingScreen(
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text(text = "Cloud landmarks", style = MaterialTheme.typography.titleLarge)
         when (val phase = ui.phase) {
             ProcessingPhase.Loading -> Text(text = "Preparing…")
             is ProcessingPhase.Consent -> ConsentBody(

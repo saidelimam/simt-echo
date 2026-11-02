@@ -5,6 +5,7 @@ import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
@@ -72,6 +73,10 @@ class HostSimulateJourneyTest {
         }
 
         compose.onNodeWithText("L route (fixture)", substring = true).performClick()
+        // W8-05: the shell chrome + persistent deck take vertical space, so
+        // the RouteDetail body scrolls inside the shell (same pattern as
+        // "Save ECHO" in HostCoreLoopJourneyTest).
+        compose.onNodeWithText("Simulate walk").performScrollTo()
         compose.onNodeWithText("Simulate walk").assertIsDisplayed()
         compose.onNodeWithText("Simulate walk").performClick()
 
