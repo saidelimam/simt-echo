@@ -26,26 +26,26 @@ fix before any further rollout; **High** — real bug, privacy promise not
 kept, or unbounded spend path, blocks sign-off of this subsystem;
 **Medium** — bounded weakness with a second control still holding, fix
 in the next slices; **Low** — hygiene. Critical/High findings are the
-BLOCK. Tracker rows below are the fix slices; all start `owed`.
+BLOCK. Tracker rows below are the fix slices; all start `Queued`.
 
 ## Tracker
 
-| id | state | severity | finding | evidence required to close |
-|---|---|---|---|---|
-| R9-01 | owed | High | F1 shared-token authorization model | design note + tests proving one install cannot read/delete another's job, upload, or relay code |
-| R9-02 | owed | High | F2 indefinite retention of jobs and relay objects | lifecycle rules + cron sweep; test that a terminal job's prefix and an expired relay object are gone without a GET |
-| R9-03 | owed | High | F3 unbounded manifest fan-out | schema caps (checkpoints, keyframes, approach, strings); rejection tests at the caps |
-| R9-04 | owed | High | F3 scout is one Workflow step — retries/fallbacks re-bill every checkpoint | per-checkpoint steps or persisted per-checkpoint results; test that a failure at checkpoint *n* does not re-call 1…*n*−1 |
-| R9-05 | owed | High | F4 spend governance is per-job and estimate-based only | account-level daily cap/kill-switch; `samFramesBilled` reconciled against vendor usage; alert/runbook note |
-| R9-06 | owed | Medium | F5 scout ignores face/quality frame flags; clips reach SAM unflagged | scout drops flagged frames like the lens does; clip flag contract or recorded acceptance |
-| R9-07 | owed | Medium | F6 relay allocation race, pre-cap buffering, low-entropy reusable code | conditional put or equivalent; capped streaming read; code entropy/one-shot decision + tests |
-| R9-08 | owed | Medium | F7 SSE event ids are not a reliable sort key | sortable, isolate-independent event ids; same-millisecond multi-isolate ordering test |
-| R9-09 | owed | Medium | F8 every upload-create scans all staging + all idempotency records | sweep removed from the create path (cron only) or sharded; op-count note in the slice |
-| R9-10 | owed | Medium | F9 whole-job media held in memory twice (intake move + lens planning) | streamed/lazy media handling; max-size job (80 MB) completes in a local Workers runtime test |
-| R9-11 | owed | Medium | F10 idempotency not bound to payload; manifest-only creates; duplicate ids accepted | payload-hash conflict (409), required upload reference, uniqueness refinements + tests |
-| R9-12 | owed | Medium | F11 inconsistent error envelope; vendor error text reaches clients | `app.onError` JSON envelope, sanitized job errors, `Retry-After`, request ids; contract tests |
-| R9-13 | owed | Low | F12 duplicate in-flight SAM calls; image phase can starve video; legacy ground path | in-flight dedupe by cache key, video-first reservation, legacy removal or explicit keep-decision |
-| R9-14 | owed | Low | F13 config hygiene: `ENV=dev` in prod, `workers_dev` on, health disclosure, SAM box bounds | config diff + a bounds test in `samParse` |
+| id | state | slice | tier | lane | depends on | evidence |
+|---|---|---|---|---|---|---|
+| R9-01 | Queued | F1 shared-token authorization model: design note + tests proving one install cannot read/delete another's job, upload, or relay code | High | auth | — | |
+| R9-02 | Queued | F2 indefinite retention of jobs and relay objects: lifecycle rules + cron sweep; test a terminal job's prefix and an expired relay object are gone without a GET | High | storage | — | |
+| R9-03 | Queued | F3 unbounded manifest fan-out: schema caps (checkpoints, keyframes, approach, strings) + rejection tests at the caps | High | schema | — | |
+| R9-04 | Queued | F3 scout is one Workflow step, so retries/fallbacks re-bill every checkpoint: per-checkpoint steps or persisted per-checkpoint results; test a failure at checkpoint n does not re-call 1..n-1 | High | pipeline | R9-03 | |
+| R9-05 | Queued | F4 spend governance is per-job and estimate-based only: account-level daily cap/kill-switch; samFramesBilled reconciled against vendor usage; alert/runbook note | High | spend | R9-03 | |
+| R9-06 | Queued | F5 scout ignores face/quality frame flags; clips reach SAM unflagged: scout drops flagged frames like the lens; clip flag contract or recorded acceptance | Medium | scout | R9-03 | |
+| R9-07 | Queued | F6 relay allocation race, pre-cap buffering, low-entropy reusable code: conditional put or equivalent; capped streaming read; code entropy/one-shot decision + tests | Medium | relay | — | |
+| R9-08 | Queued | F7 SSE event ids are not a reliable sort key: sortable, isolate-independent event ids; same-millisecond multi-isolate ordering test | Medium | events | — | |
+| R9-09 | Queued | F8 every upload-create scans all staging + all idempotency records: sweep removed from the create path (cron only) or sharded; op-count note in the slice | Medium | uploads | — | |
+| R9-10 | Queued | F9 whole-job media held in memory twice (intake move + lens planning): streamed/lazy media handling; max-size job (80 MB) completes in a local Workers runtime test | Medium | memory | — | |
+| R9-11 | Queued | F10 idempotency not bound to payload; manifest-only creates; duplicate ids accepted: payload-hash conflict (409), required upload reference, uniqueness refinements + tests | Medium | uploads | — | |
+| R9-12 | Queued | F11 inconsistent error envelope; vendor error text reaches clients: app.onError JSON envelope, sanitized job errors, Retry-After, request ids; contract tests | Medium | api | — | |
+| R9-13 | Queued | F12 duplicate in-flight SAM calls; image phase can starve video; legacy ground path: in-flight dedupe by cache key, video-first reservation, legacy removal or explicit keep-decision | Low | lens | — | |
+| R9-14 | Queued | F13 config hygiene (ENV=dev in prod, workers_dev on, health disclosure, SAM box bounds): config diff + a bounds test in samParse | Low | config | — | |
 
 ## Live Cloudflare state (verified 2026-11-02 via MCP)
 
