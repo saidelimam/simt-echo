@@ -10,7 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -22,8 +22,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.role
@@ -34,6 +36,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import app.simt.echo.capture.CaptureSession
 import app.simt.echo.capture.CaptureState
+import app.simt.echo.capture.CaptureHud
 import app.simt.echo.data.DraftRepository
 import app.simt.echo.model.EchoConfig
 import app.simt.echo.platform.CameraPermissionGate
@@ -42,21 +45,36 @@ import app.simt.echo.platform.currentEpochMs
 import app.simt.echo.platform.rememberCameraRecorder
 import app.simt.echo.platform.rememberHaptics
 import app.simt.echo.platform.rememberMotionSource
-import app.simt.echo.ui.components.DistanceReadout
-import app.simt.echo.ui.components.CosmosPrimaryButton
-import app.simt.echo.ui.components.CosmosSecondaryButton
+import app.simt.echo.ui.components.CosmosBanner
+import app.simt.echo.ui.components.CosmosBannerKind
 import app.simt.echo.ui.components.CosmosRecordButton
+import app.simt.echo.ui.components.CosmosSecondaryButton
+import app.simt.echo.ui.components.CosmosSheet
+import app.simt.echo.ui.components.CosmosTextField
+import app.simt.echo.ui.components.DistanceReadout
 import app.simt.echo.ui.components.StatusChip
 import app.simt.echo.ui.components.oneDecimal
 import app.simt.echo.ui.theme.EchoTouchOther
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlin.math.PI
 import kotlin.random.Random
 
+const val RecordInstrumentTag = "RecordInstrument"
+const val RecordPrestartTag = "RecordPrestart"
+const val RecordHeadingTag = "RecordHeading"
+
 /**
- * Record screen (plan §8.3 / W1-03): live preview, giant distance,
- * Mark spot, long-press Finish, then the finish form (route name +
- * destination) as an inline panel — no dialog windows.
+ * Record screen (plan §8.3 / W8-07): personal-orrery grammar (Cosmos §6.3).
+ * The camera is the instrument and owns the first read — the preview fills
+ * the viewport and the HUD overlays it. Pre-start overlay, top chips
+ * (time/steps/marks), giant tabular distance, heading tick (the missing V2
+ * §8.3 element), 88 dp Start, Mark spot, long-press Finish — then a real
+ * Cosmos Finish sheet via the shared canopy surface (no dialog bypass).
+ *
+ * Presentation + handoff only: [CaptureSession] behaviour is untouched, and
+ * the heading below is a pure display read of the existing motion flow —
+ * no geometry input changes.
  *
  * W4-03: keeps the screen on while recording and fails closed behind
  * [CameraPermissionGate] (denied camera shows rationale, never a crash).
@@ -98,86 +116,200 @@ fun RecordScreen(
     LaunchedEffect(Unit) { viewModel.prepare(resumeDraftId) }
     KeepScreenOn()
 
+    // Heading is presentation-only: a second collector on the shared motion
+    // flow (PDR engine multicasts; CaptureSession's own collection is
+    // unaffected). Null until the first sample — the tick below keeps its
+    // slot and shows a placeholder, so unavailable/denied/stale sensors
+    // never move the geometry.
+    var headingRad by remember { mutableStateOf<Double?>(null) }
+    LaunchedEffect(motion) {
+        motion.updates.collect { headingRad = it.yawRad }
+    }
+
     CameraPermissionGate {
-        Box(modifier = modifier.fillMaxSize()) {
-            camera.Preview(modifier = Modifier.fillMaxSize(), onError = viewModel::onCameraError)
+        RecordInstrument(
+            state = uiState.state,
+            hud = uiState.hud,
+            headingRad = headingRad,
+            error = uiState.error,
+            onStart = viewModel::start,
+            onMark = viewModel::mark,
+            onBeginFinish = viewModel::beginFinish,
+            onSave = { name, destination ->
+                viewModel.finish(name, destination, onSaved)
+            },
+            modifier = modifier,
+            preview = {
+                camera.Preview(modifier = Modifier.fillMaxSize(), onError = viewModel::onCameraError)
+            },
+        )
+    }
+}
+
+/**
+ * Pure instrument body: the same geometry in every state (chips row,
+ * distance + heading, action zone), so tests and TalkBack meet one layout.
+ * Split from [RecordScreen] so host tests drive the whole journey without
+ * platform sensors or the camera.
+ */
+@Composable
+internal fun RecordInstrument(
+    state: CaptureState,
+    hud: CaptureHud,
+    headingRad: Double?,
+    error: String?,
+    onStart: () -> Unit,
+    onMark: () -> Unit,
+    onBeginFinish: () -> Unit,
+    onSave: (String, String) -> Unit,
+    modifier: Modifier = Modifier,
+    preview: @Composable () -> Unit = {},
+) {
+    Box(modifier = modifier.fillMaxSize().testTag(RecordInstrumentTag)) {
+        preview()
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(24.dp),
+            verticalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StatusChip(text = formatElapsed(hud.elapsedMs))
+                StatusChip(text = "${hud.steps} steps")
+                StatusChip(text = "${hud.marks} spots")
+            }
             Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(24.dp),
-                verticalArrangement = Arrangement.SpaceBetween,
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                modifier = Modifier.fillMaxWidth(),
             ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    StatusChip(text = "${formatElapsed(uiState.hud.elapsedMs)}")
-                    StatusChip(text = "${uiState.hud.steps} steps")
-                    if (uiState.hud.marks > 0) StatusChip(text = "${uiState.hud.marks} spots")
+                error?.let { message ->
+                    CosmosBanner(message = message, kind = CosmosBannerKind.Error)
                 }
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    uiState.error?.let { message ->
-                        Text(
-                            text = message,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.error,
-                        )
+                DistanceReadout(text = "${oneDecimal(hud.distanceM)} m")
+                HeadingTick(yawRad = headingRad)
+                when (state) {
+                    CaptureState.READY, CaptureState.IDLE -> PrestartOverlay(onStart = onStart)
+                    CaptureState.RECORDING -> {
+                        CosmosSecondaryButton(label = "Mark spot", onClick = onMark)
+                        FinishButton(onFinish = onBeginFinish)
                     }
-                    DistanceReadout(text = "${oneDecimal(uiState.hud.distanceM)} m")
-                    when (uiState.state) {
-                        CaptureState.READY -> CosmosRecordButton(
-                            label = "Start",
-                            onClick = viewModel::start,
-                        )
-
-                        CaptureState.RECORDING -> {
-                            CosmosSecondaryButton(label = "Mark spot", onClick = viewModel::mark)
-                            FinishButton(onFinish = viewModel::beginFinish)
-                        }
-
-                        CaptureState.FINISHING, CaptureState.SAVED -> FinishForm(
-                            onSave = { name, destination ->
-                                viewModel.finish(name, destination, onSaved)
-                            },
-                        )
-
-                        else -> Text(
-                            text = "Stand at the start",
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
-                    }
+                    CaptureState.FINISHING, CaptureState.SAVED -> Unit
                 }
             }
         }
     }
+    if (state == CaptureState.FINISHING || state == CaptureState.SAVED) {
+        FinishSheet(onSave = onSave)
+    }
 }
 
+/**
+ * Pre-start overlay: one centred task on the live preview, one primary
+ * command. The instrument (camera) stays the first read behind it.
+ */
 @Composable
-private fun FinishForm(onSave: (String, String) -> Unit) {
+private fun PrestartOverlay(
+    onStart: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        modifier = modifier.testTag(RecordPrestartTag),
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
+        ) {
+            Text(
+                text = "Stand at the start",
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.semantics { heading() },
+            )
+            Text(
+                text = "Point at your start.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            CosmosRecordButton(label = "Start", onClick = onStart)
+        }
+    }
+}
+
+/**
+ * Pure heading display (V2 §8.3): degrees + 8-wind point from the existing
+ * motion yaw. Display only — never an input to capture geometry.
+ * [yawRad] null (no sample yet: unavailable/denied/stale sensor) renders
+ * the same node with a placeholder so the layout never shifts.
+ */
+@Composable
+internal fun HeadingTick(
+    yawRad: Double?,
+    modifier: Modifier = Modifier,
+) {
+    val text = if (yawRad == null) "—" else formatHeadingTick(yawRad)
+    val description = if (yawRad == null) {
+        "Heading unavailable"
+    } else {
+        "Heading $text"
+    }
+    Text(
+        text = text,
+        style = MaterialTheme.typography.titleMedium.copy(
+            fontFeatureSettings = "tnum",
+        ),
+        color = MaterialTheme.colorScheme.onSurface,
+        maxLines = 1,
+        modifier = modifier
+            .testTag(RecordHeadingTag)
+            .semantics { contentDescription = description },
+    )
+}
+
+private val COMPASS_8 = arrayOf("N", "NE", "E", "SE", "S", "SW", "W", "NW")
+
+/** Degrees clockwise from north + 8-wind point, e.g. "90° E". */
+internal fun formatHeadingTick(yawRad: Double): String {
+    val deg = ((yawRad * 180.0 / PI) % 360.0 + 360.0) % 360.0
+    val whole = ((deg + 0.5).toInt()) % 360
+    val point = COMPASS_8[((deg + 22.5) / 45.0).toInt() % 8]
+    return "$whole° $point"
+}
+
+/**
+ * Finish sheet on the shared canopy surface: route name + destination,
+ * one Continue. Back/scrim dismiss is a no-op on purpose — the walk is
+ * already stopped, so the sheet is the only forward path; leaving the
+ * screen abandons it like the pre-Cosmos inline form did.
+ */
+@Composable
+internal fun FinishSheet(
+    onSave: (String, String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     var name by remember { mutableStateOf("") }
     var destination by remember { mutableStateOf("") }
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        OutlinedTextField(
-            value = name,
-            onValueChange = { name = it },
-            label = { Text("Route name") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        OutlinedTextField(
-            value = destination,
-            onValueChange = { destination = it },
-            label = { Text("Destination label") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        CosmosPrimaryButton(
-            label = "Save ECHO draft",
-            onClick = { onSave(name, destination) },
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
+    CosmosSheet(
+        title = "Name this walk",
+        onDismiss = {},
+        primaryLabel = "Continue",
+        onPrimary = { onSave(name, destination) },
+        modifier = modifier,
+        content = {
+            CosmosTextField(
+                label = "Route name",
+                value = name,
+                onValueChange = { name = it },
+            )
+            CosmosTextField(
+                label = "Destination label",
+                value = destination,
+                onValueChange = { destination = it },
+            )
+        },
+    )
 }
 
 /**
@@ -211,7 +343,7 @@ private fun FinishButton(onFinish: () -> Unit) {
     }
 }
 
-private fun formatElapsed(ms: Long): String {
+internal fun formatElapsed(ms: Long): String {
     val totalSeconds = ms / 1000
     return "${totalSeconds / 60}:${(totalSeconds % 60).toString().padStart(2, '0')}"
 }
