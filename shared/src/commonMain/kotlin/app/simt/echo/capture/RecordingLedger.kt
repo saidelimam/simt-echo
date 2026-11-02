@@ -63,13 +63,16 @@ class RecordingLedger(
         onOffer(offer)
     }
 
+    /** The kept entries so far, safe from any thread (plan W11-09 live readers). */
+    fun snapshot(): List<GlimpseEntry> = ledgerLock.withLock { ledger.entries() }
+
     /**
      * Writes the kept entries to the draft. Skipped when nothing was kept,
      * so a resumed draft never loses the entries of its earlier take to an
      * empty ledger.
      */
     fun persist() {
-        val entries = ledgerLock.withLock { ledger.entries() }
+        val entries = snapshot()
         if (entries.isNotEmpty()) drafts.saveGlimpseEntries(draftId, entries)
     }
 

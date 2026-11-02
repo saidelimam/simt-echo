@@ -104,6 +104,34 @@ class CaptureSessionTest {
     )
 
     @Test
+    fun theLiveLogGrowsWithTheWalkAndHasNoDraftBeforeStart() = runTest {
+        val drafts = DraftRepository(FileStore(FakeFileSystem(), "/data".toPath()))
+        val motion = FakeMotion()
+        val session = newSession(motion, FakeCamera(), FakeHaptics(), drafts, this)
+        assertNull(session.activeDraftId)
+        assertNull(session.liveLog(), "no log exists before start")
+        assertTrue(session.liveLedger().isEmpty())
+
+        session.ready()
+        session.start()
+        runCurrent()
+        assertEquals("draft-1", session.activeDraftId)
+        motion.emit(update(1_000_000_000L, 0.7, step = true, count = 1))
+        runCurrent()
+        session.mark()
+        val first = checkNotNull(session.liveLog())
+        assertEquals(listOf(0.7), first.samples.map { it.d })
+        assertEquals(listOf("Spot 1"), first.marks.map { it.label })
+
+        motion.emit(update(2_000_000_000L, 1.4, step = true, count = 2))
+        runCurrent()
+        val second = checkNotNull(session.liveLog())
+        assertEquals(listOf(0.7, 1.4), second.samples.map { it.d })
+        assertEquals(listOf(0.7), first.samples.map { it.d }, "an earlier snapshot never changes under the reader")
+        session.finish("Walk", "Door")
+    }
+
+    @Test
     fun resumeReloadsAutosavedLogAndContinuesSameDraft() = runTest {
         // Kill-mid-record, simulated: an autosaved log exists, the app died.
         val drafts = DraftRepository(FileStore(FakeFileSystem(), "/data".toPath()))

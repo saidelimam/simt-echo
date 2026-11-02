@@ -92,6 +92,10 @@ class CaptureSession(
     private var startedAtEpochMs: Long = 0L
     private var startElapsedNs: Long = 0L
     private var motionSourceName: String = "echo_builtin_pdr"
+    // `samples` and `marks` are written by the motion collector and the
+    // `mark()` caller, and read by the autosave and the live checkpoint
+    // reader on other threads: every touch goes through [logLock].
+    private val logLock = PoolLock()
     private val samples = mutableListOf<CaptureSample>()
     private val marks = mutableListOf<Mark>()
     private var lastSampleNs: Long = Long.MIN_VALUE
@@ -117,8 +121,10 @@ class CaptureSession(
         if (_state.value != CaptureState.IDLE) return false
         val log = runCatching { drafts.loadCapture(draftId) }.getOrNull() ?: return false
         resumedDraftId = draftId
-        samples += log.samples
-        marks += log.marks
+        logLock.withLock {
+            samples += log.samples
+            marks += log.marks
+        }
         startedAtEpochMs = log.startedAtEpochMs
         lastSampleNs = log.samples.lastOrNull()?.tNs ?: Long.MIN_VALUE
         _hud.update {
@@ -172,16 +178,37 @@ class CaptureSession(
     /** Drops a "Spot n" mark at the current distance; CONFIRM haptic. */
     fun mark() {
         if (_state.value != CaptureState.RECORDING) return
-        val index = marks.size + 1
-        marks += Mark(
-            // Before the first sample there is no honest timestamp; 0 marks it.
-            tNs = if (lastSampleNs == Long.MIN_VALUE) 0L else lastSampleNs,
-            d = _hud.value.distanceM,
-            label = "Spot $index",
-        )
-        _hud.update { it.copy(marks = marks.size) }
+        val count = logLock.withLock {
+            marks += Mark(
+                // Before the first sample there is no honest timestamp; 0 marks it.
+                tNs = if (lastSampleNs == Long.MIN_VALUE) 0L else lastSampleNs,
+                d = _hud.value.distanceM,
+                label = "Spot ${marks.size + 1}",
+            )
+            marks.size
+        }
+        _hud.update { it.copy(marks = count) }
         haptics.play(HapticPattern.CONFIRM)
     }
+
+    /**
+     * The draft this session records into, or null before [start]. Read by
+     * the walk-time uploader, which stages against the same draft.
+     */
+    val activeDraftId: String? get() = draftId
+
+    /**
+     * A consistent copy of the log so far, for readers that segment while the
+     * walk is still going (plan W11-09). Null before [start]; cheap enough to
+     * call every few metres, safe from any thread.
+     */
+    fun liveLog(): CaptureLog? = if (draftId == null) null else buildLog()
+
+    /**
+     * The glimpse-ledger entries kept so far (frames are already in the
+     * draft); empty before [start] or when the recorder kept none.
+     */
+    fun liveLedger(): List<GlimpseEntry> = ledger?.snapshot().orEmpty()
 
     /** Long-press Finish: stops motion + video, enters FINISHING. */
     suspend fun beginFinish() {
@@ -225,7 +252,7 @@ class CaptureSession(
         if (startElapsedNs == 0L) startElapsedNs = update.tNs
         val isHeartbeat = update.tNs - lastSampleNs >= HEARTBEAT_NS
         if (update.isStep || isHeartbeat) {
-            samples += CaptureSample(
+            val sample = CaptureSample(
                 tNs = update.tNs,
                 d = update.distanceM,
                 yaw = update.yawRad,
@@ -233,6 +260,7 @@ class CaptureSession(
                 mag = update.magMag,
                 magV = update.magVert,
             )
+            logLock.withLock { samples += sample }
             lastSampleNs = update.tNs
         }
         _hud.update {
@@ -254,8 +282,8 @@ class CaptureSession(
             startedAtEpochMs = startedAtEpochMs,
             motionSource = motionSourceName,
             videoStartNs = videoStartNs,
-            samples = samples.toList(),
-            marks = marks.toList(),
+            samples = logLock.withLock { samples.toList() },
+            marks = logLock.withLock { marks.toList() },
             startPhoto = START_PHOTO,
             routeName = routeName,
             destinationLabel = destinationLabel,
