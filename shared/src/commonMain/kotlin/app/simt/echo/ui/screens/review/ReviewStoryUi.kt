@@ -50,7 +50,7 @@ import app.simt.echo.ui.atmosphere.CosmosMotionTier
 import app.simt.echo.ui.atmosphere.cosmosMotionTier
 import app.simt.echo.ui.components.CosmosSecondaryButton
 import app.simt.echo.ui.components.CropImage
-import app.simt.echo.ui.components.oneDecimal
+import app.simt.echo.ui.components.roundedOneDecimal
 import app.simt.echo.ui.motion.echoSharedElement
 import kotlin.math.roundToInt
 
@@ -327,7 +327,7 @@ fun KeyframeInspector(
             }
         }
         Text(
-            text = "Zoom ${oneDecimal(scale.toDouble())}×",
+            text = "Zoom ${roundedOneDecimal(scale.toDouble())}×",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

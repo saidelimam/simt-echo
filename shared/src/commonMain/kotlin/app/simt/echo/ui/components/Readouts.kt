@@ -14,6 +14,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.simt.echo.ui.theme.EchoCardRadius
+import kotlin.math.abs
+import kotlin.math.roundToLong
 
 /**
  * Center-bottom numeric readout (plan §8.3 Record screen, e.g. "23.4 m").
@@ -83,8 +85,19 @@ fun LandmarkCard(
  * distance the walker has not covered yet.
  */
 fun oneDecimal(value: Double): String {
-    val tenths = (value * 10).toLong()
+    val tenths = (value.coerceAtLeast(0.0) * 10).toLong()
     return "${tenths / 10}.${tenths % 10}"
+}
+
+/**
+ * Rounded one-decimal display for quantities that are not distances
+ * covered (zoom, ratios). Sign-safe; locale-independent, unlike
+ * `String.format`, which is JVM-only.
+ */
+fun roundedOneDecimal(value: Double): String {
+    val tenths = (value * 10).roundToLong()
+    val magnitude = abs(tenths)
+    return "${if (tenths < 0) "-" else ""}${magnitude / 10}.${magnitude % 10}"
 }
 
 /** Three-decimal display for the step constant (K ≈ 0.480). Same truncation pattern as [oneDecimal]. */

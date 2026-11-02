@@ -5,6 +5,7 @@ import app.simt.echo.model.TurnDir
 import app.simt.echo.nav.NavPhase
 import app.simt.echo.nav.NavUi
 import app.simt.echo.nav.ghost.FingerprintPrompt
+import app.simt.echo.ui.components.oneDecimal
 import kotlin.math.abs
 import kotlin.math.ceil
 
@@ -128,7 +129,7 @@ fun navigateInstrumentPresentation(
         auraRadiusDp = auraRadiusDpFor(sigmaM),
         auraSoftness01 = auraSoftnessFor(sigmaM),
         auraDashed = phase == NavPhase.UNCERTAIN,
-        sigmaLabel = "σ ±${oneDecimalTruncate(sigmaM)} m",
+        sigmaLabel = "σ ±${oneDecimal(sigmaM)} m",
         glowSide = side.takeIf { inRange && it != null && phase != NavPhase.ARRIVED },
         glowIntensity01 = glowIntensityFor(remaining).takeIf { inRange } ?: 0f,
         showLookForThis = landmarkPresent &&
@@ -182,12 +183,6 @@ fun glowSideFor(phase: NavPhase, arrowRad: Double, nextTurn: TurnDir?): GlowSide
 fun glowIntensityFor(remainingM: Double): Float =
     (1.0 - remainingM.coerceAtLeast(0.0) / PERIPHERY_GLOW_RANGE_M)
         .coerceIn(0.0, 1.0).toFloat()
-
-/** Truncating one-decimal metres (same rule as the shared readout: the screen never shows distance not yet covered). */
-internal fun oneDecimalTruncate(value: Double): String {
-    val tenths = (value.coerceAtLeast(0.0) * 10).toLong()
-    return "${tenths / 10}.${tenths % 10}"
-}
 
 /** Ceil metres for copy parity checks (mirrors Navigator's instruction rule). */
 internal fun ceilMetres(value: Double): Int = ceil(value.coerceAtLeast(0.0)).toInt()
