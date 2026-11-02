@@ -121,8 +121,8 @@ vendor-billed cost, and total latency to this file.
   ("@cf/meta/llama-4-scout-17b-16e-instruct (box-only)"), matching
   exactly what ran; `consentCopy` matches deployed reality. No
   copy change needed.
-- Evidence archived: `docs/measurements/w9-02-56a0b9d4-result.json`
-  (live result), `docs/measurements/w9-02-manifest.json` (the exact
+- Evidence archived: `res/measurements/w9-02-56a0b9d4-result.json`
+  (live result), `res/measurements/w9-02-manifest.json` (the exact
   submitted manifest). Diagnostic/errored jobs (`2f59d100`
   media_missing arg bug, `69240608` + `a378a2cf` model no-response
   on UI screenshots, `85dc0c79` known-good probe) were all

@@ -544,7 +544,7 @@ billed frames, calls, cache hits on a forced retry (must be 0 re-billed
 frames), upload bytes, latency after Finish, and Record jank during the
 walk. Compare against the §4 targets and v1. Then remove
 `GROUND_MODE=legacy` or record why it stays. Acceptance: archived
-`result.json` + event log under `docs/measurements/`; every §4 SAM row
+`result.json` + event log under `res/measurements/`; every §4 SAM row
 met or the miss recorded with cause — unmeasured is not Complete.
 
 ### Wave 12 — Ghost Navigator (make it know where you are)
