@@ -15,6 +15,7 @@ import app.simt.echo.model.TurnDir
 import app.simt.echo.model.defaultCue
 import app.simt.echo.nav.ghost.GhostFilter
 import app.simt.echo.nav.ghost.FingerprintHit
+import app.simt.echo.nav.ghost.FixGate
 import app.simt.echo.nav.ghost.FingerprintPrompt
 import app.simt.echo.nav.ghost.MagneticMatch
 import app.simt.echo.nav.ghost.Observation
@@ -172,6 +173,7 @@ class Navigator(
      */
     private val magProfiler = MagProfiler()
     private var lastMagMatchBucket: Int = -1
+    private val magFixGate = FixGate()
 
     /** Raw yaws seen on the current leg, for the wrong-start rule. */
     private val legYaws = mutableListOf<Double>()
@@ -456,8 +458,10 @@ class Navigator(
      * profiler and, at most once per 0.5 m bucket, matches the last 10 m
      * against the route's stored mag profile around the Ghost belief. A
      * passing match is a soft filter observation — never a phase change,
-     * never an anchor event. Silent on LINEAR (no filter), without a
-     * route profile, or without magnetometer data.
+     * never an anchor event — and only when [magFixGate] finds it new
+     * information (consecutive buckets re-match ~95 % the same window).
+     * Silent on LINEAR (no filter), without a route profile, or without
+     * magnetometer data.
      */
     private fun onMagneticUpdate(update: MotionUpdate) {
         val g = ghost ?: return
@@ -470,7 +474,7 @@ class Navigator(
         lastMagMatchBucket = bucket
         val (obsMag, obsVert) = magProfiler.lastWindow(MagneticMatch.QUERY_M, dist) ?: return
         MagneticMatch.match(profile, obsMag, obsVert, g.meanS, g.sigma)?.let {
-            g.observe(Observation.Magnetic(it.estimatedS))
+            if (magFixGate.accept(dist, it.estimatedS)) g.observe(Observation.Magnetic(it.estimatedS))
         }
     }
 

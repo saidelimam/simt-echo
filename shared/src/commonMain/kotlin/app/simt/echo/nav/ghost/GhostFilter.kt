@@ -283,7 +283,10 @@ class GhostFilter(
      * elsewhere so a stale or drifted signature reads as uninformative
      * rather than collapsing the filter — the same floor pattern as
      * [observeTurn]. Never a hard anchor: unlike a confirmed landmark, a
-     * steel signature can move with its furniture.
+     * steel signature can move with its furniture, so the floor is high
+     * enough (near-vs-far reweight of at most ~6:1, a little wider than
+     * the fingerprint's 2:1) that a false fix bends the posterior and
+     * cannot snap it.
      */
     fun observeMagnetic(s: Double) {
         if (!s.isFinite()) return
@@ -447,11 +450,19 @@ class GhostFilter(
         /** Landmark hard-anchor half-window, metres. */
         const val ANCHOR_HALF_M = 1.0
 
-        /** Magnetic-fix Gaussian σ, metres (W12-04): the ±1 m match claim. */
-        const val MAG_SIGMA_M = 1.0
+        /**
+         * Magnetic-fix Gaussian σ, metres (W12-04): the DTW match is good
+         * to ~1 m on a clean corridor; 2 m leaves room for the belief's own
+         * drift and for a wrong-but-plausible fix.
+         */
+        const val MAG_SIGMA_M = 2.0
 
-        /** Magnetic likelihood floor far from the matched position. */
-        const val MAG_FLOOR = 1e-4
+        /**
+         * Magnetic likelihood floor far from the matched position. At 1e-4
+         * a false fix was a hard anchor (10^4 : 1); 0.2 caps the
+         * near-vs-far reweight at 6 : 1 (fingerprints floor at 0.5).
+         */
+        const val MAG_FLOOR = 0.2
 
         /**
          * Fingerprint likelihood floor (W12-05): the weakest a particle
