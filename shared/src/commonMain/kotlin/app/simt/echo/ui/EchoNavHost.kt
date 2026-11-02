@@ -55,6 +55,7 @@ import app.simt.echo.ui.shell.echoExitTransition
 import app.simt.echo.ui.shell.echoPopEnterTransition
 import app.simt.echo.ui.shell.echoPopExitTransition
 import app.simt.echo.ui.shell.shellConfigFor
+import app.simt.echo.ui.sigil.routeSigil
 import kotlin.random.Random
 
 /**
@@ -201,6 +202,7 @@ fun EchoNavHost(
                 haptics = rememberHaptics(),
                 sharing = rememberFileSharing(),
                 onClose = { navController.popBackStack() },
+                sigil = remember(route.routeId) { graph.routeRepository.get(route.routeId)?.let(::routeSigil) },
             )
         }
         echoDestination<EchoRoute.Receive> {

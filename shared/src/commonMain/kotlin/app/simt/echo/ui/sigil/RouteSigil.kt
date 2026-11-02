@@ -10,10 +10,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.simt.echo.ui.atmosphere.CosmosMotionDurations
@@ -76,57 +79,98 @@ fun RouteSigil(
         }
     }
     val travels = tier == CosmosMotionTier.FULL
+    val colors = SigilColors(accent = accent, disc = disc, rim = rim, ink = ink)
     Canvas(modifier = modifier.size(sigilSize)) {
-        val r = size.minDimension / 2f
-        drawCircle(
-            brush = Brush.radialGradient(
-                listOf(accent.copy(alpha = 0.16f), disc),
-                center = Offset(center.x, center.y - r * 0.35f),
-                radius = r * 1.3f,
-            ),
-            radius = r,
-        )
-        drawCircle(color = rim, radius = r, style = Stroke(width = 1.dp.toPx()))
         val p = progress.value
         // Fade-only reveal below FULL: the whole glyph at alpha p.
-        val reveal = if (travels) 1f else p
-        val drawnUpTo = if (travels) p else 1f
-        val inner = r * 0.66f
-        val n = geometry.xs.size
-        val thin = 1.dp.toPx()
-        val thick = maxOf(2.6.dp.toPx(), r * 0.1f)
-        if (n == 1) {
-            drawCircle(color = accent.copy(alpha = reveal), radius = thick, center = center)
-            return@Canvas
-        }
-        val lastSegment = ((n - 1) * drawnUpTo).toInt()
-        for (i in 1..lastSegment) {
-            val t = i.toFloat() / (n - 1)
-            drawLine(
-                color = accent.copy(alpha = reveal * (0.35f + 0.65f * t)),
-                start = Offset(center.x + geometry.xs[i - 1] * inner, center.y + geometry.ys[i - 1] * inner),
-                end = Offset(center.x + geometry.xs[i] * inner, center.y + geometry.ys[i] * inner),
-                strokeWidth = thin + (thick - thin) * t,
-                cap = StrokeCap.Round,
-            )
-        }
-        // Start: a small hollow ring where the walk began.
-        drawCircle(
-            color = ink.copy(alpha = 0.7f * reveal),
-            radius = thick * 0.9f,
-            center = Offset(center.x + geometry.xs[0] * inner, center.y + geometry.ys[0] * inner),
-            style = Stroke(width = thin),
+        drawSigil(
+            geometry = geometry,
+            colors = colors,
+            reveal = if (travels) 1f else p,
+            drawnUpTo = if (travels) p else 1f,
         )
-        if (drawnUpTo >= 1f) {
-            for (mark in geometry.marks) {
-                val at = Offset(center.x + mark.x * inner, center.y + mark.y * inner)
-                if (mark.destination) {
-                    drawCircle(color = accent.copy(alpha = 0.25f * reveal), radius = thick * 2.4f, center = at)
-                    drawCircle(color = accent.copy(alpha = reveal), radius = thick * 1.2f, center = at)
-                } else {
-                    drawCircle(color = ink.copy(alpha = 0.85f * reveal), radius = thick * 0.6f, center = at)
-                }
+    }
+}
+
+/** The four colours a sigil is drawn in, resolved from the theme. */
+class SigilColors(val accent: Color, val disc: Color, val rim: Color, val ink: Color)
+
+/**
+ * The sigil seal itself, shared by [RouteSigil] and [SigilPainter]:
+ * disc, rim, tapered ribbon up to [drawnUpTo], start ring, and (once the
+ * ribbon is complete) turn dots and the destination bloom, at alpha [reveal].
+ */
+fun DrawScope.drawSigil(
+    geometry: SigilGeometry,
+    colors: SigilColors,
+    reveal: Float = 1f,
+    drawnUpTo: Float = 1f,
+) {
+    val accent = colors.accent
+    val ink = colors.ink
+    val r = size.minDimension / 2f
+    // Solid seal first, so the accent glow reads the same on the void and
+    // on the QR's white card.
+    drawCircle(color = colors.disc, radius = r)
+    drawCircle(
+        brush = Brush.radialGradient(
+            listOf(accent.copy(alpha = 0.16f), colors.disc),
+            center = Offset(center.x, center.y - r * 0.35f),
+            radius = r * 1.3f,
+        ),
+        radius = r,
+    )
+    drawCircle(color = colors.rim, radius = r, style = Stroke(width = 1.dp.toPx()))
+    val inner = r * 0.66f
+    val n = geometry.xs.size
+    val thin = 1.dp.toPx()
+    val thick = maxOf(2.6.dp.toPx(), r * 0.1f)
+    if (n == 1) {
+        drawCircle(color = accent.copy(alpha = reveal), radius = thick, center = center)
+        return
+    }
+    val lastSegment = ((n - 1) * drawnUpTo).toInt()
+    for (i in 1..lastSegment) {
+        val t = i.toFloat() / (n - 1)
+        drawLine(
+            color = accent.copy(alpha = reveal * (0.35f + 0.65f * t)),
+            start = Offset(center.x + geometry.xs[i - 1] * inner, center.y + geometry.ys[i - 1] * inner),
+            end = Offset(center.x + geometry.xs[i] * inner, center.y + geometry.ys[i] * inner),
+            strokeWidth = thin + (thick - thin) * t,
+            cap = StrokeCap.Round,
+        )
+    }
+    // Start: a small hollow ring where the walk began.
+    drawCircle(
+        color = ink.copy(alpha = 0.7f * reveal),
+        radius = thick * 0.9f,
+        center = Offset(center.x + geometry.xs[0] * inner, center.y + geometry.ys[0] * inner),
+        style = Stroke(width = thin),
+    )
+    if (drawnUpTo >= 1f) {
+        for (mark in geometry.marks) {
+            val at = Offset(center.x + mark.x * inner, center.y + mark.y * inner)
+            if (mark.destination) {
+                drawCircle(color = accent.copy(alpha = 0.25f * reveal), radius = thick * 2.4f, center = at)
+                drawCircle(color = accent.copy(alpha = reveal), radius = thick * 1.2f, center = at)
+            } else {
+                drawCircle(color = ink.copy(alpha = 0.85f * reveal), radius = thick * 0.6f, center = at)
             }
         }
+    }
+}
+
+/**
+ * The finished sigil as a [Painter] — for surfaces that take a painter,
+ * like the QR code's centre logo on Share (W13-07).
+ */
+class SigilPainter(
+    private val geometry: SigilGeometry,
+    private val colors: SigilColors,
+) : Painter() {
+    override val intrinsicSize: Size = Size.Unspecified
+
+    override fun DrawScope.onDraw() {
+        drawSigil(geometry, colors)
     }
 }

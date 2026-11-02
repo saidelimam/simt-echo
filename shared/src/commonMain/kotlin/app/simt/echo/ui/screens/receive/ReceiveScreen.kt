@@ -41,6 +41,7 @@ import app.simt.echo.ui.components.CosmosSuccessState
 import app.simt.echo.ui.components.oneDecimal
 import app.simt.echo.ui.copy.UNTITLED_WALK
 import app.simt.echo.ui.copy.expiryCopy
+import app.simt.echo.ui.sigil.RouteSigil
 import app.simt.echo.ui.theme.EchoExtras
 import app.simt.echo.ui.theme.EchoSpace12
 import app.simt.echo.ui.theme.EchoSpace16
@@ -221,6 +222,16 @@ private fun ImportSheet(
                 .fillMaxWidth()
                 .padding(EchoSpace24),
         ) {
+            // Unfold (W13-07, luminous-freeze §4): the received walk traces
+            // itself in — the same sigil the sender's QR carried.
+            preview.sigil?.let {
+                RouteSigil(
+                    geometry = it,
+                    sigilSize = 96.dp,
+                    trace = true,
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                )
+            }
             Text(
                 text = preview.name.ifEmpty { UNTITLED_WALK },
                 style = MaterialTheme.typography.titleLarge,

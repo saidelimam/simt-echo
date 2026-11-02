@@ -1,14 +1,11 @@
 package app.simt.echo.ui.screens.share
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
@@ -41,17 +38,15 @@ import app.simt.echo.ui.atmosphere.CanopyVariant
 import app.simt.echo.ui.components.CosmosPrimaryButton
 import app.simt.echo.ui.components.CosmosSecondaryButton
 import app.simt.echo.ui.components.CosmosTertiaryButton
-import app.simt.echo.ui.components.QrCard
 import app.simt.echo.ui.components.StatusChip
 import app.simt.echo.ui.copy.UNTITLED_WALK
 import app.simt.echo.ui.copy.createdCopy
 import app.simt.echo.ui.copy.expiryCopy
-import app.simt.echo.ui.theme.EchoQrMin
+import app.simt.echo.ui.sigil.SigilGeometry
 import app.simt.echo.ui.theme.EchoSpace12
 import app.simt.echo.ui.theme.EchoSpace16
 import app.simt.echo.ui.theme.EchoSpace24
 import app.simt.echo.ui.theme.EchoSpace8
-import io.github.alexzhirkevich.qrose.rememberQrCodePainter
 
 const val ShareQrTag = "ShareQr"
 const val ShareQrImageTag = "ShareQrImage"
@@ -60,7 +55,7 @@ const val ShareExportToggleTag = "ShareExportToggle"
 
 /**
  * Share screen in Cosmos (plan §8.3 / W2-04, slice W8-09): the QR is the
- * first read — [QrCard] on its light surface at the frozen ≥260 dp size —
+ * first read — the QR card on its light surface at the frozen ≥260 dp size —
  * with the export preview collapsed into a canopy section below it.
  * "Waiting for the other phone…" until the peer downloads, then "Sent ✓".
  * "Share as file" (W2-07) raises the plain-file privacy warning first and
@@ -81,6 +76,8 @@ fun ShareScreen(
     sharing: FileSharing,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
+    /** The route's sigil for the QR centre (W13-07); null shows a plain code. */
+    sigil: SigilGeometry? = null,
 ) {
     val viewModel = remember(routeId, sharing) {
         ShareViewModel(routeId, service, haptics, sharing)
@@ -101,19 +98,13 @@ fun ShareScreen(
         // First read: the QR on its light surface, at the frozen size.
         val qrUri = ui.qrUri
         if (qrUri != null) {
-            QrCard(modifier = Modifier
-                .fillMaxWidth()
-                .testTag(ShareQrTag)) {
-                Image(
-                    painter = rememberQrCodePainter(qrUri),
-                    contentDescription = "Pairing QR code",
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(1f)
-                        .sizeIn(minWidth = EchoQrMin, minHeight = EchoQrMin)
-                        .testTag(ShareQrImageTag),
-                )
-            }
+            ShareQrCode(
+                qrUri = qrUri,
+                listening = !ui.sent && ui.error == null,
+                sent = ui.sent,
+                sigil = sigil,
+                modifier = Modifier.testTag(ShareQrTag),
+            )
         }
         // Collapsed by default: the preview no longer buries the QR.
         ExportSection(
