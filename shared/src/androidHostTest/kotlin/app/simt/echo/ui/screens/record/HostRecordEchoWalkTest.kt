@@ -3,9 +3,15 @@ package app.simt.echo.ui.screens.record
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertContentDescriptionEquals
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
+import androidx.compose.ui.test.onChildren
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import app.simt.echo.capture.CaptureHud
@@ -104,6 +110,10 @@ class HostRecordEchoWalkTest {
         for (ripple in ripples) {
             val x = ripple.xFraction()
             assertTrue(x < 0.2f || x > 0.8f, "origin $x must stay out of the centre 60 %")
+            // The ring itself is confined to its band, however far it travels.
+            val band = rippleBand(ripple.leftEdge, width = 1000f)
+            assertTrue(ripple.xFraction() * 1000f in band, "origin must sit inside its own band")
+            assertTrue(band.start >= 800f || band.endInclusive <= 200f, "band $band must exclude the centre 60 %")
         }
         assertTrue(stepRipplesAlive(ripples, now), "fresh ripples travel")
         assertFalse(stepRipplesAlive(ripples, now + 900L), "ripples die after the 900 ms motif")
@@ -168,6 +178,35 @@ class HostRecordEchoWalkTest {
         compose.onNodeWithTag(TrailRibbonTag).assertContentDescriptionEquals("Walked trail: 1 turns, 1 spots")
         compose.onNodeWithTag("$TrailNodeTagPrefix:TURN:${turns.single().id}").assertIsDisplayed()
         compose.onNodeWithTag("$TrailNodeTagPrefix:MARK:${marks.single().id}").assertIsDisplayed()
+    }
+
+    @Test
+    fun trailBloom_keepsItsNodeWhenAnOlderNodeIsTrimmed() {
+        val trail = listOf(
+            TrailPoint(id = 0, distanceM = 0.0, yawRad = 0.0),
+            TrailPoint(id = 1, distanceM = 1.0, yawRad = 0.0, node = TrailNodeKind.TURN),
+            TrailPoint(id = 2, distanceM = 2.0, yawRad = 0.0),
+            TrailPoint(id = 3, distanceM = 3.0, yawRad = 0.0, node = TrailNodeKind.MARK),
+        )
+        var shown by mutableStateOf(trail)
+        compose.setContent {
+            EchoTheme(darkTheme = true) {
+                ProvideCosmosMotionTier(tier = CosmosMotionTier.STATIC) {
+                    TrailRibbon(trail = shown, headYaw = 0.0)
+                }
+            }
+        }
+        compose.waitForIdle()
+        val markTag = "$TrailNodeTagPrefix:MARK:3"
+        val before = compose.onNodeWithTag(markTag).fetchSemanticsNode().id
+
+        // The trail trims its oldest points: the TURN node leaves, indices shift.
+        compose.runOnIdle { shown = trail.drop(2) }
+        compose.waitForIdle()
+
+        compose.onNodeWithTag("$TrailNodeTagPrefix:TURN:1").assertDoesNotExist()
+        val after = compose.onNodeWithTag(markTag).fetchSemanticsNode().id
+        assertEquals(before, after, "the surviving node must keep its composition, not inherit a slot and re-bloom")
     }
 
     @Test
@@ -255,6 +294,9 @@ class HostRecordEchoWalkTest {
         compose.waitForIdle()
         compose.onNodeWithTag(LedgerBracketsTag).assertIsDisplayed()
         compose.onNodeWithTag(LedgerBracketsTag).assertContentDescriptionEquals(LEDGER_BRACKET_COPY)
+        // "Announced" means a polite live region, not just a description.
+        compose.onNodeWithTag(LedgerBracketsTag)
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite))
         compose.onNodeWithText(LEDGER_BRACKET_COPY).assertIsDisplayed()
         compose.waitUntil(timeoutMillis = 5_000) { expired }
     }
@@ -296,8 +338,10 @@ class HostRecordEchoWalkTest {
             compose.waitForIdle()
             compose.onNodeWithTag(RollingDistanceTag).assertIsDisplayed()
             compose.onNodeWithTag(RollingDistanceTag).assertContentDescriptionEquals("Distance 23.4 m")
-            compose.onNodeWithText("2").assertIsDisplayed()
-            compose.onNodeWithText("m").assertIsDisplayed()
+            // One focusable node for the whole value: digits are drawn, never separately focusable.
+            compose.onNodeWithTag(RollingDistanceTag).onChildren().assertCountEquals(0)
+            compose.onNodeWithText("2", useUnmergedTree = true).assertIsDisplayed()
+            compose.onNodeWithText("m", useUnmergedTree = true).assertIsDisplayed()
         }
     }
 

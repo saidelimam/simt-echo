@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -66,7 +67,8 @@ fun TrailRibbon(
     val turns = trail.count { it.node == TrailNodeKind.TURN }
     val marks = trail.count { it.node == TrailNodeKind.MARK }
     val path = MaterialTheme.colorScheme.onSurface
-    val vecs = remember(trail, yaw) { projectTrail(trail, yaw) }
+    // Yaw-independent: re-rotated at draw/layout, so a motion sample re-projects nothing.
+    val offsets = remember(trail) { trailOffsetsFromHead(trail) }
     BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
@@ -77,15 +79,15 @@ fun TrailRibbon(
         val density = LocalDensity.current
         val wPx = constraints.maxWidth.toFloat()
         val hPx = with(density) { TrailRibbonHeight.toPx() }
-        val at = remember(vecs, wPx, hPx) { vecs.map { trailVecToPx(it, wPx, hPx) } }
+        fun pointAt(i: Int): Offset = trailToPx(offsets[i].lateralM(yaw), offsets[i].behindM(yaw), wPx, hPx)
         Canvas(modifier = Modifier.fillMaxWidth().height(TrailRibbonHeight)) {
-            val n = at.size
+            val n = offsets.size
             for (i in 1 until n) {
                 val t = i.toFloat() / (n - 1).coerceAtLeast(1)
                 drawLine(
                     color = path.copy(alpha = 0.25f + 0.5f * t),
-                    start = at[i - 1],
-                    end = at[i],
+                    start = pointAt(i - 1),
+                    end = pointAt(i),
                     strokeWidth = (1.dp.toPx() + 3.dp.toPx() * t),
                     cap = StrokeCap.Round,
                 )
@@ -93,28 +95,32 @@ fun TrailRibbon(
         }
         trail.forEachIndexed { index, point ->
             val node = point.node ?: return@forEachIndexed
-            val pos = at[index]
-            NodeBloom(
-                kind = node,
-                tier = tier,
-                modifier = Modifier
-                    .testTag("$TrailNodeTagPrefix:${node.name}:${point.id}")
-                    .offset {
-                        val half = (NodeBloomSize / 2).roundToPx()
-                        IntOffset((pos.x - half).roundToInt(), (pos.y - half).roundToInt())
-                    },
-            )
+            // Keyed by id: a trimmed trail shifts indices, and an index-keyed
+            // bloom would replay for a node that already bloomed.
+            key(point.id) {
+                NodeBloom(
+                    kind = node,
+                    tier = tier,
+                    modifier = Modifier
+                        .testTag("$TrailNodeTagPrefix:${node.name}:${point.id}")
+                        .offset {
+                            val pos = pointAt(index)
+                            val half = (NodeBloomSize / 2).roundToPx()
+                            IntOffset((pos.x - half).roundToInt(), (pos.y - half).roundToInt())
+                        },
+                )
+            }
         }
     }
 }
 
 /** Head-frame metres → ribbon px: head at bottom-centre, perspective squeeze with depth. */
-internal fun trailVecToPx(vec: TrailVec, widthPx: Float, heightPx: Float): Offset {
+internal fun trailToPx(lateralM: Double, behindM: Double, widthPx: Float, heightPx: Float): Offset {
     val scale = minOf(widthPx, heightPx) / ECHO_WALK_TRAIL_WINDOW_M.toFloat()
-    val depth = (vec.behindM.toFloat()).coerceIn(0f, ECHO_WALK_TRAIL_WINDOW_M.toFloat())
+    val depth = behindM.toFloat().coerceIn(0f, ECHO_WALK_TRAIL_WINDOW_M.toFloat())
     val squeeze = 1f / (1f + depth * TRAIL_PERSPECTIVE_PER_M)
     return Offset(
-        x = widthPx / 2f + vec.lateralM.toFloat() * scale * squeeze,
+        x = widthPx / 2f + lateralM.toFloat() * scale * squeeze,
         y = heightPx * 0.94f - depth * scale * squeeze,
     )
 }

@@ -14,8 +14,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
 import app.simt.echo.ui.atmosphere.CosmosMotionDurations
 import app.simt.echo.ui.atmosphere.CosmosMotionTier
@@ -27,7 +27,8 @@ const val RollingDistanceTag = "EchoWalkDistance"
 // Rolling distance digits (freeze §4 count): the odometer value as
 // tabular digits that roll per digit on the spatialFast spring when the
 // value changes. REDUCED cross-fades; STATIC snaps. The row announces the
-// whole value once ("Distance 23.4 m") so TalkBack never spells digits.
+// whole value once ("Distance 23.4 m") so TalkBack never spells digits
+// (the per-digit Texts are cleared from the semantics tree, not focusable).
 
 @Composable
 fun RollingDistance(
@@ -39,7 +40,7 @@ fun RollingDistance(
     Row(
         modifier = modifier
             .testTag(RollingDistanceTag)
-            .semantics { contentDescription = "Distance $text" },
+            .clearAndSetSemantics { contentDescription = "Distance $text" },
     ) {
         text.forEachIndexed { index, char ->
             RollingDigit(char = char, key = index, color = color, tier = tier)

@@ -17,7 +17,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import app.simt.echo.ui.atmosphere.CosmosMotionDurations
@@ -72,23 +74,27 @@ fun LedgerBrackets(
         modifier = modifier
             .fillMaxSize()
             .testTag(LedgerBracketsTag)
-            .semantics(mergeDescendants = true) { contentDescription = LEDGER_BRACKET_COPY },
+            .semantics(mergeDescendants = true) {
+                contentDescription = LEDGER_BRACKET_COPY
+                liveRegion = LiveRegionMode.Polite
+            },
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             val inset = BracketInset.toPx()
             val arm = BracketArm.toPx()
             val stroke = BracketStroke.toPx()
             val a = gold.copy(alpha = alpha.value)
-            val corners = listOf(
-                Offset(inset, inset) to (1f to 1f),
-                Offset(size.width - inset, inset) to (-1f to 1f),
-                Offset(inset, size.height - inset) to (1f to -1f),
-                Offset(size.width - inset, size.height - inset) to (-1f to -1f),
-            )
-            for ((origin, dir) in corners) {
-                val (dx, dy) = dir
-                drawLine(a, origin, origin + Offset(arm * dx, 0f), stroke, StrokeCap.Round)
-                drawLine(a, origin, origin + Offset(0f, arm * dy), stroke, StrokeCap.Round)
+            for (right in 0..1) {
+                for (bottom in 0..1) {
+                    val dx = if (right == 1) -1f else 1f
+                    val dy = if (bottom == 1) -1f else 1f
+                    val origin = Offset(
+                        x = if (right == 1) size.width - inset else inset,
+                        y = if (bottom == 1) size.height - inset else inset,
+                    )
+                    drawLine(a, origin, origin + Offset(arm * dx, 0f), stroke, StrokeCap.Round)
+                    drawLine(a, origin, origin + Offset(0f, arm * dy), stroke, StrokeCap.Round)
+                }
             }
         }
         Surface(

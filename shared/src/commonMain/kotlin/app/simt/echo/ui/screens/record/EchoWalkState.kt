@@ -201,13 +201,17 @@ fun isTopDecileAndNovel(score: Double, novelty: Double, priorKeptScores: List<Do
 /** One trail point in head frame: metres right (+) and behind (+) the walker. */
 data class TrailVec(val lateralM: Double, val behindM: Double)
 
+/** One trail point relative to the head, in the world (east/north) frame; independent of yaw. */
+data class TrailOffset(val eastM: Double, val northM: Double)
+
 /**
- * Projects [points] into the head frame (heading-up): reconstructed from
- * odometer distance + yaw only — the same data CaptureSession logs, no new
- * geometry. Forward integrates east/north segments, then rotates by
- * -[headYaw] so the head faces up and the past falls below.
+ * Reconstructs [points] from odometer distance + yaw only (the same data
+ * CaptureSession logs, no new geometry): forward-integrates east/north
+ * segments and expresses each point relative to the head. Independent of
+ * the head's yaw, so a caller re-rotating per motion sample
+ * ([lateralM]/[behindM]) never re-integrates.
  */
-fun projectTrail(points: List<TrailPoint>, headYaw: Double): List<TrailVec> {
+fun trailOffsetsFromHead(points: List<TrailPoint>): List<TrailOffset> {
     if (points.isEmpty()) return emptyList()
     val east = DoubleArray(points.size)
     val north = DoubleArray(points.size)
@@ -217,21 +221,21 @@ fun projectTrail(points: List<TrailPoint>, headYaw: Double): List<TrailVec> {
         east[i] = east[i - 1] + dd * sin(segYaw)
         north[i] = north[i - 1] + dd * cos(segYaw)
     }
-    val headE = east.last()
-    val headN = north.last()
-    val fE = sin(headYaw)
-    val fN = cos(headYaw)
-    val rE = cos(headYaw)
-    val rN = -sin(headYaw)
-    return points.indices.map { i ->
-        val relE = east[i] - headE
-        val relN = north[i] - headN
-        TrailVec(
-            lateralM = relE * rE + relN * rN,
-            behindM = -(relE * fE + relN * fN),
-        )
-    }
+    return points.indices.map { TrailOffset(east[it] - east.last(), north[it] - north.last()) }
 }
+
+/** Metres to the right (+) of a walker facing [headYaw], clockwise-positive yaw. */
+fun TrailOffset.lateralM(headYaw: Double): Double = eastM * cos(headYaw) - northM * sin(headYaw)
+
+/** Metres behind (+) a walker facing [headYaw]. */
+fun TrailOffset.behindM(headYaw: Double): Double = -(eastM * sin(headYaw) + northM * cos(headYaw))
+
+/**
+ * Projects [points] into the head frame (heading-up): the head faces up
+ * and the past falls below. See [trailOffsetsFromHead].
+ */
+fun projectTrail(points: List<TrailPoint>, headYaw: Double): List<TrailVec> =
+    trailOffsetsFromHead(points).map { TrailVec(it.lateralM(headYaw), it.behindM(headYaw)) }
 
 /** True while the bracket window around [highlight] is open at [nowMs]. */
 fun isBracketOpen(highlight: LedgerHighlight?, nowMs: Long): Boolean =
