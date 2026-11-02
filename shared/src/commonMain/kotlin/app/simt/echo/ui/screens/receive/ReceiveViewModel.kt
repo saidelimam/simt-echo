@@ -3,6 +3,7 @@ package app.simt.echo.ui.screens.receive
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.simt.echo.model.BundleBody
+import app.simt.echo.model.EchoSchemaVersion
 import app.simt.echo.model.NodeType
 import app.simt.echo.platform.FileSharing
 import app.simt.echo.platform.TransferProgress
@@ -51,6 +52,9 @@ data class ReceiveUiState(
 /** Plan copy for an unreachable peer (venue Wi-Fi often isolates clients). */
 const val UNREACHABLE_COPY = "Can't reach the other phone. Join its hotspot and try again."
 
+/** Honest notice for a route written by a newer ECHO than this app understands (W10-05). */
+const val UPDATE_ECHO_COPY = "Update ECHO to open this route."
+
 class ReceiveViewModel(
     private val service: TransferService,
     private val sharing: FileSharing,
@@ -85,9 +89,7 @@ class ReceiveViewModel(
         _ui.update { it.copy(fetching = true, error = null, progress = null, bytesPerSecond = 0.0) }
         viewModelScope.launch {
             try {
-                val body = service.fetchPreview(uri)
-                previewBody = body
-                _ui.update { it.copy(fetching = false, preview = summarize(body)) }
+                present(service.fetchPreview(uri))
             } catch (e: Exception) {
                 _ui.update { it.copy(fetching = false, error = UNREACHABLE_COPY) }
             }
@@ -122,9 +124,7 @@ class ReceiveViewModel(
                     _ui.update { it.copy(fetching = false) }
                     return@launch
                 }
-                val body = service.importFile(bytes)
-                previewBody = body
-                _ui.update { it.copy(fetching = false, preview = summarize(body)) }
+                present(service.importFile(bytes))
             } catch (e: Exception) {
                 _ui.update { it.copy(fetching = false, error = receiveFileErrorCopy()) }
             }
@@ -156,6 +156,19 @@ class ReceiveViewModel(
     /** Drops measured progress so a new scan starts from frozen light. */
     private fun clearProgress() {
         rate.reset()
+    }
+
+    /**
+     * Opens [body] on the import sheet, or says so when a newer app wrote
+     * it — never a half-understood route, never a crash (W10-05).
+     */
+    private fun present(body: BundleBody) {
+        if (EchoSchemaVersion.needsUpdate(body.route)) {
+            _ui.update { it.copy(fetching = false, error = UPDATE_ECHO_COPY) }
+            return
+        }
+        previewBody = body
+        _ui.update { it.copy(fetching = false, preview = summarize(body)) }
     }
 
     private fun summarize(body: BundleBody): ImportPreview {

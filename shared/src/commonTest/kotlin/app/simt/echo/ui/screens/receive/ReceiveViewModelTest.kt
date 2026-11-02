@@ -3,6 +3,7 @@ package app.simt.echo.ui.screens.receive
 import app.simt.echo.Fixtures
 import app.simt.echo.data.FileStore
 import app.simt.echo.data.RouteRepository
+import app.simt.echo.model.EchoSchemaVersion
 import app.simt.echo.platform.Endpoint
 import app.simt.echo.platform.FileSharing
 import app.simt.echo.platform.PeerTransport
@@ -26,6 +27,7 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -380,5 +382,39 @@ class ReceiveViewModelTest {
         runCurrent()
         assertEquals(0.0, vm.ui.value.bytesPerSecond, "no bytes for a second: the light must go dim")
         assertEquals(0.6f, vm.ui.value.progress?.fraction)
+    }
+
+    @Test
+    fun routeFromANewerEchoSaysUpdateInsteadOfOpening() = runTest(dispatcher) {
+        val setup = setup()
+        val future = Fixtures.L_ROUTE.copy(routeId = "future-route", schemaVersion = EchoSchemaVersion.CURRENT + 1)
+        RouteRepository(setup.storeA).save(future)
+
+        // Scanned over LAN: no preview, no half-understood route, honest copy.
+        val vm = ReceiveViewModel(setup.serviceB, FakeFileSharing())
+        vm.onScanned(setup.serviceA.offer(future.routeId).qrUri)
+        advanceUntilIdle()
+        assertNull(vm.ui.value.preview)
+        assertFalse(vm.ui.value.fetching)
+        assertEquals(UPDATE_ECHO_COPY, vm.ui.value.error)
+        assertNull(setup.phoneB.get(future.routeId))
+
+        // Picked as a file: same notice.
+        val bytes = setup.storeA.readBytes(setup.serviceA.exportFile(future.routeId).toString())!!
+        val fileVm = ReceiveViewModel(setup.serviceB, FakeFileSharing().apply { pickResult = bytes })
+        fileVm.importFile()
+        advanceUntilIdle()
+        assertNull(fileVm.ui.value.preview)
+        assertEquals(UPDATE_ECHO_COPY, fileVm.ui.value.error)
+    }
+
+    @Test
+    fun currentSchemaRouteStillOpens() = runTest(dispatcher) {
+        val setup = setup()
+        val vm = ReceiveViewModel(setup.serviceB, FakeFileSharing())
+        vm.onScanned(setup.serviceA.offer(Fixtures.L_ROUTE.routeId).qrUri)
+        advanceUntilIdle()
+        assertNotNull(vm.ui.value.preview)
+        assertNull(vm.ui.value.error)
     }
 }
