@@ -223,7 +223,7 @@ No slice is Complete on a partial pass or on unit evidence for a device claim.
 | W10-04 | Queued | Perf harness: macrobenchmark, Baseline Profile, JankStats | F (T) | F | W10-01 | — |
 | W10-05 | Queued | Bundle v2 contract freeze (perception, sigil, compat) | S | A | — | — |
 | W10-06 | Queued | Worker API v1.1 freeze (uploads, budget, events, partials) | S | D | — | — |
-| W10-07 | Queued | Luminous design freeze (motion, motifs, haptic/sonic grammar) | S (V) | E | — | — |
+| W10-07 | Complete | Luminous design freeze (motion, motifs, haptic/sonic grammar) | S (V) | E | — | 85a2f91 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.brand.EchoMarkTest" --tests "app.simt.echo.ui.shell.EchoShellTest" |
 | W10-08 | Queued | Turn haptics emitted (LEFT/RIGHT/U_TURN) | T (S) | C | — | — |
 | W11-01 | Queued | Glimpse ledger: on-device frame quality per 0.5 m | L (T) | B | W10-03 | — |
 | W11-02 | Queued | Approach strips + ledger keyframes (no video seeking) | T (S) | B | W11-01 | — |
@@ -243,27 +243,30 @@ No slice is Complete on a partial pass or on unit evidence for a device claim.
 | W12-06 | Queued | Lost → Relock (global re-spread, turn-signature DTW) | T (S) | C | W12-05 | — |
 | W12-07 | Queued | Route Health score + nudges (pure) | L (T) | C | W10-05 | — |
 | W12-08 | Queued | Live level awareness (barometer, stairs vs lift) | T (S) | C | W12-02 | — |
-| W13-01 | Queued | Echo field: AGSL atmosphere, tilt parallax, ripple uniforms | T (V) | E | W10-07 | — |
-| W13-02 | Queued | Motion system: springs, shared elements, predictive back, morph kit | F (T, V) | A | W10-07 | — |
-| W13-03 | Queued | Route sigils: generative glyph from route geometry | T (V) | E | W10-05, W10-07 | — |
+| W13-01 | Complete | Echo field: AGSL atmosphere, tilt parallax, ripple uniforms | T (V) | E | W10-07 | db0cf41 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.atmosphere.*" --tests "app.simt.echo.ui.shell.EchoShellTest" --tests "app.simt.echo.ui.components.*" |
+| W13-02 | Complete | Motion system: springs, shared elements, predictive back, morph kit | F (T, V) | A | W10-07 | eb380cc · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.motion.*" --tests "app.simt.echo.ui.shell.*" --tests "app.simt.echo.ui.screens.*" |
+| W13-03 | Complete | Route sigils: generative glyph from route geometry | T (V) | E | W10-05, W10-07 | 708b120 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.sigil.*" --tests "app.simt.echo.ui.screens.*" |
 | W13-04 | Queued | Record "Echo walk": ripples, trail ribbon, blooms, brackets | T (V) | B | W13-01, W13-02, W11-01 | — |
 | W13-05 | Queued | Review "Route story": film strip, mask trace, health | T (S, V) | E | W13-02, W11-02, W12-07, W11-08 | — |
 | W13-06 | Queued | Processing "Constellation" from live events | F (T, V) | E | W13-02, W11-08 | — |
-| W13-07 | Queued | Share/Receive "Handshake": sigil QR, real-rate flow, unfold | F (T, V) | E | W13-02, W13-03 | — |
+| W13-07 | Complete | Share/Receive "Handshake": sigil QR, beacon, unfold (flow split to W13-14) | F (T, V) | E | W13-02, W13-03 | 07b388b · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.screens.share.*" --tests "app.simt.echo.ui.screens.receive.*" --tests "app.simt.echo.ui.sigil.*" |
 | W13-08 | Queued | Navigate instrument 2.0: morph arrow, σ aura, periphery glow | T (S, V) | E | W13-02, W12-02, W12-05 | — |
 | W13-09 | Queued | Haptic & sonic language, eyes-free mode | T (V) | E | W10-08, W10-07 | — |
 | W13-10 | Queued | Live Updates on lock screen (navigation, processing) | F (S) | A | W13-08 | — |
-| W13-11 | Queued | Home sigil records, guided tour, Arrived bloom | F (T, V) | E | W13-03, W13-02 | — |
+| W13-11 | Complete | Home sigil records, Arrived bloom (tour split to W13-13) | F (T, V) | E | W13-03, W13-02 | a0417de · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.motion.*" --tests "app.simt.echo.ui.screens.*" --tests "app.simt.echo.ui.components.*" |
 | W13-12 | Queued | Wear guidance: ongoing activity + tile (P1) | F (T) | F | W13-08 | — |
+| W13-13 | Queued | Guided practice tour through the real Navigate instrument | T (S, V) | E | W13-08, W13-11 | — |
+| W13-14 | Queued | Transfer progress seam + real-rate particle flow | T (S, V) | C | W13-07 | — |
 | W14-01 | Queued | Performance gate on two devices | T | F | W10-04, W13-04, W13-08, W12-05 | — |
 | W14-02 | Queued | Accessibility & motion parity gate v2 | T (V) | F | W13-04…W13-11 | — |
 | W14-03 | Queued | Field A/B: v1 vs Ghost on the V2 §11 protocol | T (S) | F | W12-06, W12-08, W13-08 | — |
 | W14-04 | Queued | Security & privacy audit v2 | S | D | W11-09, W12-05, W12-04 | — |
 | W14-05 | Queued | ECHO 2.0 release gate | S | F | W9-12, W11-10, W14-01…W14-04 | — |
 
-Tier totals: **L 2 · F 11 · T 23 · S 7** (primary; reviewers in
-parentheses; V reviews 12 slices; verified mechanically: 43 rows, 0
-duplicate ids, 43 `####` slice sections). Lanes: A — Foundation & contracts;
+Tier totals: **L 2 · F 11 · T 25 · S 7** (primary; reviewers in
+parentheses; V reviews 14 slices; verified mechanically: 45 rows, 0
+duplicate ids, 45 `####` slice sections; W13-13 and W13-14 split from
+W13-11 and W13-07 on 2026-11-02). Lanes: A — Foundation & contracts;
 B — Capture & perception; C — Navigation intelligence; D — Worker & SAM;
 E — Experience; F — Proof & release.
 
@@ -278,7 +281,7 @@ Parallel batches (a batch starts when its rows' dependencies are Complete):
 | 11c | W11-03, W11-04, W12-03, W12-04, W12-08, W13-04 | Clip forge vs privacy filter touch different files; nav slices serialise on `nav/ghost/` per §7 |
 | 12 | W11-08, W12-05, W13-07, W13-11 | Client v1.1, fingerprints, Share/Receive, Home/Arrived |
 | 13 | W11-09, W11-10, W12-06, W13-05, W13-06, W13-08 | Review and Navigate screens owned by one slice each |
-| 14 | W13-10, W13-12, W14-01…W14-04, then W14-05 alone | Gates last; release gate alone |
+| 14 | W13-10, W13-12, W13-13, W13-14, W14-01…W14-04, then W14-05 alone | Gates last; release gate alone |
 
 Critical paths (staff these first; an idle S takes the next one, not a leaf):
 `W10-02 → W10-03 → W11-01 → W11-02 → W11-03 → W11-08 → W11-10 → W14-01 → W14-05`;
@@ -706,13 +709,22 @@ Continue without AI. Driven only by W10-06 events. Acceptance:
 
 #### W13-07 — Share/Receive "Handshake"
 **F (T, V review)**, Lane E. QR at error-correction H with the sigil in
-≤ 15 % of the centre (decode asserted in a host test — add a test-only
-ZXing core dependency if no decoder exists); a beam pulse while waiting;
-on transfer, particles flow between two phone glyphs at the real
-bytes/s (additive progress flow on the `PeerTransport` seam); Receive
-*unfolds* the route from start to destination (900 ms, node blooms)
-before the import sheet. Acceptance: `ShareViewModelTest`/
-`ReceiveViewModelTest` progress cases; QR decode test; V frames.
+≤ 15 % of the centre (decode asserted in a host test with a test-only
+ZXing core dependency); a beacon pulse while the offer listens and a
+success bloom on Sent; Receive *unfolds* the route's sigil before the
+import sheet copy. Acceptance: `ShareViewModelTest`/`ReceiveViewModelTest`
+green; QR decode test; V frames. *Amended 2026-11-02:* the real-rate
+particle flow moved to W13-14 — it needs a transport progress seam.
+
+#### W13-14 — Transfer progress seam + real-rate particle flow
+**T (S review of the transport change, V)**, Lane C. Additive progress
+flow (bytes sent / total) on the `PeerTransport` seam for LAN and relay,
+surfaced in `ShareUiState`/`ReceiveUiState`; particles flow between two
+phone glyphs at the measured bytes/s, and nothing moves without bytes
+(honest light). No change to the wire format, keys or tokens.
+Acceptance: `TransferServiceTest` progress cases (monotonic, ends at
+total, relay and LAN); Share/Receive view-model progress tests; device
+evidence of one two-phone transfer with the flow visible.
 
 #### W13-08 — Navigate instrument 2.0
 **T (S review of UNCERTAIN/OFF_ROUTE honesty, V)**, Lane E. Arrow
@@ -749,15 +761,23 @@ which type, with its Play declaration) or 2.0 stays screen-on and says
 so. Acceptance: notification-builder unit tests; device evidence on an
 Android 16 phone and one older phone.
 
-#### W13-11 — Home, guided tour, Arrived
-**F (T, V review)**, Lane E. Home records carry sigils and health bands;
-first run offers a **guided tour** — a tutorial screen that replays a
-bundled fixture walk through the real Navigate instrument (labelled
-"Practice", never listed among routes — 0002's demo-data purge stands);
-Arrived plays a ripple bloom (Full tier), counts up honest stats and
-offers "Share this ECHO", trial details still behind disclosure.
-Acceptance: Home journey tests from W7-09 re-green; tour never writes to
-`routes/` (test); V frames.
+#### W13-11 — Home and Arrived
+**F (T, V review)**, Lane E. Home records carry sigils (shared element
+with RouteDetail) and reveal in sequence; first run is the Echo Step mark
+with its idle echo, sized so the one command stays above the fold;
+Arrived plays the arrival bloom (Full tier) above honest stats, trial
+details still behind disclosure. Acceptance: Home journey tests from
+W7-09 re-green; V frames. *Amended 2026-11-02:* the guided tour moved to
+W13-13 — it needs a Navigate data-seam change, not presentation.
+
+#### W13-13 — Guided practice tour
+**T (S review of the no-write guarantee, V)**, Lane E. First run offers
+a tour that replays a bundled fixture walk through the real Navigate
+instrument (labelled "Practice", never listed among routes — 0002's
+demo-data purge stands). Navigate must accept an ephemeral route and a
+null trial sink, so the tour writes neither `routes/` nor `trials/`.
+Acceptance: test that the tour never writes to `routes/` or `trials/`;
+Home journey tests green; V frames of the tour's first turn and arrival.
 
 #### W13-12 — Wear guidance (P1)
 **F (T review)**, Lane F. Compose for Wear ongoing activity: arrow,
