@@ -23,13 +23,52 @@ android {
         applicationId = "app.simt.echo"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 1
-        versionName = "0.1.0"
+        // W9-10 version discipline: versionName is MAJOR.MINOR.PATCH;
+        // versionCode = MAJOR * 10000 + MINOR * 100 + PATCH, strictly
+        // increasing per release. Bump the components below; versionCode
+        // follows automatically. Documented in docs/release.md.
+        val appVersionMajor = 0
+        val appVersionMinor = 2
+        val appVersionPatch = 0
+        versionCode = appVersionMajor * 10000 + appVersionMinor * 100 + appVersionPatch
+        versionName = "$appVersionMajor.$appVersionMinor.$appVersionPatch"
+    }
+
+    signingConfigs {
+        create("release") {
+            // W9-10: release keystore lives OUTSIDE git (e.g.
+            // ~/.keystores/echo-release.jks — see docs/release.md).
+            // Env-var wiring only; nothing secret is read from the repo.
+            val storePath = System.getenv("ECHO_RELEASE_STORE_FILE")
+            if (!storePath.isNullOrBlank() && file(storePath).exists()) {
+                storeFile = file(storePath)
+                storePassword = System.getenv("ECHO_RELEASE_STORE_PASSWORD")
+                keyAlias = System.getenv("ECHO_RELEASE_KEY_ALIAS")
+                keyPassword = System.getenv("ECHO_RELEASE_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
+            // W9-10 minify decision: stays OFF — see docs/release.md.
+            // Keep rules are committed (proguard-rules.pro) for the future
+            // enablement; the release smoke run below proves the shipped
+            // configuration, not an untested minified one.
             isMinifyEnabled = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+            // Signed release when the env-wired keystore exists; otherwise
+            // gradle debug signing so assembleRelease still smoke-runs
+            // locally without secrets. CI never signs releases.
+            val storePath = System.getenv("ECHO_RELEASE_STORE_FILE")
+            signingConfig = if (!storePath.isNullOrBlank() && file(storePath).exists()) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 
