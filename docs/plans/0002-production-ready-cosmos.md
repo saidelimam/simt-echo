@@ -223,7 +223,7 @@ with device model + build SHA. No slice is Complete on a partial pass.
 | W7-11 | Complete | Repo truth: README, tracker states, stale scaffolding removed | L (F) | F | W7-01 | 72c8c1cbde400ddbf19614a5e03e9d7b7a495fdf |
 | W7-12 | Complete | Wave 7 exit gate: offline core loop proven on one device | S | F | W7-09, W7-10, W7-11 | 8d15207ab7e29fa08ce1ddb4cfdd6f94417bd556 |
 | W8-01 | Complete | Cosmos adoption freeze (tokens, accents, non-adoptions) | S | A | W7-12 | c2f98799ff0c95aceab4c414043c202067cd785b |
-| W8-02 | Queued | Cosmos tokens & theme in code + contrast gate | F (T) | E | W8-01 | — |
+| W8-02 | Complete | Cosmos tokens & theme in code + contrast gate | F (T) | E | W8-01 | 233d5111913041e0e13437f2d2f4287b0ace70fb |
 | W8-03 | Queued | Cosmos atmosphere: background, canopy, motion tiers | T | E | W8-02 | — |
 | W8-04 | Queued | Cosmos component library (commands, fields, dialogs, states) | F (T) | E | W8-02, W8-03 | — |
 | W8-05 | Queued | App shell & navigation grammar (chrome, back, transitions) | T (S) | A | W8-04 | — |
@@ -234,7 +234,7 @@ with device model + build SHA. No slice is Complete on a partial pass.
 | W8-10 | Queued | Align/Navigate/Arrived in Cosmos (instrument clarity) | T (S) | E | W8-05 | — |
 | W8-11 | Queued | Settings in Cosmos (sections, delete-all, AI status) | F (T) | E | W8-05, W7-07 | — |
 | W8-12 | Queued | Accessibility & motion gate (contrast, fontScale, TalkBack) | T | F | W8-06, W8-07, W8-08, W8-09, W8-10, W8-11 | — |
-| W9-01 | Queued | Worker production deploy (R2, secrets, live health) | S | D | W7-12 | — |
+| W9-01 | Complete | Worker production deploy (R2, secrets, live health) | S | D | W7-12 | f79d2169b7c67c8e1462ca776debd66e42ce96ed |
 | W9-02 | Queued | Live AI envelope: deployed 60 m job, cost/latency measured | T (S) | D | W9-01 | — |
 | W9-03 | Queued | Relay wired end-to-end (AppGraph → Share → Receive) | F (S) | D | W9-01, W7-08 | — |
 | W9-04 | Queued | Two-phone field E2E (transfer, airplane navigate, haptics) | T | F | W7-12, W8-12 | — |
