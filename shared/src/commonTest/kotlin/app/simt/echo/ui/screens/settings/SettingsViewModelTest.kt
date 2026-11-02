@@ -130,6 +130,21 @@ class SettingsViewModelTest {
         assertEquals("Could not open the share sheet", vm.ui.value.exportNote)
     }
 
+    @Test
+    fun cloudAiStatusDefaultsReadyAndReflectsUnconfiguredBuild() {
+        // Configured builds (and old call sites) read ready.
+        assertTrue(vm().ui.value.cloudAiConfigured)
+
+        // W7-07: fresh installs surface the same honest status as Processing.
+        val unconfigured = SettingsViewModel(
+            configs,
+            trials,
+            sharing,
+            cloudAiConfigured = false,
+        )
+        assertFalse(unconfigured.ui.value.cloudAiConfigured)
+    }
+
     /** Records every shareFile call; the result is configurable. */
     private class FakeFileSharing(
         var result: Boolean = true,

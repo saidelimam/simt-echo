@@ -42,6 +42,7 @@ class UserErrorsTest {
             processingJobGoneCopy(),
             processingJobTimeoutCopy(),
             processingNoDraftCopy(),
+            aiUnavailableCopy(),
             reviewLoadErrorCopy(),
             reviewSuggestionsErrorCopy(),
             reviewLocalErrorCopy(),

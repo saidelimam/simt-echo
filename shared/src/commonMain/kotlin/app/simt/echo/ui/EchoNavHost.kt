@@ -115,6 +115,7 @@ fun EchoNavHost(
                             media = mediaTools,
                             api = graph.apiClient,
                             nowMs = ::currentEpochMs,
+                            aiConfigured = graph.cloudAiConfigured,
                         )
                     }
                 },
@@ -215,6 +216,7 @@ fun EchoNavHost(
                             sharing = sharing,
                             onPhoneModelName = graph.onPhoneModelPath
                                 ?.substringAfterLast('/'),
+                            cloudAiConfigured = graph.cloudAiConfigured,
                         )
                     }
                 },

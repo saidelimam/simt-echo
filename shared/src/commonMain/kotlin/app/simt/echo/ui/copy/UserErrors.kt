@@ -115,6 +115,24 @@ fun processingNoDraftCopy(): String = UserError(
     nextAction = "Go back and record again.",
 ).message()
 
+/**
+ * Cloud AI not configured on this build (plan W7-07): every fresh
+ * install until W9-01 config exists. Never a network error — the
+ * honest state names the missing setup and offers the manual path.
+ */
+fun aiUnavailableCopy(): String = UserError(
+    whatHappened = "Landmark AI isn't set up on this build.",
+    whatsSafe = "Your draft is safe on this phone.",
+    nextAction = "Continue without AI.",
+).message()
+
+/** Settings status line for the cloud AI configuration (plan W7-07). */
+fun cloudAiStatusCopy(configured: Boolean): String = if (configured) {
+    "Landmark AI is ready."
+} else {
+    aiUnavailableCopy()
+}
+
 /** Review load failure: the draft on disk could not be read. */
 fun reviewLoadErrorCopy(): String = UserError(
     whatHappened = "Could not load the draft.",
