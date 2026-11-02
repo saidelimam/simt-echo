@@ -12,6 +12,8 @@ import app.simt.echo.platform.createPeerTransport
 import app.simt.echo.platform.createPlatform
 import app.simt.echo.platform.currentEpochMs
 import app.simt.echo.transfer.EchoApiClient
+import app.simt.echo.transfer.KtorRelayClient
+import app.simt.echo.transfer.RelayClient
 import app.simt.echo.transfer.TransferService
 import okio.FileSystem
 import okio.Path.Companion.toPath
@@ -93,16 +95,24 @@ class AppGraph(
     /** LAN bundle transport + offer/receive service (W2-03). */
     val peerTransport: PeerTransport by lazy { createPeerTransport() }
 
-    // Relay (W4-05) stays unconfigured here on purpose: the Worker URL and
-    // app token are W3-02's API configuration, injected as a RelayClient
-    // when that lands. Until then transfers are LAN-only and Share does
-    // not offer the relay.
+    /**
+     * Internet relay (W4-05, wired W9-03): the same production config as
+     * [apiClient] — same Worker base URL, same app token surface —
+     * since the relay endpoints live on that Worker (`/v1/relay`).
+     * Null until that config exists, so Share stays LAN-only and
+     * [TransferService.relayAvailable] stays false on unconfigured builds.
+     */
+    val relayClient: RelayClient? by lazy {
+        if (cloudAiConfigured) KtorRelayClient(createHttpClient(), apiBaseUrl, appToken) else null
+    }
+
     val transferService: TransferService by lazy {
         TransferService(
             transport = peerTransport,
             routes = routeRepository,
             store = fileStore,
             nowMs = { currentEpochMs() },
+            relay = relayClient,
         )
     }
 }
