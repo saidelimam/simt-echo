@@ -114,7 +114,7 @@ Evidence naming as 0003 §6: `./gradlew :shared:testAndroidHostTest --tests "<cl
 
 | ID | State | Slice | Tier | Lane | Depends on | Evidence |
 |---|---|---|---|---|---|---|
-| W15-01 | Queued | SimWorld + Monte-Carlo accuracy gate + GHOST baselines | F (S) | F | — | — |
+| W15-01 | Complete | SimWorld + Monte-Carlo accuracy gate + GHOST baselines | F (S) | F | — | fb8c059a501981bbe8141836039b339a6cc57962 · test: ./gradlew :shared:testAndroidHostTest --tests app.simt.echo.sim.SimWorldTest --tests app.simt.echo.sim.MonteCarloGateTest --tests app.simt.echo.nav.GhostFilterTest --tests app.simt.echo.nav.NavigatorTest --tests app.simt.echo.nav.RelockTest :shared:simWorldFastBaseline :shared:simWorldFullBaseline |
 | W15-02 | Queued | Bundle perception v2.1 contract freeze (parallax, strips, leg σ) | S | A | — | — |
 | W15-03 | Queued | Frame Tap v2: dynamic duty, fan-out mux, intrinsics | S | G | — | — |
 | W15-04 | Queued | Generic `Dtw` extraction (copies 3 and 4 never made) | T (S) | C | — | — |
