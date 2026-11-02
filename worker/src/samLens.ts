@@ -30,6 +30,7 @@ import { parseSam } from "./samParse";
 import { boxOnly, boxOnlyOne, toGrounded } from "./groundCommon";
 import {
   JobResultSchema,
+  MAX_SAM_FRAMES,
   type Candidate,
   type Checkpoint,
   type JobEvent,
@@ -161,23 +162,46 @@ class Governor {
 interface LensBudget {
   maxSamFrames: number;
   resumeOf?: string;
+  /** Why the hard ceiling was applied in place of a declared budget. */
+  note?: string;
 }
 
+/** A recorded reason the lens degraded (written to `sam/notes.json`). */
+interface LensNote {
+  scope: string;
+  reason: string;
+}
+
+/**
+ * The spend cap is never absent: a missing budget.json (v1 / manifest-only
+ * creates) caps at the hard ceiling, and an unreadable or invalid one fails
+ * closed to the same ceiling with a recorded reason, never to "uncapped".
+ */
 async function readLensBudget(env: Env, jobId: string): Promise<LensBudget> {
   const obj = await env.MEDIA.get(`jobs/${jobId}/budget.json`);
-  if (!obj) return { maxSamFrames: Number.POSITIVE_INFINITY };
+  if (!obj) return { maxSamFrames: MAX_SAM_FRAMES };
   try {
-    const raw = (await obj.json()) as { maxSamFrames?: unknown; resumeOf?: unknown };
-    return {
-      maxSamFrames:
-        typeof raw.maxSamFrames === "number" && raw.maxSamFrames > 0
-          ? raw.maxSamFrames
-          : Number.POSITIVE_INFINITY,
-      ...(typeof raw.resumeOf === "string" && raw.resumeOf !== "" ? { resumeOf: raw.resumeOf } : {}),
-    };
+    const raw = (await obj.json()) as { maxSamFrames?: unknown; resumeOf?: unknown } | null;
+    if (typeof raw !== "object" || raw === null) {
+      return { maxSamFrames: MAX_SAM_FRAMES, note: "budget_unreadable" };
+    }
+    const resume =
+      typeof raw.resumeOf === "string" && raw.resumeOf !== "" ? { resumeOf: raw.resumeOf } : {};
+    if (raw.maxSamFrames === undefined) return { maxSamFrames: MAX_SAM_FRAMES, ...resume };
+    if (typeof raw.maxSamFrames !== "number" || !(raw.maxSamFrames > 0)) {
+      return { maxSamFrames: MAX_SAM_FRAMES, note: "budget_invalid", ...resume };
+    }
+    return { maxSamFrames: Math.min(raw.maxSamFrames, MAX_SAM_FRAMES), ...resume };
   } catch {
-    return { maxSamFrames: Number.POSITIVE_INFINITY };
+    return { maxSamFrames: MAX_SAM_FRAMES, note: "budget_unreadable" };
   }
+}
+
+/** Frames the governor reserves for a clip. The count is client-declared,
+ * so it is clamped to [1, hard ceiling]: an absurd declaration can neither
+ * overflow the accounting nor reserve more than any budget can hold. */
+function clipFrameEstimate(clip: { frameCount: number }): number {
+  return Math.min(Math.max(clip.frameCount, 1), MAX_SAM_FRAMES);
 }
 
 /** Cache key = sha256(media) + phrase + model + params (plan §10 W11-06). */
@@ -338,6 +362,7 @@ async function sealLens(
   runner: StepRunner,
   result: JobResult,
   emitUsage: boolean,
+  notes: LensNote[] = [],
 ): Promise<void> {
   for (const c of result.checkpoints) {
     await emitStep(runner, env, jobId, `emit:checkpoint:${c.nodeId}`, (id) => ({
@@ -356,6 +381,7 @@ async function sealLens(
     }));
   }
   await runner("ground:seal", async () => {
+    if (notes.length > 0) await env.MEDIA.put(`jobs/${jobId}/sam/notes.json`, JSON.stringify(notes));
     await env.MEDIA.put(`jobs/${jobId}/ground.json`, JSON.stringify(result));
   });
 }
@@ -404,6 +430,7 @@ export async function runGroundLens(
 
   const budget = await readLensBudget(env, jobId);
   const gov = new Governor(budget.maxSamFrames);
+  const notes: LensNote[] = budget.note ? [{ scope: "budget", reason: budget.note }] : [];
   const perCall = phrasesPerCall(env);
 
   interface Planned {
@@ -518,7 +545,7 @@ export async function runGroundLens(
     const confWantsVideo = conf !== null && conf !== undefined && conf >= 0.5 && conf < 0.85;
     if (!top || (!nodeWantsVideo && !confWantsVideo)) continue;
     const sc = p.kept[topK];
-    const estimate = p.cp.clip?.frameCount ?? 0;
+    const estimate = p.cp.clip ? clipFrameEstimate(p.cp.clip) : 0;
     if (!gov.reserve(estimate)) continue;
     const name = videoStepName(p.cp.nodeId, topK, await phraseHash(sc.samPhrase));
     const evidenceKey = `jobs/${jobId}/sam/${p.cp.nodeId}_${topK}.txt`;
@@ -569,7 +596,7 @@ export async function runGroundLens(
     checkpoints,
     usage,
   });
-  await sealLens(env, jobId, runner, result, true);
+  await sealLens(env, jobId, runner, result, true, notes);
   return result;
 }
 
@@ -628,7 +655,7 @@ async function videoCall(
     const call = await samCall(env, jobId, media, phrase, VIDEO_PARAMS, (b64) => videoBody(phrase, b64), resumeOf, lensOpts);
     const spend: CallSpend = call.cached
       ? NO_SPEND
-      : { sentFrames: call.reported ?? (cp.clip?.frameCount ?? 0), billedFrames: call.reported ?? 0, ms: call.samMs };
+      : { sentFrames: call.reported ?? (cp.clip ? clipFrameEstimate(cp.clip) : 0), billedFrames: call.reported ?? 0, ms: call.samMs };
     await env.MEDIA.put(evidenceKey, call.text);
     const obs = parseSam(call.text);
     if (obs.length === 0) return { candidate: null, ...spend };

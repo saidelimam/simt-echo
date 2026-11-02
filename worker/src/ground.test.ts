@@ -531,9 +531,10 @@ function lensSetup(
     type?: "TURN" | "CHECKPOINT" | "DESTINATION" | "LEVEL_CHANGE";
     clip?: boolean;
     keyframeFlags?: Record<string, unknown>;
+    clipFrames?: number;
   } = {},
 ) {
-  const { type = "CHECKPOINT", clip = true, keyframeFlags = {} } = opts;
+  const { type = "CHECKPOINT", clip = true, keyframeFlags = {}, clipFrames = STRIP_CLIP.frameCount } = opts;
   const r2 = new FakeR2();
   void r2.put("jobs/job1/in/clip_n2", "clip-bytes");
   void r2.put("jobs/job1/in/kf_n2_1", "hero-bytes");
@@ -548,7 +549,7 @@ function lensSetup(
       { id: "kf_n2_0", tMs: 39250 },
       { id: "kf_n2_1", tMs: 40750, ...keyframeFlags },
     ],
-    ...(clip ? { clip: STRIP_CLIP } : {}),
+    ...(clip ? { clip: { ...STRIP_CLIP, frameCount: clipFrames } } : {}),
     approach: [{ tMs: 37250, d: 18.9 }],
   };
   // Parsed like job intake does, so a schema that strips a field fails here.
@@ -696,6 +697,47 @@ describe("runGround SAM lens (W11-06)", () => {
     expect(result.usage.samFrames).toBe(1);
     // The image grounding stands: the governor refuses spend, never quality.
     expect(result.checkpoints[0].candidates[0].source).toBe("AI_GROUNDED");
+  });
+
+  it("caps a job with no budget.json at the 240-frame hard ceiling", async () => {
+    // 1 image frame + a 240-frame clip is 241: over the ceiling, refused.
+    const over = lensSetup({ type: "TURN", clipFrames: 240 });
+    const overCalls = stubMeta(STRIP_VIDEO, imgLine(0.9));
+    const refused = await runGround(over.env, "job1", over.manifest, lensScout());
+    expect(overCalls).toEqual(["image"]);
+    expect(refused.usage.budgetExhausted).toBe(true);
+
+    // 1 + 239 lands exactly on the ceiling and is allowed.
+    const exact = lensSetup({ type: "TURN", clipFrames: 239 });
+    const exactCalls = stubMeta(STRIP_VIDEO, imgLine(0.9));
+    const allowed = await runGround(exact.env, "job1", exact.manifest, lensScout());
+    expect(exactCalls).toEqual(["image", "video"]);
+    expect(allowed.usage.budgetExhausted).toBe(false);
+  });
+
+  it("fails closed to the ceiling on a corrupt budget.json and records why", async () => {
+    for (const [body, reason] of [
+      ["{not json", "budget_unreadable"],
+      [JSON.stringify({ maxSamFrames: "lots" }), "budget_invalid"],
+    ]) {
+      const { r2, manifest, env } = lensSetup({ type: "TURN", clipFrames: 240 });
+      await r2.put("jobs/job1/budget.json", body);
+      const calls = stubMeta(STRIP_VIDEO, imgLine(0.9));
+      const result = await runGround(env, "job1", manifest, lensScout());
+
+      expect(calls).toEqual(["image"]);
+      expect(result.usage.budgetExhausted).toBe(true);
+      const notes = await r2.get("jobs/job1/sam/notes.json");
+      expect(await notes?.json()).toEqual([{ scope: "budget", reason }]);
+    }
+  });
+
+  it("clamps an oversize declared budget to the ceiling", async () => {
+    const { r2, manifest, env } = lensSetup({ type: "TURN", clipFrames: 240 });
+    await r2.put("jobs/job1/budget.json", JSON.stringify({ maxSamFrames: 100000 }));
+    const calls = stubMeta(STRIP_VIDEO, imgLine(0.9));
+    await runGround(env, "job1", manifest, lensScout());
+    expect(calls).toEqual(["image"]);
   });
 
   it("reserves by node priority: DESTINATION before CHECKPOINT", async () => {

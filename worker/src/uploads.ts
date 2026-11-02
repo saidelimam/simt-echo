@@ -241,8 +241,8 @@ export async function handleCreateJobV11(c: Context<{ Bindings: Env }>): Promise
     }
     await c.env.MEDIA.put(`jobs/${jobId}/manifest.json`, JSON.stringify(manifest));
     // W11-06: the SAM lens governor reads this (never the request body —
-    // the Workflow only gets the job id). Absent file means uncapped, the
-    // v1/v1-manifest-only behaviour; resumeOf is the only sanctioned
+    // the Workflow only gets the job id). An absent file caps at the hard
+    // 240-frame ceiling (v1/manifest-only creates); resumeOf is the only sanctioned
     // cross-job SAM-cache reuse (W10-06 scoping).
     if (budget !== undefined || resumeOf !== undefined) {
       await c.env.MEDIA.put(

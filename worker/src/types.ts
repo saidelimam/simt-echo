@@ -219,8 +219,11 @@ export type UploadPutParams = z.infer<typeof UploadPutParamsSchema>;
 // POST /v1/jobs gains {uploadId, budget, idempotencyKey} next to the frozen
 // v1 multipart body (kept for v1 clients). resumeOf is the only sanctioned
 // cross-job SAM-cache reuse; default scoping is per job, deleted with it.
+/** Hard SAM frame ceiling: the schema maximum, and the cap the lens applies
+ * when a job carries no readable budget. */
+export const MAX_SAM_FRAMES = 240;
 export const JobBudgetSchema = z.object({
-  maxSamFrames: z.number().int().positive().max(240),
+  maxSamFrames: z.number().int().positive().max(MAX_SAM_FRAMES),
 });
 export type JobBudget = z.infer<typeof JobBudgetSchema>;
 
