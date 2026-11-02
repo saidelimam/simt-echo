@@ -5,6 +5,11 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- W13-10: Live Updates post an ongoing notification (ProgressStyle on
+         16+, standard below). Runtime-primed in context at Navigate start /
+         Processing send; deliberately no FOREGROUND_SERVICE permissions —
+         2.0 is screen-on only (decision recorded in LiveUpdate.kt). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.sensor.accelerometer" android:required="false" />
