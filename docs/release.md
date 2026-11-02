@@ -132,6 +132,23 @@ Deploy evidence (all live):
   overrides) and reads `ECHO_APP_TOKEN` only from
   `ECHO_PROD_APP_TOKEN` (empty default — fail-closed per W7-07).
 
+## Relay live round-trip (W9-03, 2026-11-02)
+
+Network-emulated equivalent on production (no second phone; code +
+unit gates in `04efbdf`):
+
+- `POST /v1/relay` (ECX1-prefixed 260-byte random blob, Bearer) →
+  `{ok: true, code: HJBMJW, expiresAt: <+30 min>}`.
+- `GET /v1/relay/HJBMJW` → 200, bytes byte-identical (sha256
+  `d8135c9e…27ec` both sides) — the server stores and returns
+  opaque bytes only, never parses, key never leaves the QR path.
+- TTL expiry is code-cited (`relay.ts:91-96` delete-then-404,
+  `relay.test.ts:92-108,142`), not awaited live (30 min).
+- S-review verdict on the zero-knowledge property: APPROVE WITH
+  RESIDUAL RISK (property upheld per relay.ts:59/74-77/91-96 +
+  Bearer middleware; residual: live TTL wait + on-device
+  LAN-blocked transfer belong to W9-04).
+
   Token rotation (2026-11-02, recorded honestly): the W9-01 token
   value survived only in a worktree file that was deleted before the
   operator's `local.properties` write landed (an append-guard
