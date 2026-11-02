@@ -57,9 +57,12 @@ class ShareViewModelTest {
 
     private class FakeTransport(val downloads: MutableSharedFlow<Unit>) : PeerTransport {
         var stopCalls = 0
+        var offerFails = false
 
-        override suspend fun offer(payload: ByteArray, token: String): Endpoint =
-            Endpoint("192.168.1.20", 51234)
+        override suspend fun offer(payload: ByteArray, token: String): Endpoint {
+            if (offerFails) error("no Wi-Fi IP")
+            return Endpoint("192.168.1.20", 51234)
+        }
 
         override suspend fun fetch(endpoint: Endpoint, token: String): ByteArray =
             error("Share never fetches")
@@ -323,5 +326,80 @@ class ShareViewModelTest {
         assertNotNull(ui.error)
         // The file was written before the sheet failed; the error is surfaced.
         assertNotNull(store.readBytes("exports/${service.echoFileName(Fixtures.L_ROUTE.name).removeSuffix(".echo")}-${Fixtures.L_ROUTE.routeId}.echo"))
+    }
+
+    @Test
+    fun offerTransportFailureRetriesToLiveQr() = runTest(dispatcher) {
+        val (service, transport) = serviceWithRoute()
+        transport.offerFails = true
+        val vm = ShareViewModel(Fixtures.L_ROUTE.routeId, service, FakeHaptics(), FakeFileSharing())
+        advanceUntilIdle()
+
+        // Recoverable state, not a stuck "Starting offer…": no QR, human error.
+        assertNull(vm.ui.value.qrUri)
+        val failure = vm.ui.value.error
+        assertNotNull(failure)
+        assertTrue(failure.contains("Nothing was shared"))
+
+        transport.offerFails = false
+        vm.retryOffer()
+        advanceUntilIdle()
+
+        assertNotNull(vm.ui.value.qrUri)
+        assertNull(vm.ui.value.error)
+    }
+
+    @Test
+    fun retryOnPersistentFailureKeepsRecoverableError() = runTest(dispatcher) {
+        val fileSystem = FakeFileSystem()
+        val store = FileStore(fileSystem, "/data".toPath())
+        val routes = RouteRepository(store)
+        routes.save(
+            Fixtures.L_ROUTE.copy(
+                privacy = app.simt.echo.model.PrivacyInfo(expiresAtEpochMs = 1_000L),
+            ),
+        )
+        val service = TransferService(
+            transport = FakeTransport(MutableSharedFlow()),
+            routes = routes,
+            store = store,
+            randomBytes = { size -> ByteArray(size) { (it + 1).toByte() } },
+            nowMs = { 2_000L },
+        )
+        val vm = ShareViewModel(Fixtures.L_ROUTE.routeId, service, FakeHaptics(), FakeFileSharing())
+        advanceUntilIdle()
+        assertNull(vm.ui.value.qrUri)
+
+        vm.retryOffer()
+        advanceUntilIdle()
+
+        assertNull(vm.ui.value.qrUri)
+        assertNotNull(vm.ui.value.error)
+        assertTrue(vm.ui.value.error!!.contains("expired", ignoreCase = true))
+    }
+
+    @Test
+    fun retryWithLiveOfferIsNoop() = runTest(dispatcher) {
+        val (service, _) = serviceWithRoute()
+        val vm = ShareViewModel(Fixtures.L_ROUTE.routeId, service, FakeHaptics(), FakeFileSharing())
+        advanceUntilIdle()
+        val qr = vm.ui.value.qrUri
+        assertNotNull(qr)
+
+        vm.retryOffer()
+        advanceUntilIdle()
+
+        assertEquals(qr, vm.ui.value.qrUri)
+        assertNull(vm.ui.value.error)
+    }
+
+    @Test
+    fun stopDelegatesToTransport() = runTest(dispatcher) {
+        val (service, transport) = serviceWithRoute()
+        val vm = ShareViewModel(Fixtures.L_ROUTE.routeId, service, FakeHaptics(), FakeFileSharing())
+        advanceUntilIdle()
+
+        vm.stop()
+        assertEquals(1, transport.stopCalls)
     }
 }
