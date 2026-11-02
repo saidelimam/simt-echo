@@ -67,6 +67,17 @@ fun navigatePhasePresentation(
         actions = listOf(NavigateAction.GO_BACK_TO_LAST, NavigateAction.RESTART_FROM_START),
     )
 
+    /**
+     * Relock search (W12-06): the "Finding you…" instruction plus the
+     * tightening σ ring carry the state — no banner (nothing is wrong
+     * yet) and no actions (the search resolves itself, or the 20 m
+     * fallback raises the OFF_ROUTE sheets).
+     */
+    NavPhase.RELOCKING -> NavigatePhasePresentation(
+        bannerKind = null,
+        actions = emptyList(),
+    )
+
     NavPhase.WALK, NavPhase.APPROACH, NavPhase.TURNING -> NavigatePhasePresentation(
         bannerKind = null,
         actions = buildList {

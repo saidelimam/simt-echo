@@ -49,6 +49,19 @@ class RouteGeometry(route: EchoRoute) {
     fun legStartS(legIndex: Int): Double =
         legStartS.getOrElse(legIndex) { totalLengthM }
 
+    /**
+     * Index of the leg containing along-route [s] (W12-06 relock: the
+     * found position re-derives its leg rather than trusting the stale
+     * one). Clamped to the leg range; empty routes read leg 0.
+     */
+    fun legIndexAt(s: Double): Int {
+        var idx = 0
+        for (i in legStartS.indices) {
+            if (s >= legStartS[i]) idx = i
+        }
+        return idx.coerceIn(0, (legStartS.size - 1).coerceAtLeast(0))
+    }
+
     /** Along-route position of a node id, or null when unknown. */
     fun nodeS(nodeId: String): Double? = nodeSById[nodeId]
 

@@ -120,6 +120,29 @@ class Navigator(
     private var fingerprintPrompt: FingerprintPrompt? = null
 
     /**
+     * Lost → relock search (W12-06): odo + clock where the search began,
+     * the (dist, yaw, tNs) trail feeding the turn-signature DTW (kept to
+     * the ≤ 10 s / 8 m window), and the 1 m bucket of the last signature
+     * observation so each metre feeds the filter at most once.
+     */
+    private var relockStartOdo: Double = 0.0
+    private var relockStartNs: Long = 0L
+    private val relockTrail = mutableListOf<RelockSample>()
+    private var lastSignatureBucket: Int = -1
+
+    /**
+     * Transient "Found you" cue after a relock: the nearest landmark
+     * title (null when the route has none — the copy falls back to
+     * "back on route"), shown on WALK until the walker moves on.
+     * [foundAtS] finite means a lock is being announced.
+     */
+    private var foundNearLabel: String? = null
+    private var foundAtS: Double = Double.NaN
+
+    /** Timestamp of the last motion update (relock window clock). */
+    private var lastMotionTNs: Long = 0L
+
+    /**
      * Live level awareness (W12-08): relative-pressure Δh from the
      * leg-start baseline. Reset on every leg transition; confirmed node
      * ids persist for the route so the cue keeps its ✓.
@@ -206,8 +229,10 @@ class Navigator(
     private fun onMotion(update: MotionUpdate) {
         dist = update.distanceM
         yaw = update.yawRad
+        lastMotionTNs = update.tNs
         if (phase != NavPhase.WALK && phase != NavPhase.APPROACH &&
-            phase != NavPhase.TURNING && phase != NavPhase.CONFIRM
+            phase != NavPhase.TURNING && phase != NavPhase.CONFIRM &&
+            phase != NavPhase.RELOCKING
         ) {
             return
         }
@@ -217,6 +242,10 @@ class Navigator(
             prevOdoM = dist
             if (delta > 0.0) it.predict(delta)
             it.observe(Observation.Heading(yaw + yawOffset, update.headingQuality))
+        }
+        if (foundAtS.isFinite() && absoluteS - foundAtS >= FOUND_COPY_EXPIRE_M) {
+            foundNearLabel = null
+            foundAtS = Double.NaN
         }
         applyCorridorSnapping(update)
         levelAwareness.onSample(update.pressureHpa, update.stepCount)?.let { onLevelEvent(it) }
@@ -230,7 +259,9 @@ class Navigator(
             enterOffRoute("This doesn't match the start — re-align")
             return
         }
-        if (uncertainty > config.navUncertaintyMaxM && phase != NavPhase.TURNING) {
+        if (uncertainty > config.navUncertaintyMaxM && phase != NavPhase.TURNING &&
+            phase != NavPhase.RELOCKING
+        ) {
             enterUncertain(null)
             return
         }
@@ -240,6 +271,7 @@ class Navigator(
                 if (absoluteS - confirmEntryDist >= config.navConfirmAutoAdvanceM) advanceLeg(null)
             }
             NavPhase.TURNING -> if (overshot()) enterUncertain(null)
+            NavPhase.RELOCKING -> onRelockMotion(update)
             else -> Unit
         }
     }
@@ -271,6 +303,15 @@ class Navigator(
     }
 
     private fun onTurnDetected(detected: DetectedTurn) {
+        if (phase == NavPhase.RELOCKING) {
+            // Position unknown: a turn is evidence, not progress — it feeds
+            // the re-spread cloud (single-turn likelihood plus the yaw
+            // trail the signature DTW reads) and may complete the lock.
+            // It never advances a leg off a stale target.
+            ghost?.observe(Observation.Turn(detected.dir))
+            checkRelockConvergence()
+            return
+        }
         val target = targetNode ?: return
         ghost?.observe(Observation.Turn(detected.dir))
         val expected = target.turn?.takeIf { target.type == NodeType.TURN }
@@ -292,7 +333,7 @@ class Navigator(
     }
 
     private fun onSeeLandmark() {
-        if (phase == NavPhase.ALIGN || phase == NavPhase.ARRIVED) return
+        if (phase == NavPhase.ALIGN || phase == NavPhase.ARRIVED || phase == NavPhase.RELOCKING) return
         val target = targetNode ?: return
         val currentLeg = leg ?: return
         strideLearner.observe(currentLeg.lengthM, dist - legStartOdo)
@@ -338,6 +379,7 @@ class Navigator(
         ghost?.observe(Observation.Fingerprint(hit.nodeS, hit.similarity01))
         fingerprintPrompt = FingerprintPrompt(hit.label, hit.nodeS)
         emit(NavEvent.Haptic(HapticPattern.TICK))
+        if (phase == NavPhase.RELOCKING) checkRelockConvergence()
         refresh()
     }
 
@@ -352,6 +394,13 @@ class Navigator(
         fingerprintPrompt = null
         ghost?.observe(Observation.Anchor(prompt.nodeS))
         lastAnchorDist = absoluteS
+        if (phase == NavPhase.RELOCKING) {
+            // An explicit user confirm is ground truth: it completes the
+            // search at the suggested position even before σ converges.
+            finalizeRelock(prompt.nodeS)
+            refresh()
+            return
+        }
         emit(NavEvent.Haptic(HapticPattern.CONFIRM))
         refresh()
     }
@@ -416,19 +465,155 @@ class Navigator(
     }
 
     private fun onLost() {
-        if (phase == NavPhase.ALIGN || phase == NavPhase.ARRIVED) return
-        enterOffRoute(offRouteCopy())
+        if (phase == NavPhase.ALIGN || phase == NavPhase.ARRIVED || phase == NavPhase.RELOCKING) return
+        val g = ghost
+        if (g == null) {
+            // LINEAR has no particles to re-spread: today's sheets,
+            // honestly and immediately.
+            enterOffRoute(offRouteCopy())
+            return
+        }
+        fingerprintPrompt = null
+        g.respreadUniform()
+        relockStartOdo = dist
+        relockStartNs = lastMotionTNs
+        relockTrail.clear()
+        lastSignatureBucket = (dist / RELOCK_SIGNATURE_STEP_M).toInt()
+        emit(NavEvent.Haptic(HapticPattern.WARN))
+        setPhase(NavPhase.RELOCKING)
     }
 
     private fun onImHere() {
-        if (phase == NavPhase.ARRIVED || !isLastLeg) return
+        if (phase == NavPhase.ARRIVED || phase == NavPhase.RELOCKING || !isLastLeg) return
         if (targetNode?.type == NodeType.DESTINATION && remaining <= config.navArrivePromptM) {
             arrive()
         }
     }
 
+    /**
+     * One relock motion update (W12-06): extends the signature trail,
+     * feeds the DTW observation at most once per metre walked, checks for
+     * a σ < 3 m lock, and falls back to today's sheets after 20 m
+     * without convergence — never a fake lock.
+     */
+    private fun onRelockMotion(update: MotionUpdate) {
+        val g = ghost ?: run {
+            clearRelockTrail()
+            enterOffRoute(offRouteCopy())
+            return
+        }
+        relockTrail += RelockSample(update.distanceM, update.yawRad, update.tNs)
+        relockTrail.removeAll {
+            update.distanceM - it.d > RELOCK_WINDOW_M || update.tNs - it.tNs > RELOCK_WINDOW_NS
+        }
+        val bucket = (update.distanceM / RELOCK_SIGNATURE_STEP_M).toInt()
+        if (bucket != lastSignatureBucket) {
+            lastSignatureBucket = bucket
+            buildRelockSignature(update.distanceM)?.let { g.observe(Observation.TurnSignature(it, RELOCK_SIGNATURE_STEP_M)) }
+        }
+        if (checkRelockConvergence()) return
+        if (update.distanceM - relockStartOdo >= RELOCK_FALLBACK_M) {
+            clearRelockTrail()
+            enterOffRoute(offRouteCopy())
+        }
+    }
+
+    /**
+     * Observed heading-change sequence since the search began: yaw deltas
+     * per [RELOCK_SIGNATURE_STEP_M], up to 8 steps back. Null until at
+     * least one full metre is walked. Rotation-invariant (yaw deltas), so
+     * the unknown alignment offset cancels.
+     */
+    private fun buildRelockSignature(distM: Double): DoubleArray? {
+        val walked = distM - relockStartOdo
+        val steps = walked.toInt().coerceAtMost(GhostFilter.MAX_SIGNATURE_STEPS)
+        if (steps < 1) return null
+        val base = distM - walked
+        return DoubleArray(steps) { k ->
+            wrapPi(yawAt(base + (k + 1) * RELOCK_SIGNATURE_STEP_M) - yawAt(base + k * RELOCK_SIGNATURE_STEP_M))
+        }
+    }
+
+    /** Yaw of the nearest relock-trail sample to along-walk [d]. */
+    private fun yawAt(d: Double): Double {
+        var best = relockTrail.lastOrNull()?.yaw ?: yaw
+        var bestDist = Double.MAX_VALUE
+        for (sample in relockTrail) {
+            val dd = abs(sample.d - d)
+            if (dd < bestDist) {
+                bestDist = dd
+                best = sample.yaw
+            }
+        }
+        return best
+    }
+
+    /** σ < 3 m completes the search; anything else keeps searching. */
+    private fun checkRelockConvergence(): Boolean {
+        val g = ghost ?: return false
+        if (!g.sigma.isFinite() || g.sigma >= RELOCK_SIGMA_M) return false
+        val s = g.meanS
+        // A posterior crowded against either route end is indistinguishable
+        // from clamp pile-up after a uniform re-spread (predict pins
+        // overshooting particles at the boundary, so σ collapses without
+        // evidence). Keep searching rather than announce a lock the
+        // evidence cannot support; the 20 m fallback stays honest.
+        if (s < RELOCK_EDGE_M || s > geometry.totalLengthM - RELOCK_EDGE_M) return false
+        finalizeRelock(s)
+        return true
+    }
+
+    /**
+     * Completes the search at along-route [s]: the leg re-derives from
+     * the found position, the heading re-aligns to it, and WALK resumes
+     * with a transient "Found you" cue naming the nearest landmark.
+     */
+    private fun finalizeRelock(s: Double) {
+        val clamped = s.coerceIn(0.0, geometry.totalLengthM)
+        legIndex = geometry.legIndexAt(clamped)
+        legStartDist = geometry.legStartS(legIndex)
+        lastAnchorDist = clamped
+        legStartOdo = dist
+        lastAnchorLegIndex = legIndex
+        yawOffset = wrapPi(geometry.headingAt(clamped) - yaw)
+        tickedLegIndex = -1
+        confirmAutoAdvanceProgress = null
+        foundNearLabel = nearestLandmarkTitle(clamped)
+        foundAtS = clamped
+        fingerprintPrompt = null
+        clearRelockTrail()
+        turnDetector.reset()
+        yawTrail.clear()
+        legYaws.clear()
+        levelAwareness.resetLeg()
+        emit(NavEvent.Haptic(HapticPattern.CONFIRM))
+        setPhase(NavPhase.WALK)
+    }
+
+    /** Title of the landmark nearest to along-route [s], if the route has any. */
+    private fun nearestLandmarkTitle(s: Double): String? {
+        var best: String? = null
+        var bestDist = Double.MAX_VALUE
+        for (landmark in route.landmarks) {
+            val nodeS = geometry.nodeS(landmark.nodeId) ?: continue
+            val d = abs(nodeS - s)
+            if (d < bestDist) {
+                bestDist = d
+                best = landmark.title
+            }
+        }
+        return best
+    }
+
+    private fun clearRelockTrail() {
+        relockTrail.clear()
+        lastSignatureBucket = -1
+    }
+
     private fun restart(toLegIndex: Int) {
         if (phase != NavPhase.OFF_ROUTE && phase != NavPhase.UNCERTAIN) return
+        foundNearLabel = null
+        foundAtS = Double.NaN
         legIndex = toLegIndex.coerceIn(0, route.legs.lastIndex)
         legStartDist = dist
         lastAnchorDist = dist
@@ -462,6 +647,8 @@ class Navigator(
             arrive()
             return
         }
+        foundNearLabel = null
+        foundAtS = Double.NaN
         legIndex += 1
         // A suggestion belongs to the leg it fired on; never carry it over.
         fingerprintPrompt = null
@@ -515,6 +702,10 @@ class Navigator(
         phase = to
         if (to != NavPhase.UNCERTAIN) uncertainInstruction = null
         if (to != NavPhase.OFF_ROUTE) offRouteInstruction = null
+        if (to != NavPhase.WALK) {
+            foundNearLabel = null
+            foundAtS = Double.NaN
+        }
         emit(NavEvent.Phase(from, to))
     }
 
@@ -613,7 +804,10 @@ class Navigator(
 
     private fun instructionFor(target: RouteNode?, landmark: Landmark?): String = when (phase) {
         NavPhase.ALIGN -> route.start.alignmentHint
-        NavPhase.WALK -> when {
+        NavPhase.RELOCKING -> "Finding you…"
+        NavPhase.WALK -> if (foundAtS.isFinite()) {
+            foundNearLabel?.let { "Found you — near $it" } ?: "Found you — back on route"
+        } else when {
             target?.type == NodeType.LEVEL_CHANGE -> levelCueFor(target)
             target?.type == NodeType.DESTINATION && isLastLeg &&
                 remaining <= config.navArrivePromptM -> "You're here — ${target.label}"
@@ -659,5 +853,38 @@ class Navigator(
             floors == 1 -> "Down 1 level ✓"
             else -> "Down $floors levels ✓"
         }
+    }
+
+    /**
+     * One relock-trail sample (W12-06): where the walker was, which way
+     * they faced, and when — the signature window reads yaw deltas off
+     * these, pruned to ≤ 10 s / 8 m.
+     */
+    private data class RelockSample(val d: Double, val yaw: Double, val tNs: Long)
+
+    companion object {
+        /** Relock lock criterion: σ below 3 m announces "Found you". */
+        const val RELOCK_SIGMA_M = 3.0
+
+        /**
+         * Relock end margin: a lock crowded within 3 m of either route end
+         * reads as clamp pile-up, not evidence — the search continues.
+         */
+        const val RELOCK_EDGE_M = 3.0
+
+        /** Relock gives up after 20 m walked without convergence. */
+        const val RELOCK_FALLBACK_M = 20.0
+
+        /** Turn-signature window: the next ≤ 8 m of heading changes. */
+        const val RELOCK_WINDOW_M = 8.0
+
+        /** Turn-signature window: the next ≤ 10 s of heading changes, ns. */
+        const val RELOCK_WINDOW_NS = 10_000_000_000L
+
+        /** Turn-signature resolution: one heading change per metre. */
+        const val RELOCK_SIGNATURE_STEP_M = 1.0
+
+        /** "Found you" cue expires after 5 m of further walking. */
+        const val FOUND_COPY_EXPIRE_M = 5.0
     }
 }

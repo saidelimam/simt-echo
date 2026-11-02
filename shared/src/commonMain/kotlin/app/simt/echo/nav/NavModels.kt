@@ -25,6 +25,14 @@ enum class NavPhase {
     UNCERTAIN,
     OFF_ROUTE,
     ARRIVED,
+    /**
+     * Lost → relock search (W12-06): particles re-spread uniformly and
+     * reconverge from the turn signature, fingerprints and magnetic
+     * offsets. Renders "Finding you…" with the tightening σ ring; a lock
+     * (σ < 3 m) returns to WALK with a transient "Found you" cue, while
+     * 20 m without convergence falls back to OFF_ROUTE sheets.
+     */
+    RELOCKING,
 }
 
 /** Which kind of node confirmation anchored the odometer. */
