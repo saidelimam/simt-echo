@@ -17,6 +17,11 @@ data class MotionUpdate(
     val isStep: Boolean,
     val pressureHpa: Double?,
     val source: String,
+    /**
+     * Heading quality q ∈ [0,1] from W12-01 stillness/drift scoring
+     * (1.0 = fully trusted). Replay and older producers leave the default.
+     */
+    val headingQuality: Double = 1.0,
 )
 
 /**

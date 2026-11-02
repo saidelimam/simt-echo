@@ -65,6 +65,14 @@ class PdrEngine(
     // Latest barometer reading; null without a sensor.
     private var pressureHpa: Double? = null
 
+    /**
+     * Heading quality estimator (W12-01). Fed additively from the same
+     * samples; step detection and yaw above are untouched. W12-02 reads
+     * [HeadingQuality.quality], [HeadingQuality.driftRateRadPerSec] and
+     * [HeadingQuality.correctedYaw] from here.
+     */
+    val headingQuality = HeadingQuality()
+
     override fun start() {
         gravity = 9.81
         signal = 0.0
@@ -80,6 +88,7 @@ class PdrEngine(
         clockOffsetNs = null
         sawFirstEvent = false
         pressureHpa = null
+        headingQuality.reset()
         running = true
     }
 
@@ -102,9 +111,11 @@ class PdrEngine(
         if (!running) return
         val tNs = correctNs(sample.tNs, wallNowNs)
         val (heading, camera) = headingRad(sample.r, cameraAxis)
+        val axisSwitched = camera != cameraAxis
         cameraAxis = camera
         val origin = yaw0 ?: heading.also { yaw0 = it }
         yawRad = wrapPi(heading - origin)
+        headingQuality.onYaw(yawRad, tNs, axisSwitched)
         _updates.tryEmit(snapshot(tNs, isStep = false))
     }
 
@@ -117,6 +128,7 @@ class PdrEngine(
         if (!running) return
         val tNs = correctNs(sample.tNs, wallNowNs)
         val magnitude = sqrt(sample.ax * sample.ax + sample.ay * sample.ay + sample.az * sample.az)
+        headingQuality.onAccelerometer(magnitude / GRAVITY, tNs)
         gravity += 0.02 * (magnitude - gravity)
         prevSignal = signal
         signal += 0.25 * ((magnitude - gravity) - signal)
@@ -142,6 +154,7 @@ class PdrEngine(
     }
 
     private fun acceptStep(tNs: Long) {
+        headingQuality.onStep(tNs)
         val range = (amax - amin).coerceAtLeast(0.0)
         val length = (stepK * range.pow(0.25)).coerceIn(0.35, 0.95)
         stepCount += 1
@@ -160,9 +173,11 @@ class PdrEngine(
         isStep = isStep,
         pressureHpa = pressureHpa,
         source = SOURCE,
+        headingQuality = headingQuality.quality,
     )
 
     private companion object {
         const val SOURCE = "echo_builtin_pdr"
+        const val GRAVITY = 9.81
     }
 }
