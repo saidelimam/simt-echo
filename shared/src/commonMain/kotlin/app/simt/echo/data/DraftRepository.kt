@@ -1,5 +1,6 @@
 package app.simt.echo.data
 
+import app.simt.echo.capture.GlimpseEntry
 import app.simt.echo.model.CaptureLog
 import app.simt.echo.transfer.JobRecord
 import app.simt.echo.model.EchoJson
@@ -44,6 +45,31 @@ class DraftRepository(private val store: FileStore) {
      */
     fun readDraftFile(draftId: String, fileName: String): ByteArray? =
         store.readBytes("$DRAFTS_DIR/$draftId/$fileName")
+
+    /** Writes raw [bytes] to [fileName] inside draft [draftId]'s directory. */
+    fun writeDraftFile(draftId: String, fileName: String, bytes: ByteArray) {
+        store.writeBytes("$DRAFTS_DIR/$draftId/$fileName", bytes)
+    }
+
+    /**
+     * Persists the recording's kept ledger entries (`glimpse/entries.json`,
+     * plan W11-02) so Review builds keyframes from the ledger without
+     * seeking the video. JPEG bytes live beside it under `glimpse/`,
+     * referenced draft-relative by [GlimpseEntry.jpegPath].
+     */
+    fun saveGlimpseEntries(draftId: String, entries: List<GlimpseEntry>) {
+        store.writeText("$DRAFTS_DIR/$draftId/$GLIMPSE_ENTRIES_FILE", EchoJson.encodeToString(entries))
+    }
+
+    /**
+     * The persisted ledger entries, or null when absent/corrupt — a draft
+     * recorded without the ledger (or a torn write) degrades to "no
+     * ledger", never a throw; keyframes fall back to video (W7-10).
+     */
+    fun loadGlimpseEntries(draftId: String): List<GlimpseEntry>? {
+        val text = store.readText("$DRAFTS_DIR/$draftId/$GLIMPSE_ENTRIES_FILE") ?: return null
+        return runCatching { EchoJson.decodeFromString<List<GlimpseEntry>>(text) }.getOrNull()
+    }
 
     /**
      * True when the draft file exists. Metadata only — existence and
@@ -99,5 +125,6 @@ class DraftRepository(private val store: FileStore) {
     private companion object {
         const val DRAFTS_DIR = "drafts"
         const val JOB_FILE = "job.json"
+        const val GLIMPSE_ENTRIES_FILE = "glimpse/entries.json"
     }
 }

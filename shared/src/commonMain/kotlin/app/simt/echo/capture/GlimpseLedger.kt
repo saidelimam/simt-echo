@@ -1,5 +1,6 @@
 package app.simt.echo.capture
 
+import kotlinx.serialization.Serializable
 import kotlin.math.floor
 
 /**
@@ -7,7 +8,12 @@ import kotlin.math.floor
  *
  * Metadata is always recorded; [jpegPath] is null when the frame carried no
  * JPEG or the [LedgerStore] declined to persist it.
+ *
+ * `@Serializable` (W11-02, additive): the draft persists kept entries as
+ * `glimpse/entries.json` so Review can build ledger keyframes without the
+ * video. [jpegPath] is draft-relative (`glimpse/<bucket>.jpg`).
  */
+@Serializable
 data class GlimpseEntry(
     val bucketIndex: Long,
     val tNs: Long,
