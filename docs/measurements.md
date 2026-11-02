@@ -161,3 +161,26 @@ W10-01 measurement slots (all TBD — commands to run on the named phones):
 - Keyed SAM job `response.completed` billed frames: unavailable —
   no `META_API_KEY` in this environment (collector ready:
   `metaResponsesDetailed` in `worker/src/meta.ts:32`).
+
+## SAM live probe (W11-07, ≤ $1 budget) — NOT RUN here
+
+No live call was made from this environment: no `META_API_KEY` is
+configured, so spend is $0 and every cell below is TBD. The hardening
+half of W11-07 (golden SSE fixtures in `worker/src/meta.test.ts`, the
+`npm run canary:sam` one-frame image call) is implemented and green;
+the probe half must run where a key exists. If multi-phrase works,
+W11-06 sends one video call per checkpoint for all surviving phrases.
+
+| Fact for the ladder (W11-06) | Probe (exact) | Result |
+|---|---|---|
+| Multi-phrase in one call? Output attribution per phrase? | `META_API_KEY=…`: POST `https://api.meta.ai/v1/responses` with `model: sam-3.1`, one message whose content holds **two** `input_text` phrases + one `input_image` (the canary 1-px PNG), `stream: true`; record whether both objects are segmented and how the output attributes them | TBD — job/request ids: TBD |
+| 12-frame 4 fps 480p clip accepted? Billed per frame? | Same endpoint, `input_video` with a 12-frame 4 fps 480p clip + one phrase; read `response.completed` → `response.usage.video_frames_processed` (surfaced by `metaResponsesDetailed`) and compare with frames sent | TBD — job/request ids: TBD |
+| Image-call billing | `META_API_KEY=… npm run canary:sam` (worker/; dry-runs with no key) — one 1-frame image call; record billed frames/price and wall latency | TBD — job/request ids: TBD |
+| Latency per shape | Wall ms around each of the three calls above (`Date.now()` delta, as `ground.ts` records `samMs`) | TBD |
+
+Procedure to fill the table (keyed environment only, stop at $1):
+
+1. `cd worker && npm run canary:sam` dry run first (no key) — must exit 0 without sending.
+2. `META_API_KEY=… npm run canary:sam` — record latency, output chars, any usage; append row 3.
+3. Send the two-phrase image call and the 12-frame clip call (rows 1–2) with `curl` or a scratch script mirroring `scripts/canary-sam.mjs`; save each raw SSE body and note the request/job ids.
+4. Append measured numbers + ids to the table above; total spend must stay ≤ $1.

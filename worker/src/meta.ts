@@ -52,36 +52,60 @@ export async function metaResponsesDetailed(env: Env, body: object): Promise<Met
   let out = "";
   let sawDelta = false;
   let videoFramesProcessed: number | undefined;
-  for (let r = await reader.read(); !r.done; r = await reader.read()) {
-    buf += r.value;
-    let i: number;
-    while ((i = buf.indexOf("\n\n")) >= 0) {
-      for (const line of buf.slice(0, i).split("\n")) {
-        const data = line.startsWith("data:") ? line.slice(5).trim() : "";
-        if (!data || data === "[DONE]") continue;
-        const j = JSON.parse(data);
-        if (j.type === "response.output_text.delta") {
-          out += j.delta;
-          sawDelta = true;
-        } else if (j.type === "response.output_text.done" && !sawDelta && typeof j.text === "string") {
-          // Live-verified (review 0003 R5): SAM 3.1 sends no deltas at
-          // all — the whole output arrives in the done event. Collecting
-          // only deltas read every real response as empty. The done text
-          // restates the full output, so it is used only when no delta
-          // was seen (never appended after deltas: no duplication).
-          out += j.text;
-        } else if (j.type === "response.failed" || j.type === "error") {
-          throw new Error(data.slice(0, 500));
-        } else if (j.type === "response.completed") {
-          const frames = (j as { response?: { usage?: { video_frames_processed?: unknown } } })
-            .response?.usage?.video_frames_processed;
-          if (typeof frames === "number" && Number.isFinite(frames) && frames >= 0) {
-            videoFramesProcessed = frames;
-          }
+  const handleBlock = (block: string): void => {
+    const payloads: string[] = [];
+    for (const rawLine of block.split("\n")) {
+      const line = rawLine.trim();
+      // SSE keep-alive comments (": ...") and bare heartbeats carry no
+      // payload; anything that is not a data line is not our event.
+      if (line === "" || line.startsWith(":")) continue;
+      if (!line.startsWith("data:")) continue;
+      const data = line.slice(5).trim();
+      if (!data || data === "[DONE]") continue;
+      payloads.push(data);
+    }
+    for (const data of payloads) {
+      let j: { type?: string; delta?: unknown; text?: unknown };
+      try {
+        j = JSON.parse(data);
+      } catch {
+        // A split or garbage line is not a protocol event; the collector
+        // holds text only, so it skips rather than failing the call.
+        continue;
+      }
+      if (j.type === "response.output_text.delta") {
+        out += j.delta;
+        sawDelta = true;
+      } else if (j.type === "response.output_text.done" && !sawDelta && typeof j.text === "string") {
+        // Live-verified (review 0003 R5): SAM 3.1 sends no deltas at
+        // all — the whole output arrives in the done event. Collecting
+        // only deltas read every real response as empty. The done text
+        // restates the full output, so it is used only when no delta
+        // was seen (never appended after deltas: no duplication).
+        out += j.text;
+      } else if (j.type === "response.failed" || j.type === "error") {
+        throw new Error(data.slice(0, 500));
+      } else if (j.type === "response.incomplete") {
+        throw new NonRetryableError(`meta incomplete: ${data.slice(0, 500)}`);
+      } else if (j.type === "response.completed") {
+        const frames = (j as { response?: { usage?: { video_frames_processed?: unknown } } })
+          .response?.usage?.video_frames_processed;
+        if (typeof frames === "number" && Number.isFinite(frames) && frames >= 0) {
+          videoFramesProcessed = frames;
         }
       }
+    }
+  };
+  for (let r = await reader.read(); !r.done; r = await reader.read()) {
+    // Normalise CRLF: event boundaries may arrive as \r\n\r\n.
+    buf += r.value.replace(/\r\n/g, "\n");
+    let i: number;
+    while ((i = buf.indexOf("\n\n")) >= 0) {
+      handleBlock(buf.slice(0, i));
       buf = buf.slice(i + 2);
     }
   }
+  // A final event without a trailing blank line still counts.
+  if (buf.includes("data:")) handleBlock(buf);
   return { text: out, ...(videoFramesProcessed !== undefined ? { videoFramesProcessed } : {}) };
 }
