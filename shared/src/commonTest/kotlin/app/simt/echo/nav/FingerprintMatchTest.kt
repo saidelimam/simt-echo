@@ -11,6 +11,7 @@ import app.simt.echo.nav.ghost.FingerprintRaw
 import app.simt.echo.nav.ghost.GhostFilter
 import app.simt.echo.nav.ghost.Observation
 import app.simt.echo.nav.ghost.PrintSourceFrame
+import app.simt.echo.platform.MotionUpdate
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -122,7 +123,11 @@ class FingerprintMatchTest {
         assertEquals("That's the Red pillar?", nav.ui.value.fingerprintPrompt?.chipCopy())
         nav.dismissFingerprint()
         assertNull(nav.ui.value.fingerprintPrompt)
+        // The same landmark may be suggested again once the debounce
+        // window (3 s and 2 m) has passed.
+        nav.onInput(NavInput.Motion(MotionUpdate(4_000_000_000L, 3.0, 0.0, 0, true, null, "test")))
         nav.onFingerprintHit(hit)
+        assertEquals("That's the Red pillar?", nav.ui.value.fingerprintPrompt?.chipCopy())
         nav.confirmFingerprint()
         assertNull(nav.ui.value.fingerprintPrompt)
     }

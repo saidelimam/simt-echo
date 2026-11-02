@@ -14,6 +14,7 @@ import app.simt.echo.model.RouteNode
 import app.simt.echo.model.TurnDir
 import app.simt.echo.model.defaultCue
 import app.simt.echo.nav.ghost.GhostFilter
+import app.simt.echo.nav.ghost.HitDebounce
 import app.simt.echo.nav.ghost.FingerprintHit
 import app.simt.echo.nav.ghost.FixGate
 import app.simt.echo.nav.ghost.FingerprintPrompt
@@ -134,6 +135,10 @@ class Navigator(
      * event in [onTurnDetected] resolves it.
      */
     private var fingerprintPrompt: FingerprintPrompt? = null
+    private val hitDebounce = HitDebounce()
+
+    /** Timestamp of the last motion update: the clock for [hitDebounce]. */
+    private var lastMotionTNs: Long = 0L
 
     /**
      * Lost → relock search (W12-06): odo + clock where the search began,
@@ -243,6 +248,7 @@ class Navigator(
     private fun onMotion(update: MotionUpdate) {
         dist = update.distanceM
         yaw = update.yawRad
+        lastMotionTNs = update.tNs
         if (phase != NavPhase.WALK && phase != NavPhase.APPROACH &&
             phase != NavPhase.TURNING && phase != NavPhase.CONFIRM &&
             phase != NavPhase.RELOCKING
@@ -393,12 +399,21 @@ class Navigator(
      * match already confirmed something. Phases, legs and anchors are
      * untouched: without [confirmFingerprint] or a consistent turn event,
      * nothing else happens. Never a silent auto-confirm.
+     *
+     * Hits repeat for as long as the camera sees the landmark, so they are
+     * debounced per candidate ([HitDebounce]: ≥ 3 s and ≥ 2 m apart) — one
+     * reweight per window, not one per frame — and the TICK fires once per
+     * prompt, not once per hit.
      */
     fun onFingerprintHit(hit: FingerprintHit) {
         if (phase == NavPhase.ALIGN || phase == NavPhase.ARRIVED) return
+        if (!hitDebounce.accept(hit.nodeS, lastMotionTNs, dist)) return
         ghost?.observe(Observation.Fingerprint(hit.nodeS, hit.similarity01))
-        fingerprintPrompt = FingerprintPrompt(hit.label, hit.nodeS)
-        emit(NavEvent.Haptic(HapticPattern.TICK))
+        val prompt = FingerprintPrompt(hit.label, hit.nodeS)
+        if (prompt != fingerprintPrompt) {
+            fingerprintPrompt = prompt
+            emit(NavEvent.Haptic(HapticPattern.TICK))
+        }
         if (phase == NavPhase.RELOCKING) checkRelockConvergence()
         refresh()
     }
