@@ -2,6 +2,7 @@ package app.simt.echo.nav
 
 import app.simt.echo.model.Landmark
 import app.simt.echo.model.TurnDir
+import app.simt.echo.nav.ghost.FingerprintPrompt
 import app.simt.echo.platform.HapticPattern
 import app.simt.echo.platform.MotionUpdate
 
@@ -50,6 +51,13 @@ data class NavUi(
     val uncertaintyM: Double,
     /** Current leg completion, 0..1. */
     val progress01: Double,
+    /**
+     * Pending fingerprint suggestion (W12-05 hook): a gated match proposed
+     * "That's the …?" and waits for user tap or a consistent turn event.
+     * Null when nothing is proposed. The full W13-08 instrument renders
+     * this; the state machine never acts on it alone.
+     */
+    val fingerprintPrompt: FingerprintPrompt? = null,
     /** Navigation runs on sensors only, so this is always true. */
     val offline: Boolean = true,
 )

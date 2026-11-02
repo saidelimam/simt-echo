@@ -12,6 +12,8 @@ import app.simt.echo.model.RouteNode
 import app.simt.echo.model.TurnDir
 import app.simt.echo.model.defaultCue
 import app.simt.echo.nav.ghost.GhostFilter
+import app.simt.echo.nav.ghost.FingerprintHit
+import app.simt.echo.nav.ghost.FingerprintPrompt
 import app.simt.echo.nav.ghost.Observation
 import app.simt.echo.nav.ghost.RouteGeometry
 import app.simt.echo.nav.ghost.StrideLearner
@@ -105,6 +107,14 @@ class Navigator(
     private var confirmAutoAdvanceProgress: Double? = null
     private var uncertainInstruction: String? = null
     private var offRouteInstruction: String? = null
+
+    /**
+     * Pending fingerprint suggestion (W12-05): a gated match proposed a
+     * "That's the …?" chip. It never advances, anchors, or confirms on
+     * its own — only [confirmFingerprint] (user tap) or a consistent turn
+     * event in [onTurnDetected] resolves it.
+     */
+    private var fingerprintPrompt: FingerprintPrompt? = null
 
     /**
      * Live level awareness (W12-08): relative-pressure Δh from the
@@ -254,8 +264,16 @@ class Navigator(
         when {
             expected == null -> enterOffRoute(offRouteCopy())
             detected.dir != expected -> enterOffRoute(offRouteCopy())
-            phase == NavPhase.TURNING -> advanceLeg(AnchorKind.TURN)
-            progress >= config.navTurnMinProgressFraction * (leg?.lengthM ?: 0.0) -> advanceLeg(AnchorKind.TURN)
+            phase == NavPhase.TURNING -> {
+                // A consistent turn event also resolves a pending
+                // fingerprint suggestion (W12-05 confirm rule).
+                fingerprintPrompt = null
+                advanceLeg(AnchorKind.TURN)
+            }
+            progress >= config.navTurnMinProgressFraction * (leg?.lengthM ?: 0.0) -> {
+                fingerprintPrompt = null
+                advanceLeg(AnchorKind.TURN)
+            }
             else -> enterUncertain("Turned early? Expected in ${ceil(remaining).toInt()} m")
         }
     }
@@ -291,6 +309,45 @@ class Navigator(
             target.type == NodeType.DESTINATION && isLastLeg -> arrive()
             else -> advanceLeg(null)
         }
+    }
+
+    /**
+     * Fingerprint suggestion (W12-05): a gated [FingerprintHit] (cosine ≥
+     * τ, same embedder id + seed, within s ± (3σ + 5 m)) becomes a
+     * low-weight filter observation plus a pending "That's the …?" chip
+     * and a soft TICK — deliberately not CONFIRM, which would imply the
+     * match already confirmed something. Phases, legs and anchors are
+     * untouched: without [confirmFingerprint] or a consistent turn event,
+     * nothing else happens. Never a silent auto-confirm.
+     */
+    fun onFingerprintHit(hit: FingerprintHit) {
+        if (phase == NavPhase.ALIGN || phase == NavPhase.ARRIVED) return
+        ghost?.observe(Observation.Fingerprint(hit.nodeS, hit.similarity01))
+        fingerprintPrompt = FingerprintPrompt(hit.label, hit.nodeS)
+        emit(NavEvent.Haptic(HapticPattern.TICK))
+        refresh()
+    }
+
+    /**
+     * User tapped the fingerprint chip: the suggestion confirms into a
+     * soft anchor at the suggested position (stride and bias survive,
+     * like [GhostFilter.anchorAt]) and the chip clears. No-op without a
+     * pending prompt.
+     */
+    fun confirmFingerprint() {
+        val prompt = fingerprintPrompt ?: return
+        fingerprintPrompt = null
+        ghost?.observe(Observation.Anchor(prompt.nodeS))
+        lastAnchorDist = absoluteS
+        emit(NavEvent.Haptic(HapticPattern.CONFIRM))
+        refresh()
+    }
+
+    /** User dismissed the fingerprint chip: proposal dropped, no anchor. */
+    fun dismissFingerprint() {
+        if (fingerprintPrompt == null) return
+        fingerprintPrompt = null
+        refresh()
     }
 
     /**
@@ -370,6 +427,8 @@ class Navigator(
             return
         }
         legIndex += 1
+        // A suggestion belongs to the leg it fired on; never carry it over.
+        fingerprintPrompt = null
         legStartDist = dist
         lastAnchorDist = dist
         legStartOdo = dist
@@ -408,6 +467,7 @@ class Navigator(
 
     private fun arrive() {
         if (phase == NavPhase.ARRIVED) return
+        fingerprintPrompt = null
         setPhase(NavPhase.ARRIVED)
         emit(NavEvent.Haptic(HapticPattern.ARRIVE))
         emit(NavEvent.Arrived)
@@ -511,6 +571,7 @@ class Navigator(
             uncertaintyM = uncertainty,
             progress01 = currentLeg?.lengthM?.takeIf { it > 0.0 }
                 ?.let { (progress / it).coerceIn(0.0, 1.0) } ?: 0.0,
+            fingerprintPrompt = fingerprintPrompt,
         )
     }
 

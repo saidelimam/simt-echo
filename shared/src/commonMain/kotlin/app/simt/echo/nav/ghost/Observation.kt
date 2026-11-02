@@ -34,4 +34,12 @@ sealed interface Observation {
      * LEVEL_CHANGE node's along-route [s] like a landmark confirm.
      */
     data class Level(val nodeS: Double) : Observation
+
+    /**
+     * A visual-fingerprint match (W12-05): cosine ≥ τ against a stored
+     * print within s ± (3σ + 5 m). Low weight by construction (see
+     * [GhostFilter.observeFingerprint]) — the user, or a consistent turn
+     * event, confirms; never a silent auto-confirm.
+     */
+    data class Fingerprint(val nodeS: Double, val similarity01: Double) : Observation
 }
