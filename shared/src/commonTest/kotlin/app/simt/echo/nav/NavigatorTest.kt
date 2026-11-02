@@ -452,13 +452,14 @@ class NavigatorTest {
     fun stairsUpConfirmsLevelOnBothEngines() = runTest {
         for (engine in engines()) {
             val seen = mutableListOf<String>()
+            val pressures = levelPressures(toM = 3.0, rampSamples = 16)
             val (nav, events) = runDirect(levelRoute(levelDelta = 1), engine) { nav ->
                 nav.onInput(NavInput.Aligned)
                 feedLevelWalk(
                     nav,
-                    pressures = rampDh(1013.25, 0.0, 3.0, 16),
-                    steps = List(16) { it },
-                    distStepM = 0.5,
+                    pressures = pressures,
+                    steps = List(pressures.size) { it },
+                    distStepM = 0.1,
                     seen = seen,
                 )
             }
@@ -497,12 +498,13 @@ class NavigatorTest {
     fun liftDownConfirmsLevelOnBothEngines() = runTest {
         for (engine in engines()) {
             val seen = mutableListOf<String>()
+            val pressures = levelPressures(toM = -3.0, rampSamples = 12)
             val (nav, events) = runDirect(levelRoute(levelDelta = -1), engine) { nav ->
                 nav.onInput(NavInput.Aligned)
                 feedLevelWalk(
                     nav,
-                    pressures = rampDh(1013.25, 0.0, -3.0, 12),
-                    steps = List(12) { 0 },
+                    pressures = pressures,
+                    steps = List(pressures.size) { 0 },
                     distStepM = 0.1,
                     seen = seen,
                 )
@@ -575,6 +577,16 @@ class NavigatorTest {
         eventJob.cancel()
         return nav to events.toList()
     }
+
+    /**
+     * A level change as the barometer sees it: a quiet baseline (the
+     * leg-start median), the ramp to [toM], then a 1.5 s+ dwell at the new
+     * level so the crossing holds long enough to count (50 ms ticks).
+     */
+    private fun levelPressures(toM: Double, rampSamples: Int): List<Double> =
+        List(5) { pressureForDh(1013.25, 0.0) } +
+            rampDh(1013.25, 0.0, toM, rampSamples) +
+            List(35) { pressureForDh(1013.25, toM) }
 
     /** Pressures ramping from [fromM] to [toM] above datum [p0]. */
     private fun rampDh(p0: Double, fromM: Double, toM: Double, samples: Int): List<Double> =

@@ -274,7 +274,7 @@ class Navigator(
             foundAtS = Double.NaN
         }
         applyCorridorSnapping(update)
-        levelAwareness.onSample(update.pressureHpa, update.stepCount)?.let { onLevelEvent(it) }
+        levelAwareness.onSample(update.pressureHpa, update.stepCount, update.tNs)?.let { onLevelEvent(it) }
         onMagneticUpdate(update)
         val detected = turnDetector.onSample(update.tNs, update.yawRad)
         if (detected != null) {
