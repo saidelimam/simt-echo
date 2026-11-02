@@ -260,7 +260,7 @@ No slice is Complete on a partial pass or on unit evidence for a device claim.
 | W14-01 | Queued | Performance gate on two devices | T | F | W10-04, W13-04, W13-08, W12-05 | — |
 | W14-02 | Queued | Accessibility & motion parity gate v2 | T (V) | F | W13-04…W13-11 | — |
 | W14-03 | Queued | Field A/B: v1 vs Ghost on the V2 §11 protocol | T (S) | F | W12-06, W12-08, W13-08 | — |
-| W14-04 | Queued | Security & privacy audit v2 | S | D | W11-09, W12-05, W12-04 | — |
+| W14-04 | Complete | Security & privacy audit v2 | S | D | W11-09, W12-05, W12-04 | 8c9416c786df0853a050d188a07f0a309d81fe71 |
 | W14-05 | Queued | ECHO 2.0 release gate | S | F | W9-12, W11-10, W14-01…W14-04 | — |
 
 Tier totals: **L 2 · F 11 · T 25 · S 7** (primary; reviewers in
