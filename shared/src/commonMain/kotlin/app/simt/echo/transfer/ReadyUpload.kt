@@ -40,6 +40,12 @@ enum class ReadyStageOutcome {
 
     /** The window held no sendable bytes after filtering. */
     SkippedEmpty,
+
+    /**
+     * No [FaceDetector] is configured: the consent sheet promises
+     * face-filtered strips, so nothing is staged unfiltered.
+     */
+    SkippedNoFilter,
 }
 
 /**
@@ -63,8 +69,9 @@ data class ReadyStagedRecord(
  *
  * Load-bearing order, enforced in the code path and pinned by
  * `ReadyUploadTest`: consent → metered gate → privacy filter →
- * network. With consent off (the default) or on a metered network
- * under Wi-Fi-only consent, no call reaches the API.
+ * network. With consent off (the default), on a metered network
+ * under Wi-Fi-only consent, or with no [faceDetector] (the consent
+ * copy promises face-filtered strips), no call reaches the API.
  *
  * Blob ids are the ledger JPEG file names; the Finish manifest built
  * from the same ledger maps 1:1. Owed: the live motion→window trigger
@@ -97,8 +104,10 @@ class ReadyUploader(
     /**
      * Stages one closed checkpoint window: declares its privacy-filtered
      * strip and PUTs the missing bytes. Skips (never throws) on the
-     * consent and metering gates; an empty post-filter window stages
-     * nothing.
+     * consent, metering and filter gates; an empty post-filter window
+     * stages nothing. The upload id is recorded as soon as the session
+     * exists, before any PUT, so a crash mid-window still leaves
+     * [discard] a session to delete.
      */
     suspend fun stageWindow(
         entries: List<GlimpseEntry>,
@@ -106,7 +115,8 @@ class ReadyUploader(
     ): ReadyStageOutcome {
         if (!consent.enabled) return ReadyStageOutcome.SkippedNoConsent
         if (consent.wifiOnly && !network.unmetered()) return ReadyStageOutcome.SkippedMetered
-        val sendable = if (faceDetector == null) entries else excludeFaces(entries, faceDetector)
+        if (faceDetector == null) return ReadyStageOutcome.SkippedNoFilter
+        val sendable = excludeFaces(entries, faceDetector)
         val files = sendable.mapNotNull { entry ->
             val name = entry.jpegPath?.substringAfterLast('/')?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
             val bytes = readBytes(entry) ?: return@mapNotNull null
@@ -115,13 +125,13 @@ class ReadyUploader(
         if (files.isEmpty()) return ReadyStageOutcome.SkippedEmpty
         val refs = files.map { file -> UploadFileRef(file.id, sha256Hex(file.bytes), file.bytes.size.toLong()) }
         val created = api.createUpload(refs)
-        val byId = files.associateBy { it.id }
-        created.missing.forEach { id -> byId[id]?.let { api.putUploadFile(created.uploadId, it) } }
         val staged = drafts.loadReadyStagedRecord(draftId)
         drafts.saveReadyStagedRecord(
             draftId,
             ReadyStagedRecord(staged.orEmpty() + created.uploadId, nowMs()),
         )
+        val byId = files.associateBy { it.id }
+        created.missing.forEach { id -> byId[id]?.let { api.putUploadFile(created.uploadId, it) } }
         return ReadyStageOutcome.Staged
     }
 

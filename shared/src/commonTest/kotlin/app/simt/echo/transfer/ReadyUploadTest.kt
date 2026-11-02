@@ -31,6 +31,7 @@ class ReadyUploadTest {
         val uploadDeletes = mutableListOf<String>()
         val stagedCreates = mutableListOf<Triple<String, List<String>, String>>()
         var deleteError: EchoApiError? = null
+        var putError: EchoApiError? = null
         private var nextUpload = 0
 
         override suspend fun submit(manifestJson: String, files: List<UploadFile>): String = "job-x"
@@ -50,6 +51,7 @@ class ReadyUploadTest {
         override suspend fun uploadMissing(uploadId: String): List<String> = emptyList()
 
         override suspend fun putUploadFile(uploadId: String, file: UploadFile) {
+            putError?.let { throw it }
             puts += file
         }
 
@@ -89,9 +91,14 @@ class ReadyUploadTest {
         val uploader: ReadyUploader,
     )
 
+    /** A scanner that clears every frame; an explicit `null` means no detector. */
+    private val faceFree = object : FaceDetector {
+        override fun verdictFor(entry: GlimpseEntry): FaceVerdict = FaceVerdict.FACE_FREE
+    }
+
     private fun harness(
         metered: Boolean = false,
-        detector: FaceDetector? = null,
+        detector: FaceDetector? = faceFree,
     ): Harness {
         val api = FakeV11Api()
         val fileSystem = FakeFileSystem()
@@ -184,6 +191,35 @@ class ReadyUploadTest {
         assertEquals(ReadyStageOutcome.SkippedEmpty, outcome)
         assertTrue(h.api.uploadCreates.isEmpty())
         assertTrue(h.api.puts.isEmpty())
+    }
+
+    @Test
+    fun withoutADetectorNothingIsStagedUnfiltered() = runTest {
+        // The consent sheet promises face-filtered strips: no detector, no upload.
+        val h = harness(detector = null)
+        h.uploader.grantConsent()
+        val outcome = h.uploader.stageWindow(listOf(entry("a")), bytesFor("a"))
+        assertEquals(ReadyStageOutcome.SkippedNoFilter, outcome)
+        assertTrue(h.api.uploadCreates.isEmpty())
+        assertTrue(h.api.puts.isEmpty())
+        assertNull(h.drafts.loadReadyStagedRecord("draft-1"))
+    }
+
+    @Test
+    fun uploadIdIsRecordedBeforeThePutsSoACrashStillDiscards() = runTest {
+        val h = harness()
+        h.uploader.grantConsent()
+        // The process dies (or the network drops) mid-window, after the
+        // session exists and before every PUT lands.
+        h.api.putError = EchoApiError.Network(RuntimeException("connection lost"))
+        assertFailsWith<EchoApiError.Network> {
+            h.uploader.stageWindow(listOf(entry("a")), bytesFor("a"))
+        }
+        assertEquals(listOf("upload-1"), h.drafts.loadReadyStagedRecord("draft-1"))
+
+        h.uploader.discard()
+        assertEquals(listOf("upload-1"), h.api.uploadDeletes)
+        assertNull(h.drafts.loadReadyStagedRecord("draft-1"))
     }
 
     @Test
