@@ -186,6 +186,20 @@ class NavigateViewModel(
     /** Last-leg check for the contextual "I'm here" action. */
     fun isLastLeg(nav: NavUi): Boolean = nav.legIndex >= legCount - 1
 
+    /**
+     * Fingerprint chip confirm (W12-05 → W13-08 instrument): the user
+     * tapped "That's the X?" — resolves into a soft anchor. No-op
+     * without a pending prompt (Navigator owns the rule).
+     */
+    fun confirmFingerprint() {
+        navigator?.confirmFingerprint()
+    }
+
+    /** Fingerprint chip dismiss: proposal dropped, no anchor. */
+    fun dismissFingerprint() {
+        navigator?.dismissFingerprint()
+    }
+
     override fun onCleared() {
         motion.stop()
     }

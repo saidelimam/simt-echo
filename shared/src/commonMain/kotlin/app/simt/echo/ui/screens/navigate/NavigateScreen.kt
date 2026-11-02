@@ -46,20 +46,12 @@ import app.simt.echo.platform.rememberCameraRecorder
 import app.simt.echo.platform.rememberHaptics
 import app.simt.echo.platform.rememberMotionSource
 import app.simt.echo.platform.rememberOnline
-import app.simt.echo.ui.components.CameraNavigateOverlay
 import app.simt.echo.ui.components.CosmosBanner
-import app.simt.echo.ui.components.CropImage
-import app.simt.echo.ui.components.DirectionArrow
-import app.simt.echo.ui.components.DistanceReadout
-import app.simt.echo.ui.components.CosmosPrimaryButton
 import app.simt.echo.ui.components.CosmosEmptyState
-import app.simt.echo.ui.components.LandmarkCard
-import app.simt.echo.ui.components.CosmosSecondaryButton
-import app.simt.echo.ui.components.CosmosTertiaryButton
 import app.simt.echo.ui.components.StatusChip
 import app.simt.echo.ui.components.oneDecimal
-import app.simt.echo.ui.components.overlayScrimAlpha
 import app.simt.echo.ui.copy.MISSING_ROUTE_ERROR
+import app.simt.echo.ui.screens.record.RollingDistance
 import app.simt.echo.ui.theme.EchoSpace12
 import app.simt.echo.ui.theme.EchoSpace24
 
@@ -179,64 +171,99 @@ private fun NavigateBody(
         showCards = showCards,
         researchMode = researchMode,
     )
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(EchoSpace24),
-        verticalArrangement = Arrangement.spacedBy(EchoSpace12),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (!online) StatusChip(text = "⚠ Offline · sensors only")
-            StatusChip(text = "σ ±${oneDecimal(nav.uncertaintyM)} m")
-        }
-        if (presentation.bannerKind != null) {
-            CosmosBanner(message = nav.instruction, kind = presentation.bannerKind)
-        }
-        // Reticle frame keeps the 200 dp chevron legible in motion and
-        // outdoors; the instruction Text below carries the semantics.
-        Box(
+    // W13-08 instrument: pure phase → instrument mapping (all 8 phases,
+    // engine-independent). Shared with the camera-HUD body below.
+    val landmark = if (showCards) nav.landmark else null
+    val instrument = navigateInstrumentFor(nav, landmark != null)
+    val distanceM = maxOf(0.0, nav.distanceToNextM)
+    val cropBytes = remember(landmark?.cropAssetId) {
+        landmark?.cropAssetId?.let { id -> routes.readAsset(routeId, id) }
+    }
+    Box(modifier = modifier.fillMaxSize()) {
+        Column(
             modifier = Modifier
-                .border(2.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(24.dp))
-                .padding(8.dp)
-                .testTag(NavigateReticleTag),
+                .fillMaxSize()
+                .padding(EchoSpace24),
+            verticalArrangement = Arrangement.spacedBy(EchoSpace12),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            DirectionArrow(angleRad = nav.arrowRad.toFloat(), contentDescription = null)
-        }
-        AnimatedContent(targetState = nav.instruction, label = "instruction") { instruction ->
-            Text(
-                text = instruction,
-                style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.semantics { heading() },
-            )
-        }
-        DistanceReadout(text = "${oneDecimal(maxOf(0.0, nav.distanceToNextM))} m")
-        // Baseline (SENSOR_ONLY) runs show no landmark cards: turns and
-        // distance only, so the comparison against ECHO stays honest.
-        // Generic enter/exit only — no per-screen animation system.
-        val landmark = if (showCards) nav.landmark else null
-        AnimatedVisibility(
-            visible = landmark != null,
-            enter = fadeIn() + expandVertically(),
-            exit = fadeOut() + shrinkVertically(),
-            label = "landmark",
-        ) {
-            landmark?.let {
-                val cropBytes = remember(it.cropAssetId) {
-                    it.cropAssetId?.let { id -> routes.readAsset(routeId, id) }
-                }
-                if (cropBytes != null) {
-                    CropImage(bytes = cropBytes, contentDescription = it.title)
-                }
-                LandmarkCard(
-                    title = it.title,
-                    cue = it.cue,
-                    stats = "in ~${oneDecimal(maxOf(0.0, nav.distanceToNextM))} m",
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (!online) StatusChip(text = "⚠ Offline · sensors only")
+                StatusChip(text = instrument.sigmaLabel)
+            }
+            if (presentation.bannerKind != null) {
+                CosmosBanner(message = nav.instruction, kind = presentation.bannerKind)
+            }
+            // Reticle frame keeps the 200 dp morph arrow legible in motion
+            // and outdoors; the instruction Text below carries the
+            // semantics. Calm mode (straight walking) dims the frame —
+            // text contrast is never reduced.
+            Box(
+                modifier = Modifier
+                    .border(
+                        2.dp,
+                        if (instrument.calmMode) {
+                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+                        } else {
+                            MaterialTheme.colorScheme.outlineVariant
+                        },
+                        RoundedCornerShape(24.dp),
+                    )
+                    .padding(8.dp)
+                    .testTag(NavigateReticleTag),
+            ) {
+                InstrumentArrow(instrument = instrument, arrowRad = nav.arrowRad)
+            }
+            AnimatedContent(targetState = nav.instruction, label = "instruction") { instruction ->
+                Text(
+                    text = instruction,
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.semantics { heading() },
                 )
             }
+            RollingDistance(text = "${oneDecimal(distanceM)} m")
+            // Baseline (SENSOR_ONLY) runs show no landmark cards: turns and
+            // distance only, so the comparison against ECHO stays honest.
+            // Generic enter/exit only — no per-screen animation system.
+            AnimatedVisibility(
+                visible = landmark != null,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically(),
+                label = "landmark",
+            ) {
+                landmark?.let {
+                    InstrumentLandmarkCard(
+                        showLookForThis = instrument.showLookForThis,
+                        title = it.title,
+                        cue = it.cue,
+                        stats = "in ~${oneDecimal(distanceM)} m",
+                        cropBytes = cropBytes,
+                        contentDescription = it.title,
+                        maskSvgPath = it.maskSvgPath,
+                        maskW = it.maskW,
+                        maskH = it.maskH,
+                        box = it.box,
+                        frameW = it.frameW,
+                        frameH = it.frameH,
+                    )
+                }
+            }
+            // Fingerprint suggestion (W12-05): the chip asks, never asserts.
+            InstrumentBelowDistance(
+                chipCopy = instrument.fingerprintChipCopy,
+                onConfirm = viewModel::confirmFingerprint,
+                onDismiss = viewModel::dismissFingerprint,
+            )
+            NavigateProgress(legIndex = nav.legIndex, legCount = legCount)
+            NavigateActions(presentation = presentation, viewModel = viewModel)
         }
-        NavigateProgress(legIndex = nav.legIndex, legCount = legCount)
-        NavigateActions(presentation = presentation, viewModel = viewModel)
+        if (instrument.glowSide != null) {
+            NavigatePeripheryGlow(
+                side = instrument.glowSide,
+                intensity01 = instrument.glowIntensity01,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
     }
 }
 
@@ -279,122 +306,3 @@ private fun NavigateProgress(
     }
 }
 
-@Composable
-private fun NavigateOverlayBody(
-    nav: NavUi,
-    routes: RouteRepository,
-    routeId: String,
-    online: Boolean,
-    legCount: Int,
-    researchMode: Boolean,
-    viewModel: NavigateViewModel,
-    camera: CameraRecorder,
-    modifier: Modifier = Modifier,
-) {
-    // Baseline honesty in the overlay too: a SENSOR_ONLY trial sees no
-    // landmark card, crop, or mask (review 0004 R4).
-    val landmark = nav.landmark?.takeIf { shouldShowLandmarkCards(viewModel.baselineMode) }
-    val cropBytes = remember(landmark?.cropAssetId) {
-        landmark?.cropAssetId?.let { routes.readAsset(routeId, it) }
-    }
-    val distanceM = maxOf(0.0, nav.distanceToNextM)
-    val presentation = navigatePhasePresentation(
-        phase = nav.phase,
-        hasLandmark = nav.landmark != null,
-        isLastLeg = viewModel.isLastLeg(nav),
-        showCards = shouldShowLandmarkCards(viewModel.baselineMode),
-        researchMode = researchMode,
-    )
-    CameraNavigateOverlay(
-        arrowRad = nav.arrowRad.toFloat(),
-        instruction = nav.instruction,
-        distanceText = "${oneDecimal(distanceM)} m",
-        uncertaintyText = "σ ±${oneDecimal(nav.uncertaintyM)} m",
-        offline = !online,
-        landmarkTitle = landmark?.title,
-        landmarkCue = landmark?.cue,
-        landmarkStats = landmark?.let { "in ~${oneDecimal(distanceM)} m" },
-        cropBytes = cropBytes,
-        cropDescription = landmark?.title,
-        maskSvgPath = landmark?.maskSvgPath,
-        maskW = landmark?.maskW,
-        maskH = landmark?.maskH,
-        maskBox = landmark?.box,
-        maskFrameW = landmark?.frameW,
-        maskFrameH = landmark?.frameH,
-        progress01 = nav.progress01.toFloat(),
-        legText = "Leg ${nav.legIndex + 1} of $legCount",
-        scrimAlpha = overlayScrimAlpha(distanceM),
-        // The camera starts only behind the W4-03 permission gate.
-        preview = {
-            app.simt.echo.platform.CameraPermissionGate {
-                camera.Preview(modifier = Modifier.fillMaxSize())
-            }
-        },
-        actions = { NavigateActions(presentation = presentation, viewModel = viewModel) },
-        modifier = modifier,
-    )
-}
-
-@Composable
-private fun NavigateActions(
-    presentation: NavigatePhasePresentation,
-    viewModel: NavigateViewModel,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = modifier.fillMaxWidth(),
-    ) {
-        // Phase honesty is decided in [navigatePhasePresentation]; here each
-        // action only wires to the ViewModel input of the same name. The
-        // head of the list is the primary command (never two primaries).
-        val primary = presentation.actions.firstOrNull()
-        val secondaries = presentation.actions.drop(1)
-        if (primary != null) {
-            CosmosPrimaryButton(
-                label = actionLabel(primary),
-                onClick = { viewModel.navigate(primary) },
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-        for (action in secondaries) {
-            when (action) {
-                NavigateAction.AT_MARKER ->
-                    CosmosTertiaryButton(
-                        label = actionLabel(action),
-                        onClick = { viewModel.navigate(action) },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                else -> CosmosSecondaryButton(
-                    label = actionLabel(action),
-                    onClick = { viewModel.navigate(action) },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-        }
-    }
-}
-
-private fun actionLabel(action: NavigateAction): String = when (action) {
-    NavigateAction.SEE_LANDMARK -> "I see it"
-    NavigateAction.NOT_YET -> "Not yet"
-    NavigateAction.LOST -> "Lost"
-    NavigateAction.GO_BACK_TO_LAST -> "Go back to last"
-    NavigateAction.RESTART_FROM_START -> "Restart from start"
-    NavigateAction.IM_HERE -> "I'm here"
-    NavigateAction.AT_MARKER -> "At marker (trial)"
-}
-
-/** Single wiring point from a presented action to its ViewModel input. */
-private fun NavigateViewModel.navigate(action: NavigateAction) {
-    when (action) {
-        NavigateAction.SEE_LANDMARK -> seeLandmark()
-        NavigateAction.NOT_YET -> notYet()
-        NavigateAction.LOST -> lost()
-        NavigateAction.GO_BACK_TO_LAST -> restartFromLast()
-        NavigateAction.RESTART_FROM_START -> restartFromStart()
-        NavigateAction.IM_HERE -> imHere()
-        NavigateAction.AT_MARKER -> atMarker()
-    }
-}
