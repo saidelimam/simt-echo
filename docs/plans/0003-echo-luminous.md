@@ -895,7 +895,7 @@ for a smarter model / a device session instead of being faked:
 |---|---|
 | W11-10 | Walked 60 m route + deployed v1.1 worker + SAM key (billing, bytes, latency, retry cache-hit, jank). Scaffolding present: `npm run canary:sam` (W11-07), forge budget maths (W11-03), lens governor + cache (W11-06), client v1.1 (W11-08). |
 | W14-01 | Two named devices + 10-minute walk (jank, Frame Tap ≤ 6 ms, filter ≤ 1 ms, battery ≤ 6 %, cold start, thermal step-down). Harness present: `:benchmark` module + `docs/perf.md` gates (W10-04). |
-| W14-02 | Manual TalkBack pass per primary screen + V-reviewed frames at fontScale 2.0 (W8-12 repeated over W13-04…W13-11). Static-tier parity is unit-pinned per slice; the human pass is owed. |
+| W14-02 | Manual TalkBack pass per primary screen + V-reviewed frames at fontScale 2.0 (W8-12 repeated over W13-04…W13-11). Static-tier parity is unit-pinned per slice; the human pass is owed. A first on-device sweep at fontScale 2.0 (Home, Settings, Receive, Record, Review: no clipping, every control ≥ 48 dp) is in `docs/measurements.md`; TalkBack, Navigate/Align and the W13 screens on device are not covered. |
 | W14-03 | Taped course + 15 alternating runs (5 SENSOR_ONLY + 5 LINEAR + 5 GHOST). Both engines are unit-pinned on all 7 scenarios (W12-02); the field verdict decides the default. |
 | W14-05 | Plan 0002 W9-12 (still Queued) + W11-10 + W14-01…W14-04. Audit W14-04 returned APPROVE WITH RESIDUAL RISK (no BLOCK). |
 
@@ -931,4 +931,4 @@ remainder is owed:
 | W13-12 | Plain-View watch screen, not a Wear ongoing activity or tile |
 
 W14-01/02/03/05 and W11-10 remain Queued as in §12. The W14-02 manual TalkBack
-pass and V review of frames at fontScale 2.0 are still owed.
+pass, and V review of Navigate/Align/W13 frames at fontScale 2.0, are still owed; the Home/Settings/Receive/Record/Review sweep is done.

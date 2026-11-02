@@ -235,3 +235,36 @@ Reading:
   so they are evidence the harness works and a first data point, not a pass/fail
   against a baseline. Frame Tap <= 6 ms, StrictMode and the 2 MB upload check
   have no probe in this harness and are still unmeasured.
+
+## Accessibility sweep on device (W14-02, partial, 2026-11-02)
+
+Pixel 8a (SDK 37) at `font_scale` 2.0, the phone's existing display-size
+override (356 dpi), debug build. Frames for Home, Settings, Receive and the
+Record pre-start card are in `docs/screenshots/w14-02/`; the recording and
+Review frames show a live camera view of a private room, so they were checked
+and not kept.
+
+| Screen | Layout at 2.0 | Controls under 48 dp |
+|---|---|---|
+| Home (list with drafts, and empty state) | Reflows, nothing clipped or overlapped | none (settings 48, rows 133, Record/Receive 56) |
+| Settings | Reflows, scrolls | none (close 48, field 107, buttons 48 to 56, switches 52 x 48) |
+| Receive | Reflows | none |
+| Record, pre-start | Reflows, consent checkbox row wraps onto two lines | none (row 68, Start 88) |
+| Record, recording | HUD chips, distance, bearing, Mark spot and Hold to finish all fit | none (Mark spot 56, Hold to finish 61) |
+| Name sheet, Review | Reflows | not audited |
+
+Sizes come from `uiautomator dump` bounds divided by the 2.2275 px/dp of the
+override density. Icon-only buttons (Settings, Back, Close) carry content
+descriptions in the dump.
+
+Not done, so W14-02 stays Queued: the manual TalkBack pass per screen
+(focus order, announcements, the Hold to finish gesture), Navigate and
+Align at 2.0 (they need a saved route on the phone), the W13 screens'
+reduced-motion behaviour on device, and Review/Name-sheet target sizes.
+
+Unreproduced observation: one benchmark recording had a black Start frame
+(Review's 0 m thumbnail and the Start photo) in a dim room. Four cold starts
+on the debug build each kept a real first frame in bucket 0, so it is not
+systematic. The ledger keeps the first frame on a score tie and the plan's
+score formula is 0 for every under-exposed frame, which could explain it, but
+nothing here proves that, so the ledger is unchanged.
