@@ -111,6 +111,7 @@ class GhostFilter(
             is Observation.Anchor -> anchorAt(obs.nodeS)
             is Observation.Level -> observeLevel(obs.nodeS)
             is Observation.Magnetic -> observeMagnetic(obs.s)
+            is Observation.Fingerprint -> observeFingerprint(obs.nodeS, obs.similarity01)
         }
     }
 
@@ -188,6 +189,28 @@ class GhostFilter(
         for (i in 0 until PARTICLE_COUNT) {
             val d = sA[i] - s
             wA[i] *= exp(-d * d / (2.0 * MAG_SIGMA_M * MAG_SIGMA_M)) + MAG_FLOOR
+        }
+        normalizeAndMaybeResample()
+    }
+
+    /**
+     * Fingerprint match (W12-05): a gated cosine hit (same embedder id +
+     * seed, within s ± (3σ + 5 m), similarity ≥ τ) nudges the belief
+     * toward [nodeS] — never collapses it. The likelihood is floored at
+     * [FINGERPRINT_FLOOR], so the strongest possible update reweights
+     * near-vs-far particles by at most 2:1: a false match bends the
+     * posterior, it cannot snap it. Confirmation stays with the user (or
+     * a consistent turn event) — this function never anchors.
+     */
+    fun observeFingerprint(nodeS: Double, similarity01: Double) {
+        val sim = similarity01.coerceIn(0.0, 1.0)
+        if (sim <= 0.0) return
+        for (i in 0 until PARTICLE_COUNT) {
+            val d = sA[i] - nodeS
+            val like = FINGERPRINT_FLOOR +
+                (1.0 - FINGERPRINT_FLOOR) * sim *
+                exp(-d * d / (2.0 * FINGERPRINT_SIGMA_M * FINGERPRINT_SIGMA_M))
+            wA[i] *= like
         }
         normalizeAndMaybeResample()
     }
@@ -307,6 +330,17 @@ class GhostFilter(
 
         /** Magnetic likelihood floor far from the matched position. */
         const val MAG_FLOOR = 1e-4
+
+        /**
+         * Fingerprint likelihood floor (W12-05): the weakest a particle
+         * ever scores on a fingerprint observation, so the max
+         * near-vs-far reweight is 2:1. Low weight by construction —
+         * S review of privacy + filter weight.
+         */
+        const val FINGERPRINT_FLOOR = 0.5
+
+        /** Fingerprint likelihood Gaussian σ, metres (wide on purpose). */
+        const val FINGERPRINT_SIGMA_M = 6.0
 
         /** Learned-k prior band (W12-03): the W4-02 plausible K band. */
         const val STRIDE_K_MIN = 0.15

@@ -43,4 +43,12 @@ sealed interface Observation {
      * and furniture.
      */
     data class Magnetic(val s: Double) : Observation
+
+    /**
+     * A visual-fingerprint match (W12-05): cosine ≥ τ against a stored
+     * print within s ± (3σ + 5 m). Low weight by construction (see
+     * [GhostFilter.observeFingerprint]) — the user, or a consistent turn
+     * event, confirms; never a silent auto-confirm.
+     */
+    data class Fingerprint(val nodeS: Double, val similarity01: Double) : Observation
 }
