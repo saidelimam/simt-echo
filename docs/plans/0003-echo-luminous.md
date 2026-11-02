@@ -217,14 +217,14 @@ No slice is Complete on a partial pass or on unit evidence for a device claim.
 
 | ID | State | Slice | Tier | Lane | Depends on | Evidence |
 |---|---|---|---|---|---|---|
-| W10-01 | Queued | 2.0 baselines: jank, battery, media timings, SAM billing | T | F | — | — |
-| W10-02 | Queued | Off-main-thread media & sensors; no whole-file reads | F (T) | B | — | — |
+| W10-01 | Complete | 2.0 baselines: jank, battery, media timings, SAM billing | T | F | — | c6018e6718ceb974a19557cbb9d38333f99d4785 |
+| W10-02 | Complete | Off-main-thread media & sensors; no whole-file reads | F (T) | B | — | 95d36be396e0d8927dde87ef40c94354220279b8 |
 | W10-03 | Queued | Camera graph per screen + Frame Tap seam | T (S) | B | W10-02 | — |
 | W10-04 | Queued | Perf harness: macrobenchmark, Baseline Profile, JankStats | F (T) | F | W10-01 | — |
-| W10-05 | Queued | Bundle v2 contract freeze (perception, sigil, compat) | S | A | — | — |
-| W10-06 | Queued | Worker API v1.1 freeze (uploads, budget, events, partials) | S | D | — | — |
+| W10-05 | Complete | Bundle v2 contract freeze (perception, sigil, compat) | S | A | — | 0970cb16058de7faeb17a16e440f8df91c339074 |
+| W10-06 | Complete | Worker API v1.1 freeze (uploads, budget, events, partials) | S | D | — | bc0fd7f0232c2ac73c9e341eab33c5e29558de60 |
 | W10-07 | Complete | Luminous design freeze (motion, motifs, haptic/sonic grammar) | S (V) | E | — | 88d2a75 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.brand.EchoMarkTest" --tests "app.simt.echo.ui.shell.EchoShellTest" |
-| W10-08 | Queued | Turn haptics emitted (LEFT/RIGHT/U_TURN) | T (S) | C | — | — |
+| W10-08 | Complete | Turn haptics emitted (LEFT/RIGHT/U_TURN) | T (S) | C | — | 3d4cb54584a6f3712368799dcbb1d67ce8852e42 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.nav.NavigatorTest" --tests "app.simt.echo.ui.screens.navigate.NavigateViewModelTest" |
 | W11-01 | Queued | Glimpse ledger: on-device frame quality per 0.5 m | L (T) | B | W10-03 | — |
 | W11-02 | Queued | Approach strips + ledger keyframes (no video seeking) | T (S) | B | W11-01 | — |
 | W11-03 | Queued | Clip forge: 12-frame 480 p strips, exact frame↔distance map | F (T) | B | W11-02 | — |
@@ -241,7 +241,7 @@ No slice is Complete on a partial pass or on unit evidence for a device claim.
 | W12-04 | Queued | Magnetic signature capture + DTW observation (P1) | T (S) | C | W12-02 | — |
 | W12-05 | Queued | Visual fingerprints: capture, match, "That's it?" | T (S) | C | W12-02, W11-02 | — |
 | W12-06 | Queued | Lost → Relock (global re-spread, turn-signature DTW) | T (S) | C | W12-05 | — |
-| W12-07 | Queued | Route Health score + nudges (pure) | L (T) | C | W10-05 | — |
+| W12-07 | Complete | Route Health score + nudges (pure) | L (T) | C | W10-05 | 75e44eaa179938655397ebf919ac3bbe2f7061f3 |
 | W12-08 | Queued | Live level awareness (barometer, stairs vs lift) | T (S) | C | W12-02 | — |
 | W13-01 | Complete | Echo field: AGSL atmosphere, tilt parallax, ripple uniforms | T (V) | E | W10-07 | 6c2daf8 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.atmosphere.*" --tests "app.simt.echo.ui.shell.EchoShellTest" --tests "app.simt.echo.ui.components.*" |
 | W13-02 | Complete | Motion system: springs, shared elements, predictive back, morph kit | F (T, V) | A | W10-07 | 4fc3fe3 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.motion.*" --tests "app.simt.echo.ui.shell.*" --tests "app.simt.echo.ui.screens.*" |
