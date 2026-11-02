@@ -227,12 +227,12 @@ with device model + build SHA. No slice is Complete on a partial pass.
 | W8-03 | Complete | Cosmos atmosphere: background, canopy, motion tiers | T | E | W8-02 | 88628f07a8ec3d39257afb7fe96a18cae0c2ae76 |
 | W8-04 | Complete | Cosmos component library (commands, fields, dialogs, states) | F (T) | E | W8-02, W8-03 | 2047fbab37db3a3d7dc86a07ca9690d42da9ec0e |
 | W8-05 | Complete | App shell & navigation grammar (chrome, back, transitions) | T (S) | A | W8-04 | 94a591a93ad1ea849ea7d10eb6bf095cb12e004d |
-| W8-06 | Queued | Home in Cosmos (route records, first-run, recovery) | T | E | W8-05 | — |
-| W8-07 | Queued | Record in Cosmos (camera instrument, Finish sheet) | T | B | W8-05 | — |
-| W8-08 | Queued | Review in Cosmos (minimap instrument, landmark records) | T (S) | E | W8-05 | — |
-| W8-09 | Queued | Processing/Share/Receive in Cosmos (consent, QR, reticle) | F (T) | E | W8-05 | — |
-| W8-10 | Queued | Align/Navigate/Arrived in Cosmos (instrument clarity) | T (S) | E | W8-05 | — |
-| W8-11 | Queued | Settings in Cosmos (sections, delete-all, AI status) | F (T) | E | W8-05, W7-07 | — |
+| W8-06 | Complete | Home in Cosmos (route records, first-run, recovery) | T | E | W8-05 | 7cc4b77bc3f353f1d374e70f6fcd2078665fcc97 |
+| W8-07 | Complete | Record in Cosmos (camera instrument, Finish sheet) | T | B | W8-05 | 1045f758e8ab62fd36707984a83813192cd1debd |
+| W8-08 | Complete | Review in Cosmos (minimap instrument, landmark records) | T (S) | E | W8-05 | e210df8dd4dcc8212c526aa4c4f2faa64d5c3dd4 |
+| W8-09 | Complete | Processing/Share/Receive in Cosmos (consent, QR, reticle) | F (T) | E | W8-05 | 973c5663c00877f7525e5ebd1a74da955e834ada |
+| W8-10 | Complete | Align/Navigate/Arrived in Cosmos (instrument clarity) | T (S) | E | W8-05 | 343aac6b5c4e097f862e3df03b0ce79d92c9f4ba |
+| W8-11 | Complete | Settings in Cosmos (sections, delete-all, AI status) | F (T) | E | W8-05, W7-07 | 65a981137155c2c668c73f0968a82ea54faa270c |
 | W8-12 | Queued | Accessibility & motion gate (contrast, fontScale, TalkBack) | T | F | W8-06, W8-07, W8-08, W8-09, W8-10, W8-11 | — |
 | W9-01 | Complete | Worker production deploy (R2, secrets, live health) | S | D | W7-12 | f79d2169b7c67c8e1462ca776debd66e42ce96ed |
 | W9-02 | Queued | Live AI envelope: deployed 60 m job, cost/latency measured | T (S) | D | W9-01 | — |
