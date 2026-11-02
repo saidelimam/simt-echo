@@ -19,6 +19,7 @@ media3 = "1.10.1"
 qrose = "1.3.1"
 mlkit-barcode = "17.3.0"
 play-services-wearable = "20.0.1"
+junit4 = "4.13.2"
 # W6-03 headless UI gate: Robolectric runs androidMain composables on the
 # host JVM. SDK pin lags compileSdk per review 0006 NR-2 (no SDK-37
 # shadows yet) — UI tests run @Config(sdk = [36]).
@@ -69,6 +70,9 @@ media3-extractor = { group = "androidx.media3", name = "media3-extractor", versi
 
 # Wear OS (W5-04 haptic mirror: MessageClient + CapabilityClient only)
 play-services-wearable = { group = "com.google.android.gms", name = "play-services-wearable", version.ref = "play-services-wearable" }
+
+# Unit tests
+junit-junit = { group = "junit", name = "junit", version.ref = "junit4" }
 
 # Headless UI gate (W6-03/W7-02): Robolectric + Compose test rule for the
 # androidHostTest source set. ui-test-junit4 tracks the CMP plugin version.

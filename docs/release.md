@@ -110,6 +110,12 @@ Deploy evidence (all live):
 - URL: `https://echo-api.saidelimam.workers.dev`, version id
   `df4792af-aaf0-4bdb-b309-1a848a78e994`, bindings MEDIA (echo-media)
   + AI + RL + PIPELINE confirmed in deploy output.
+- Canonical base URL: `https://api.echo.simt.app` (custom domain
+  declared in `worker/wrangler.jsonc` `routes`, cert provisioned,
+  health + authenticated checks green 2026-11-02; deploy version
+  `47544eee-392d-4dd1-9e8d-71d407e79dc9`). The workers.dev URL stays
+  enabled as a fallback route for the same worker. Release builds
+  default to the canonical domain (`ECHO_PROD_API_BASE` overrides).
 - `GET /v1/health` (public): `{ok: true, version: 0.1.0,
   metaKeyConfigured: false, providers: {workersAi: true, metaKey:
   false}}` — true-to-config.
@@ -125,3 +131,32 @@ Deploy evidence (all live):
   `WORKERS_API_BASE` to the URL above (`ECHO_PROD_API_BASE`
   overrides) and reads `ECHO_APP_TOKEN` only from
   `ECHO_PROD_APP_TOKEN` (empty default — fail-closed per W7-07).
+
+## Relay live round-trip (W9-03, 2026-11-02)
+
+Network-emulated equivalent on production (no second phone; code +
+unit gates in `04efbdf`):
+
+- `POST /v1/relay` (ECX1-prefixed 260-byte random blob, Bearer) →
+  `{ok: true, code: HJBMJW, expiresAt: <+30 min>}`.
+- `GET /v1/relay/HJBMJW` → 200, bytes byte-identical (sha256
+  `d8135c9e…27ec` both sides) — the server stores and returns
+  opaque bytes only, never parses, key never leaves the QR path.
+- TTL expiry is code-cited (`relay.ts:91-96` delete-then-404,
+  `relay.test.ts:92-108,142`), not awaited live (30 min).
+- S-review verdict on the zero-knowledge property: APPROVE WITH
+  RESIDUAL RISK (property upheld per relay.ts:59/74-77/91-96 +
+  Bearer middleware; residual: live TTL wait + on-device
+  LAN-blocked transfer belong to W9-04).
+
+  Token rotation (2026-11-02, recorded honestly): the W9-01 token
+  value survived only in a worktree file that was deleted before the
+  operator's `local.properties` write landed (an append-guard
+  skipped the write because the key already existed empty), leaving
+  production at `server_misconfigured`. Rotated with `wrangler
+  secret put ECHO_APP_TOKEN` (same approved secret class, no new
+  scope), value stored in the gitignored `local.properties`, live
+  check `GET /v1/jobs/:id` → `job_not_found` (authenticated).
+  Redeployed version `b0e5c38a-046b-49e4-8a7d-a2d190db1f7d`
+  to rebind. Lesson: verify secret liveness (`job_not_found`, not
+  `unauthorized`) before deleting the only value copy.

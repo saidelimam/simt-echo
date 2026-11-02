@@ -59,7 +59,7 @@ android {
             buildConfigField(
                 "String", "WORKERS_API_BASE",
                 "\"" + (System.getenv("ECHO_PROD_API_BASE")
-                    ?: "https://echo-api.saidelimam.workers.dev") + "\"",
+                    ?: "https://api.echo.simt.app") + "\"",
             )
             buildConfigField(
                 "String", "ECHO_APP_TOKEN",
