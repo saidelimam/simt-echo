@@ -7,15 +7,18 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -30,14 +33,15 @@ import androidx.compose.ui.unit.dp
 // (FULL tier only). Daylight Nebula renders a flat background with no
 // stars/nebula (freeze §3 [P-R C27]).
 //
-// Performance contract (acceptance: zero per-frame allocation in the draw
-// phase): star positions + brushes + palette are computed in remember
-// blocks keyed on size/scheme/variant/tier; the draw phase reads floats,
-// precomputed brushes, and one remembered scratch buffer. Animated values
-// (twinkle/drift) and the parallax lambda are read in the draw phase only,
-// so feeding them never recomposes. No infinite animation is started below
-// FULL, and REDUCED/STATIC compose the identical Canvas hierarchy with
-// static values.
+// Performance contract: star positions, brushes and palette are computed in
+// remember blocks keyed on size/scheme/variant/tier. The stars are drawn into
+// retained layers that read no animated state, so they are recorded once per
+// size and then only transformed: the tilt-parallax rotation is a
+// graphicsLayer property (a GPU transform of the recorded layer, read in the
+// layer phase, never recomposing or redrawing). Only the few accent stars
+// twinkle, in their own small layer, and only when the quantised brightness
+// step changes. No infinite animation is started below FULL, and
+// REDUCED/STATIC compose the identical hierarchy with static values.
 //
 // Accessibility: the Canvas carries no content description and emits no
 // semantics children, so stars are absent from the accessibility tree. The
@@ -132,6 +136,7 @@ fun CosmosBackground(
             )
         }
 
+        val showNebula = animated && (variant == CosmosVariant.Home || variant == CosmosVariant.Gate)
         val transition = if (animated) rememberInfiniteTransition(label = "cosmos") else null
         val twinkle = transition?.animateFloat(
             initialValue = 0f,
@@ -142,90 +147,112 @@ fun CosmosBackground(
             ),
             label = "twinkle",
         )
-        val drift = transition?.animateFloat(
-            initialValue = 0f,
-            targetValue = 360f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = COSMOS_DRIFT_PERIOD_MS, easing = LinearEasing),
-                repeatMode = RepeatMode.Restart,
-            ),
-            label = "drift",
-        )
+        // The nebula orbit is the only consumer of drift, so only a nebula starts it.
+        val drift = if (showNebula) {
+            transition?.animateFloat(
+                initialValue = 0f,
+                targetValue = 360f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(durationMillis = COSMOS_DRIFT_PERIOD_MS, easing = LinearEasing),
+                    repeatMode = RepeatMode.Restart,
+                ),
+                label = "drift",
+            )
+        } else {
+            null
+        }
+        // Snapped read: the accent canvas redraws only when a brightness step is crossed.
+        val twinkleLevel = remember(twinkle) {
+            twinkle?.let { t -> derivedStateOf { twinkleStep(t.value) } }
+        }
 
-        val showNebula = animated && (variant == CosmosVariant.Home || variant == CosmosVariant.Gate)
-        // One remembered scratch buffer reused for every star every frame:
-        // rotatedStarPosition writes here, so the draw loop allocates nothing.
-        val scratch = remember { FloatArray(2) }
-
-        Canvas(modifier = Modifier.fillMaxSize().testTag(CosmosBackgroundTestTag)) {
-            if (isLight) {
-                // Daylight Nebula: flat background, no starfield/nebula [P-R C27].
-                if (drawField) drawRect(color = palette.voidCenter)
-                return@Canvas
-            }
+        Box(modifier = Modifier.fillMaxSize().testTag(CosmosBackgroundTestTag)) {
             if (drawField) {
-                drawRect(brush = voidBrush)
-                drawRect(brush = topGlowBrush)
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    if (isLight) {
+                        // Daylight Nebula: flat background, no starfield/nebula [P-R C27].
+                        drawRect(color = palette.voidCenter)
+                        return@Canvas
+                    }
+                    drawRect(brush = voidBrush)
+                    drawRect(brush = topGlowBrush)
+                    if (showNebula) {
+                        val driftRad = (drift?.value ?: 0f) * DEG_TO_RAD
+                        val shortEdge = minOf(size.width, size.height)
+                        val orbitRange = shortEdge * COSMOS_DRIFT_AMPLITUDE_FRACTION
+                        val orbitX = kotlin.math.cos(driftRad) * orbitRange
+                        val orbitY = kotlin.math.sin(driftRad) * orbitRange
+                        val maxRadius = maxOf(size.width, size.height)
+                        drawCircle(
+                            brush = nebulaBrushA,
+                            radius = maxRadius * 0.55f,
+                            center = Offset(size.width * 0.3f + orbitX, size.height * 0.35f + orbitY),
+                        )
+                        drawCircle(
+                            brush = nebulaBrushB,
+                            radius = maxRadius * 0.45f,
+                            center = Offset(size.width * 0.7f - orbitX, size.height * 0.62f - orbitY),
+                        )
+                    }
+                }
             }
-
-            if (drawField && showNebula) {
-                val driftRad = (drift?.value ?: 0f) * DEG_TO_RAD
-                val shortEdge = minOf(size.width, size.height)
-                val orbitRange = shortEdge * COSMOS_DRIFT_AMPLITUDE_FRACTION
-                val orbitX = kotlin.math.cos(driftRad) * orbitRange
-                val orbitY = kotlin.math.sin(driftRad) * orbitRange
-                val maxRadius = maxOf(size.width, size.height)
-                drawCircle(
-                    brush = nebulaBrushA,
-                    radius = maxRadius * 0.55f,
-                    center = Offset(size.width * 0.3f + orbitX, size.height * 0.35f + orbitY),
-                )
-                drawCircle(
-                    brush = nebulaBrushB,
-                    radius = maxRadius * 0.45f,
-                    center = Offset(size.width * 0.7f - orbitX, size.height * 0.62f - orbitY),
+            if (stars.isNotEmpty()) {
+                StarLayers(
+                    stars = stars,
+                    palette = palette,
+                    rotationDegrees = { if (tier.allowsParallax) parallaxRotationDegrees() else 0f },
+                    twinkleStep = { twinkleLevel?.value ?: COSMOS_TWINKLE_STEPS / 2 },
                 )
             }
+        }
+    }
+}
 
-            val ambient = if (animated) (drift?.value ?: 0f) * 0.25f else 0f
-            val rotationDeg = (if (tier.allowsParallax) parallaxRotationDegrees() else 0f) + ambient
-            val angleRad = rotationDeg * DEG_TO_RAD
-            val twinklePhase = twinkle?.value ?: 0.5f
+/**
+ * The starfield as two retained layers under one rotating parent. The dust
+ * and ink stars never change, so their canvas reads no state and is recorded
+ * once; the accent stars redraw only when [twinkleStep] changes. Rotation is
+ * the parent's graphicsLayer, a GPU transform: stars outside the canvas
+ * bounds (the overscan band) are recorded and rotate into view.
+ */
+@Composable
+private fun StarLayers(
+    stars: List<CosmosStar>,
+    palette: CosmosBackgroundPalette,
+    rotationDegrees: () -> Float,
+    twinkleStep: () -> Int,
+) {
+    val still = remember(stars) { stars.filterNot { it.twinkles() } }
+    val accents = remember(stars) { stars.filter { it.twinkles() } }
+    Box(modifier = Modifier.fillMaxSize().graphicsLayer { rotationZ = rotationDegrees() }) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
             val dustRadius = 1.dp.toPx()
-            for (index in stars.indices) {
-                val star = stars[index]
-                rotatedStarPosition(star, size.width, size.height, angleRad, scratch)
-                val color = when (star.kind) {
-                    2 -> palette.accentA
-                    3 -> palette.accentB
-                    else -> palette.star
-                }
-                val alpha = if (animated && star.kind >= 2) {
-                    val phase = (twinklePhase + star.twinkleOffset) % 1f
-                    star.alpha * (0.55f + 0.45f * phase)
-                } else {
-                    star.alpha
-                }
-                val radius = dustRadius * star.sizeFactor
+            for (index in still.indices) {
+                val star = still[index]
                 drawCircle(
-                    color = color.copy(alpha = alpha),
-                    radius = radius,
-                    center = Offset(scratch[0], scratch[1]),
+                    color = palette.star.copy(alpha = star.alpha),
+                    radius = dustRadius * star.sizeFactor,
+                    center = Offset(star.fx * size.width, star.fy * size.height),
                 )
-                if (star.spike) {
-                    val glint = radius * 2.2f
-                    drawLine(
-                        color = color.copy(alpha = alpha * 0.6f),
-                        start = Offset(scratch[0] - glint, scratch[1]),
-                        end = Offset(scratch[0] + glint, scratch[1]),
-                        strokeWidth = dustRadius * 0.5f,
-                    )
-                    drawLine(
-                        color = color.copy(alpha = alpha * 0.6f),
-                        start = Offset(scratch[0], scratch[1] - glint),
-                        end = Offset(scratch[0], scratch[1] + glint),
-                        strokeWidth = dustRadius * 0.5f,
-                    )
+            }
+        }
+        if (accents.isNotEmpty()) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val step = twinkleStep()
+                val dustRadius = 1.dp.toPx()
+                for (index in accents.indices) {
+                    val star = accents[index]
+                    val color = if (star.kind == 2) palette.accentA else palette.accentB
+                    val alpha = twinkleAlpha(star, step)
+                    val radius = dustRadius * star.sizeFactor
+                    val center = Offset(star.fx * size.width, star.fy * size.height)
+                    drawCircle(color = color.copy(alpha = alpha), radius = radius, center = center)
+                    if (star.spike) {
+                        val glint = radius * 2.2f
+                        val glintColor = color.copy(alpha = alpha * 0.6f)
+                        drawLine(glintColor, Offset(center.x - glint, center.y), Offset(center.x + glint, center.y), dustRadius * 0.5f)
+                        drawLine(glintColor, Offset(center.x, center.y - glint), Offset(center.x, center.y + glint), dustRadius * 0.5f)
+                    }
                 }
             }
         }

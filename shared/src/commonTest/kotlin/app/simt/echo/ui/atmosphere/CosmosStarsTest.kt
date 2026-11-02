@@ -1,6 +1,5 @@
 package app.simt.echo.ui.atmosphere
 
-import kotlin.math.PI
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -74,24 +73,26 @@ class CosmosStarsTest {
     }
 
     @Test
-    fun rotationIsCentreRelativeAndIdentityAtZero() {
-        val star = CosmosStar(
-            fx = 0.9f,
-            fy = 0.1f,
-            sizeFactor = 1f,
-            alpha = 1f,
-            kind = 0,
-            twinkleOffset = 0f,
-            spike = false,
-        )
-        val scratch = FloatArray(2)
-        rotatedStarPosition(star, 400f, 800f, 0f, scratch)
-        assertEquals(0.9f * 400f, scratch[0], 0.001f)
-        assertEquals(0.1f * 800f, scratch[1], 0.001f)
+    fun twinkleStepsStayInRangeAndCoverTheSweep() {
+        assertEquals(0, twinkleStep(0f))
+        assertEquals(COSMOS_TWINKLE_STEPS, twinkleStep(1f))
+        assertEquals(0, twinkleStep(-0.5f))
+        assertEquals(COSMOS_TWINKLE_STEPS, twinkleStep(2f))
+    }
 
-        // 180 degrees mirrors around the centre.
-        rotatedStarPosition(star, 400f, 800f, PI.toFloat(), scratch)
-        assertEquals(400f - 0.9f * 400f, scratch[0], 0.01f)
-        assertEquals(800f - 0.1f * 800f, scratch[1], 0.01f)
+    @Test
+    fun onlyAccentStarsTwinkle() {
+        val stars = generateCosmosStars(400f, 800f, CosmosVariant.Home, lowPower = false)
+        val accents = stars.filter { it.twinkles() }
+        assertTrue(accents.isNotEmpty() && accents.size <= stars.size / 5, "accents are a small minority")
+        for (star in stars) {
+            val alphas = (0..COSMOS_TWINKLE_STEPS).map { twinkleAlpha(star, it) }.toSet()
+            if (star.twinkles()) {
+                assertTrue(alphas.size > 1, "accent star must change brightness")
+                assertTrue(alphas.all { it in 0.5f * star.alpha..star.alpha })
+            } else {
+                assertEquals(setOf(star.alpha), alphas)
+            }
+        }
     }
 }

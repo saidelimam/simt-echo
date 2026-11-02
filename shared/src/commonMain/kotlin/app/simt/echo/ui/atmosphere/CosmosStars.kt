@@ -1,7 +1,5 @@
 package app.simt.echo.ui.atmosphere
 
-import kotlin.math.cos
-import kotlin.math.sin
 import kotlin.random.Random
 
 // Pure edge-band starfield model, docs/research/cosmos-echo-freeze.md §9.3
@@ -117,24 +115,19 @@ fun generateCosmosStars(
     return stars
 }
 
-/**
- * Per-frame star position with manual parallax rotation (multiply-adds
- * only, no allocation): rotates the centre-relative offset by [angleRad]
- * and re-centres. The draw phase calls this instead of a capturing
- * rotate{} block so no lambda instance is created per frame.
- */
-fun rotatedStarPosition(
-    star: CosmosStar,
-    canvasWidthPx: Float,
-    canvasHeightPx: Float,
-    angleRad: Float,
-    out: FloatArray,
-): FloatArray {
-    val dx = (star.fx - 0.5f) * canvasWidthPx
-    val dy = (star.fy - 0.5f) * canvasHeightPx
-    val cosA = cos(angleRad)
-    val sinA = sin(angleRad)
-    out[0] = canvasWidthPx / 2f + dx * cosA - dy * sinA
-    out[1] = canvasHeightPx / 2f + dx * sinA + dy * cosA
-    return out
+/** Twinkle brightness steps per sweep; the accent layer redraws only when the step changes. */
+internal const val COSMOS_TWINKLE_STEPS = 24
+
+/** A twinkle phase in 0..1 snapped to [COSMOS_TWINKLE_STEPS] levels. */
+internal fun twinkleStep(phase: Float): Int =
+    (phase.coerceIn(0f, 1f) * COSMOS_TWINKLE_STEPS).toInt()
+
+/** True for the accent stars that twinkle (kinds 2 and 3); dust and ink stars never change. */
+internal fun CosmosStar.twinkles(): Boolean = kind >= 2
+
+/** Alpha of [star] at a quantised twinkle [step]; non-twinkling stars keep their own alpha. */
+internal fun twinkleAlpha(star: CosmosStar, step: Int): Float {
+    if (!star.twinkles()) return star.alpha
+    val phase = (step.toFloat() / COSMOS_TWINKLE_STEPS + star.twinkleOffset) % 1f
+    return star.alpha * (0.55f + 0.45f * phase)
 }

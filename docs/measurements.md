@@ -268,3 +268,34 @@ on the debug build each kept a real first frame in bucket 0, so it is not
 systematic. The ledger keeps the first frame on a score tie and the plan's
 score formula is 0 for every under-exposed frame, which could explain it, but
 nothing here proves that, so the ledger is unchanged.
+
+## Idle Home cost on a Galaxy A16 (starfield and tilt, 2026-11-02)
+
+Galaxy A16 (SM-A165F, Android 16, 60 Hz), benchmarkRelease build compiled with
+`cmd package compile -m speed -f`, empty Home, screen kept on, per-thread CPU
+from `/proc/<pid>/task/*/stat` over 15 s (after 8 s of settling).
+
+| State | Idle Home, share of one core |
+|---|---|
+| Old code, full motion | 62% (three runs 56 to 67%) |
+| Old code, animators off (reduced motion) | 32% (render thread 18%) |
+| Tilt filter, animators off | 1% |
+| Tilt filter + retained starfield layers, no ambient rotation, full motion | 66 to 72% |
+| Identical build, a later run | 92 to 93% |
+
+Reading:
+- The tilt fix is the one clear result: a still phone no longer redraws the
+  full-screen aurora at sensor rate (32% to 1% with motion reduced).
+- Full-motion idle did not measurably change (62% before, 66 to 72% after). The
+  same code measured 66 to 93% on different runs, so this phone's run-to-run
+  noise is about 15 points and small effects cannot be resolved with it.
+- A 4 s system trace of full-motion idle shows a frame requested on every vsync
+  (239 in 4 s at 60 Hz): about 9 ms of render-thread drawing, 3 ms of main-thread
+  traversal and 1.4 ms of animation callbacks per frame. The cause is not
+  isolated. Candidates left untested as a controlled change: the Home logo's
+  idle ring (`EchoMark(idleEcho = true)` in `Screens.kt`), the aurora loop and
+  the accent star twinkle. Slowing the aurora to 15 fps and caching it in an
+  offscreen layer were both tried and gave no measurable change, so neither was
+  kept.
+- The `gfxinfo` percentiles on this phone are not usable (a constant 69 ms frame
+  time and a counter that ignores `reset`), so CPU per thread is the metric.
