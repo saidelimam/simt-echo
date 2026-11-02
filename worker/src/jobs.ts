@@ -45,8 +45,8 @@ export async function putError(env: Env, jobId: string, message: string): Promis
 // the pipeline's lens path. One R2 record per event under
 // `jobs/<id>/events/<eventId>.json` — append-only, per-job scoped (deleted
 // with the job by the DELETE sweep, same as every other jobs/<id>/ key),
-// so a concurrent emit never rewrites another event. The GET SSE endpoint
-// reads them back with [readJobEvents]; no HTTP shape is added here.
+// so a concurrent emit never rewrites another event. GET /v1/jobs/:id/events
+// replays them with [readJobEvents] (see [jobEventStream]).
 
 const eventsPrefix = (jobId: string) => `jobs/${jobId}/events/`;
 const eventKey = (jobId: string, id: string) => `jobs/${jobId}/events/${id}.json`;
@@ -66,13 +66,21 @@ export async function emitJobEvent(env: Env, jobId: string, event: JobEvent): Pr
   await env.MEDIA.put(eventKey(jobId, event.id), JSON.stringify(event));
 }
 
-/** All stored events for a job, in emit (key) order. Skips unreadable rows. */
-export async function readJobEvents(env: Env, jobId: string): Promise<JobEvent[]> {
+/** Stored events for a job in emit (key) order, only those whose id sorts
+ * after `afterId` when given. Skips unreadable rows. */
+export async function readJobEvents(
+  env: Env,
+  jobId: string,
+  afterId?: string,
+): Promise<JobEvent[]> {
+  const prefix = eventsPrefix(jobId);
   const keys: string[] = [];
   let cursor: string | undefined;
   for (;;) {
-    const page = await env.MEDIA.list({ prefix: eventsPrefix(jobId), cursor });
-    for (const o of page.objects) keys.push(o.key);
+    const page = await env.MEDIA.list({ prefix, cursor });
+    for (const o of page.objects) {
+      if (afterId === undefined || o.key.slice(prefix.length) > `${afterId}.json`) keys.push(o.key);
+    }
     if (!page.truncated) break;
     cursor = page.cursor;
   }
@@ -88,6 +96,62 @@ export async function readJobEvents(env: Env, jobId: string): Promise<JobEvent[]
     }
   }
   return out;
+}
+
+/** SSE pacing: the server holds a connection ≤ 25 s (the client then
+ * reconnects with Last-Event-ID), with a `: heartbeat` comment every 10 s. */
+export interface EventStreamTiming {
+  pollMs: number;
+  heartbeatMs: number;
+  maxMs: number;
+}
+const EVENT_STREAM_TIMING: EventStreamTiming = { pollMs: 1_000, heartbeatMs: 10_000, maxMs: 25_000 };
+const TERMINAL_STATUSES = new Set(["complete", "errored", "terminated"]);
+
+/** SSE body for one job: replays events after `afterId`, then follows new
+ * ones until the job is terminal or `maxMs` elapses. The status is read
+ * before the events, so a terminal status guarantees the final drain saw
+ * every event the pipeline wrote. */
+export function jobEventStream(
+  env: Env,
+  jobId: string,
+  instance: WorkflowInstance,
+  afterId: string | undefined,
+  timing: EventStreamTiming = EVENT_STREAM_TIMING,
+): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  let cancelled = false;
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const startedAt = Date.now();
+      let lastWrite = startedAt;
+      let cursor = afterId;
+      try {
+        while (!cancelled) {
+          const terminal = TERMINAL_STATUSES.has((await instance.status()).status);
+          for (const e of await readJobEvents(env, jobId, cursor)) {
+            controller.enqueue(encoder.encode(`id: ${e.id}\ndata: ${JSON.stringify(e)}\n\n`));
+            cursor = e.id;
+            lastWrite = Date.now();
+          }
+          const now = Date.now();
+          if (terminal || now - startedAt >= timing.maxMs) break;
+          if (now - lastWrite >= timing.heartbeatMs) {
+            controller.enqueue(encoder.encode(": heartbeat\n\n"));
+            lastWrite = now;
+          }
+          await new Promise((resolve) => setTimeout(resolve, timing.pollMs));
+        }
+      } catch {
+        // R2/Workflow hiccup: end the response; the client reconnects with
+        // Last-Event-ID and loses nothing.
+      }
+      if (!cancelled) controller.close();
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
 }
 
 async function readJson<T>(env: Env, key: string): Promise<T | null> {
@@ -197,6 +261,30 @@ export function registerJobsRoutes(app: Hono<{ Bindings: Env }>): void {
     }
     const stage = (await readJson<{ stage?: JobStage }>(c.env, progressKey(id)))?.stage ?? "reading";
     return c.json({ ok: true, status: "running", stage });
+  });
+
+  app.get("/v1/jobs/:id/events", async (c) => {
+    if (!c.env.PIPELINE) {
+      return c.json({ ok: false, error: "server_misconfigured" }, 500);
+    }
+    const id = c.req.param("id");
+    let instance: WorkflowInstance;
+    try {
+      instance = await c.env.PIPELINE.get(id);
+      await instance.status();
+    } catch {
+      return c.json({ ok: false, error: "job_not_found" }, 404);
+    }
+    const afterId = c.req.header("Last-Event-ID") ?? c.req.query("after") ?? undefined;
+    return new Response(
+      jobEventStream(c.env, id, instance, afterId === "" ? undefined : afterId),
+      {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+        },
+      },
+    );
   });
 
   app.delete("/v1/jobs/:id", async (c) => {
