@@ -42,10 +42,10 @@ const val ProcessingProgressTag = "ProcessingProgress"
 /**
  * Consent + cloud processing in Cosmos (plan §8.3 / W3-02, slice W8-09):
  * consent as a canopy sheet carrying the frozen privacy copy, then the
- * four stages — Uploading · Reading scenes · Grounding · Ready — as a
- * staged instrument with determinate-where-honest progress. Errors show
- * Retry and Continue without AI; Cancel leaves the persisted job so
- * re-entering resumes polling.
+ * Working job as the W13-06 constellation (one star per checkpoint from
+ * live events, honest stage + frame-budget header, Cancel and Continue
+ * without AI) through to Ready. Errors show Retry and Continue without
+ * AI; Cancel leaves the persisted job so re-entering resumes polling.
  *
  * Presentation only: every [ProcessingPhase] (incl. the W7-07
  * [ProcessingPhase.AiUnavailable] honest state) and every ViewModel
@@ -83,9 +83,17 @@ fun ProcessingScreen(
                 CosmosPrimaryButton(label = "Cancel", onClick = onDone, modifier = Modifier.fillMaxWidth())
             }
             is ProcessingPhase.Working -> {
-                StageInstrument(current = stageIndex(phase.stage), determinate = true)
-                Text(text = stageLabel(phase.stage), style = MaterialTheme.typography.bodyLarge)
-                CosmosSecondaryButton(label = "Cancel", onClick = onDone, modifier = Modifier.fillMaxWidth())
+                val constellation by viewModel.constellation.collectAsState()
+                ConstellationHeader(
+                    stageText = stageLabel(phase.stage),
+                    budgetText = constellationBudgetText(
+                        constellation.framesUsed,
+                        constellation.budgetExhausted,
+                    ),
+                    onCancel = onDone,
+                    onContinueWithoutAi = { viewModel.decline(onDone) },
+                )
+                ConstellationView(stars = constellation.stars)
             }
             ProcessingPhase.Ready -> {
                 StageInstrument(current = 3, determinate = true)
@@ -184,14 +192,6 @@ private fun AiUnavailableBody(
             CosmosPrimaryButton(label = "Continue without AI", onClick = onContinue, modifier = Modifier.fillMaxWidth())
         }
     }
-}
-
-private fun stageIndex(stage: JobStage): Int = when (stage) {
-    JobStage.QUEUED -> 0
-    JobStage.READING, JobStage.SCOUTING -> 1
-    JobStage.GROUNDING -> 2
-    JobStage.COMPLETE -> 3
-    JobStage.ERRORED -> 2
 }
 
 private fun stageLabel(stage: JobStage): String = when (stage) {

@@ -765,8 +765,7 @@ class ProcessingViewModelTest {
     }
 
     @Test
-    fun partialCheckpointsMergeWithoutTouchingGeometry() = runTest(dispatcher) {
-        val h = harness()
+    fun partialCheckpointsMergeWithoutTouchingGeometry() = runTest(dispatcher) {        val h = harness()
         val routeBefore = h.drafts.loadDraftRoute("draft-1")
         assertNotNull(routeBefore)
         val api = FakeCloudApi().apply {
@@ -800,5 +799,212 @@ class ProcessingViewModelTest {
         assertEquals(routeBefore, h.drafts.loadDraftRoute("draft-1"))
         // Partials persisted for Review while the job ran.
         assertNotNull(h.drafts.loadPartialResult("draft-1"))
+    }
+
+    // ── W13-06: constellation from live events ────────────────────
+
+    @Test
+    fun checkpointStatusesMapToStarStatesAndStageNeverMovesAStar() = runTest(dispatcher) {
+        val h = harness()
+        val api = FakeCloudApi().apply {
+            flows = ArrayDeque(
+                listOf(
+                    flowOf(
+                        JobEvent.Stage("evt-0", JobStage.SCOUTING),
+                        JobEvent.Checkpoint(
+                            "evt-1", "n1", "scouted",
+                            "[${candidateJson("n1_0", "Red pillar")}]",
+                        ),
+                        JobEvent.Checkpoint(
+                            "evt-2", "n1", "grounded",
+                            "[${candidateJson("n1_0", "Red pillar")}]",
+                        ),
+                        JobEvent.Checkpoint("evt-3", "n2", "skipped", "[]"),
+                    ),
+                    flowOf(JobEvent.Complete("evt-4", null)),
+                ),
+            )
+        }
+        val vm = h.vm(api)
+        advanceUntilIdle()
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
+        val stars = vm.constellation.value.stars.associateBy { it.nodeId }
+        // START is not a checkpoint; checkpoints stay in node order.
+        assertEquals(listOf("n1", "n2"), vm.constellation.value.stars.map { it.nodeId })
+        // Only checkpoint events moved stars: scouted → grounded for n1,
+        // skipped for n2. The stage event left them alone.
+        assertEquals(StarState.GROUNDED, stars.getValue("n1").state)
+        assertEquals(StarState.SKIPPED, stars.getValue("n2").state)
+        assertEquals("pillar", stars.getValue("n1").label)
+        assertEquals("Elevator", stars.getValue("n2").label)
+    }
+
+    @Test
+    fun errorLeavesStarsAtLastSeenCheckpointEvent() = runTest(dispatcher) {
+        val h = harness()
+        val api = FakeCloudApi().apply {
+            flows = ArrayDeque(
+                listOf(
+                    flowOf(
+                        JobEvent.Checkpoint(
+                            "evt-1", "n1", "scouted",
+                            "[${candidateJson("n1_0", "Red pillar")}]",
+                        ),
+                        JobEvent.Error("evt-2", "scout exploded"),
+                    ),
+                ),
+            )
+        }
+        val vm = h.vm(api)
+        advanceUntilIdle()
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Failed>(vm.ui.value.phase)
+        val stars = vm.constellation.value.stars.associateBy { it.nodeId }
+        assertEquals(StarState.SCOUTING, stars.getValue("n1").state)
+        assertEquals(StarState.QUEUED, stars.getValue("n2").state)
+    }
+
+    @Test
+    fun usageEventsDriveBudgetMeterAndNeverMoveStars() = runTest(dispatcher) {
+        val h = harness()
+        val api = FakeCloudApi().apply {
+            flows = ArrayDeque(
+                listOf(
+                    flowOf(
+                        JobEvent.Usage("u-1", samFrames = 12),
+                        JobEvent.Stage("evt-0", JobStage.GROUNDING),
+                        JobEvent.Checkpoint(
+                            "evt-1", "n1", "grounded",
+                            "[${candidateJson("n1_0", "Red pillar")}]",
+                        ),
+                        JobEvent.Usage("u-2", samFramesBilled = 38),
+                        // No payload: the meter holds, it never resets.
+                        JobEvent.Usage("u-3"),
+                        JobEvent.Unknown("u-4"),
+                    ),
+                    flowOf(JobEvent.Complete("evt-2", null)),
+                ),
+            )
+        }
+        val vm = h.vm(api)
+        advanceUntilIdle()
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
+        val constellation = vm.constellation.value
+        // Billed wins over estimated; the high-water mark never drops.
+        assertEquals(38, constellation.framesUsed)
+        assertEquals("38 / 120 frames", constellationBudgetText(constellation.framesUsed))
+        assertFalse(constellation.budgetExhausted)
+        // Usage, stage, unknown and complete events never moved a star.
+        val stars = constellation.stars.associateBy { it.nodeId }
+        assertEquals(StarState.GROUNDED, stars.getValue("n1").state)
+        assertEquals(StarState.QUEUED, stars.getValue("n2").state)
+    }
+
+    @Test
+    fun budgetExhaustedFlagIsStickyOnTheMeter() = runTest(dispatcher) {
+        val h = harness()
+        val api = FakeCloudApi().apply {
+            flows = ArrayDeque(
+                listOf(
+                    flowOf(JobEvent.Usage("u-1", budgetExhausted = true)),
+                    flowOf(JobEvent.Complete("evt-2", null)),
+                ),
+            )
+        }
+        val vm = h.vm(api)
+        advanceUntilIdle()
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
+        val constellation = vm.constellation.value
+        assertEquals(0, constellation.framesUsed)
+        assertTrue(constellation.budgetExhausted)
+        assertEquals(
+            "0 / 120 frames · frame limit reached",
+            constellationBudgetText(constellation.framesUsed, constellation.budgetExhausted),
+        )
+    }
+
+    @Test
+    fun retryResetsStarsAndMeterBeforeTheNextSend() = runTest(dispatcher) {
+        val h = harness()
+        val api = FakeCloudApi().apply {
+            flows = ArrayDeque(
+                listOf(
+                    flowOf(
+                        JobEvent.Checkpoint(
+                            "evt-1", "n1", "grounded",
+                            "[${candidateJson("n1_0", "Red pillar")}]",
+                        ),
+                        JobEvent.Usage("u-1", samFramesBilled = 38),
+                        JobEvent.Error("evt-2", "scout exploded"),
+                    ),
+                    flowOf(JobEvent.Complete("evt-3", null)),
+                ),
+            )
+        }
+        val vm = h.vm(api)
+        advanceUntilIdle()
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Failed>(vm.ui.value.phase)
+        assertEquals(StarState.GROUNDED, vm.constellation.value.stars.first { it.nodeId == "n1" }.state)
+        assertEquals(38, vm.constellation.value.framesUsed)
+
+        vm.retry()
+        advanceUntilIdle()
+
+        // Back at consent: the dead job's stars and meter are gone, not
+        // carried into the next send as fake progress.
+        assertIs<ProcessingPhase.Consent>(vm.ui.value.phase)
+        assertTrue(vm.constellation.value.stars.all { it.state == StarState.QUEUED })
+        assertEquals(0, vm.constellation.value.framesUsed)
+        assertFalse(vm.constellation.value.budgetExhausted)
+
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
+    }
+
+    @Test
+    fun checkpointStatusMapsToStarState() {
+        assertEquals(StarState.SCOUTING, starStateForStatus("scouted"))
+        assertEquals(StarState.GROUNDED, starStateForStatus("grounded"))
+        assertEquals(StarState.SKIPPED, starStateForStatus("skipped"))
+        assertNull(starStateForStatus(""))
+        assertNull(starStateForStatus("scouting"))
+        assertNull(starStateForStatus("complete"))
+    }
+
+    @Test
+    fun budgetTextFormatsUsedOverFrozenCap() {
+        assertEquals("38 / 120 frames", constellationBudgetText(38))
+        assertEquals("0 / 120 frames", constellationBudgetText(0))
+        assertEquals(
+            "38 / 120 frames · frame limit reached",
+            constellationBudgetText(38, budgetExhausted = true),
+        )
+    }
+
+    @Test
+    fun constellationSkeletonUsesCheckpointsInNodeOrder() {
+        val stars = constellationStars(draftRoute(), mapOf("n1" to StarState.GROUNDED))
+        // START is not a checkpoint; the rest keep node order.
+        assertEquals(listOf("n1", "n2"), stars.map { it.nodeId })
+        assertEquals(StarState.GROUNDED, stars[0].state)
+        assertEquals(StarState.QUEUED, stars[1].state)
+        assertEquals("pillar", stars[0].label)
+        assertTrue(stars.all { it.x01 in 0f..1f && it.y01 in 0f..1f }, stars.toString())
     }
 }
