@@ -233,15 +233,15 @@ with device model + build SHA. No slice is Complete on a partial pass.
 | W8-09 | Complete | Processing/Share/Receive in Cosmos (consent, QR, reticle) | F (T) | E | W8-05 | 973c5663c00877f7525e5ebd1a74da955e834ada |
 | W8-10 | Complete | Align/Navigate/Arrived in Cosmos (instrument clarity) | T (S) | E | W8-05 | 343aac6b5c4e097f862e3df03b0ce79d92c9f4ba |
 | W8-11 | Complete | Settings in Cosmos (sections, delete-all, AI status) | F (T) | E | W8-05, W7-07 | 65a981137155c2c668c73f0968a82ea54faa270c |
-| W8-12 | Queued | Accessibility & motion gate (contrast, fontScale, TalkBack) | T | F | W8-06, W8-07, W8-08, W8-09, W8-10, W8-11 | — |
+| W8-12 | Complete | Accessibility & motion gate (contrast, fontScale, TalkBack) | T | F | W8-06, W8-07, W8-08, W8-09, W8-10, W8-11 | 116c0236beec9326c77656572c713748cec69890 |
 | W9-01 | Complete | Worker production deploy (R2, secrets, live health) | S | D | W7-12 | f79d2169b7c67c8e1462ca776debd66e42ce96ed |
-| W9-02 | Queued | Live AI envelope: deployed 60 m job, cost/latency measured | T (S) | D | W9-01 | — |
-| W9-03 | Queued | Relay wired end-to-end (AppGraph → Share → Receive) | F (S) | D | W9-01, W7-08 | — |
+| W9-02 | In progress | Live AI envelope: deployed 60 m job, cost/latency measured | T (S) | D | W9-01 | — |
+| W9-03 | Complete | Relay wired end-to-end (AppGraph → Share → Receive) | F (S) | D | W9-01, W7-08 | 04efbdfe7b4f833c248c027e00f3f8fa7b57d4e7 |
 | W9-04 | Queued | Two-phone field E2E (transfer, airplane navigate, haptics) | T | F | W7-12, W8-12 | — |
 | W9-05 | Queued | Device robustness pass (kill, deny, airplane, no-sensor) | F (T) | F | W9-04 | — |
 | W9-06 | Queued | Calibration + §11 field trials (5+5, CSV, honest report) | F (T) | F | W9-04, W9-05 | — |
 | W9-07 | Queued | Local model proven on device/LAN — or claims removed | T (S) | D | W9-02 | — |
-| W9-08 | Queued | Wear module restored; paired-watch haptic proof | F (T) | F | W7-12 | — |
+| W9-08 | Complete | Wear module restored; paired-watch haptic proof | F (T) | F | W7-12 | 682041d39ae4d1398e6db341e7532f0a48d2789d |
 | W9-09 | Queued | Security & privacy production audit | S | D | W9-01, W9-03 | — |
 | W9-10 | Complete | Release engineering: CI, signing, versioned release build | F (S) | A | W7-02 | 9a229529ca6ab1ee8499bf8b9c48fd4b861cca8d |
 | W9-11 | Queued | First-run, icon, splash, screenshots in Cosmos | L (T) | E | W8-12 | — |
