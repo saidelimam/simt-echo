@@ -90,7 +90,7 @@ class BuiltInPdrMotionSource internal constructor(
                     wallNowNs = nowNs,
                 )
 
-                Sensor.TYPE_GAME_ROTATION_VECTOR -> {
+                Sensor.TYPE_GAME_ROTATION_VECTOR, Sensor.TYPE_ROTATION_VECTOR, Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR -> {
                     val matrix = FloatArray(9)
                     SensorManager.getRotationMatrixFromVector(matrix, event.values)
                     engine.onRotation(RotSample(tNs = event.timestamp, r = matrix), wallNowNs = nowNs)
@@ -128,7 +128,8 @@ class BuiltInPdrMotionSource internal constructor(
         imuThread = thread
         val handler = Handler(thread.looper)
         register(Sensor.TYPE_ACCELEROMETER, SensorManager.SENSOR_DELAY_GAME, handler)
-        register(Sensor.TYPE_GAME_ROTATION_VECTOR, SensorManager.SENSOR_DELAY_GAME, handler)
+        headingSensorType { sensorManager.getDefaultSensor(it) != null }
+            ?.let { register(it, SensorManager.SENSOR_DELAY_GAME, handler) }
         register(Sensor.TYPE_MAGNETIC_FIELD, SensorManager.SENSOR_DELAY_GAME, handler)
         register(Sensor.TYPE_PRESSURE, SensorManager.SENSOR_DELAY_NORMAL, handler)
     }
@@ -153,3 +154,16 @@ class BuiltInPdrMotionSource internal constructor(
         while (pipe.tryReceive().getOrNull() != null) { /* drop the stale update */ }
     }
 }
+
+/**
+ * The sensor heading comes from, best first: the gyro-fused game rotation
+ * vector, then the rotation vector, then the geomagnetic one, which fuses
+ * only accelerometer and magnetometer. Phones without a gyroscope (the
+ * Galaxy A16 among them) offer only the last; without it their yaw never
+ * left 0 and no turn was ever seen. Null when there is no heading sensor.
+ */
+internal fun headingSensorType(has: (Int) -> Boolean): Int? = listOf(
+    Sensor.TYPE_GAME_ROTATION_VECTOR,
+    Sensor.TYPE_ROTATION_VECTOR,
+    Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR,
+).firstOrNull(has)

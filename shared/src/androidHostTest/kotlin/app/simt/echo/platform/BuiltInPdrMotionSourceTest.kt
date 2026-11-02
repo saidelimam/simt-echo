@@ -1,8 +1,15 @@
 package app.simt.echo.platform
 
+import android.content.Context
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorManager
 import app.simt.echo.capture.PdrEngine
 import app.simt.echo.capture.RotSample
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
@@ -15,7 +22,13 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowSensor
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
 
 /** W10-02 G2: the IMU source's start/stop lifecycle never leaks a thread or a stale update. */
 @RunWith(RobolectricTestRunner::class)
@@ -79,5 +92,35 @@ class BuiltInPdrMotionSourceTest {
         val stale = runBlocking { withTimeoutOrNull(300L) { source.updates.first() } }
 
         assertNull("an update from the previous run leaked into the next", stale)
+    }
+
+    @Test
+    fun aPhoneWithoutAGyroscopeStillSeesItselfTurn() {
+        // The Galaxy A16: accelerometer and magnetometer only, so the one
+        // heading sensor on offer is the geomagnetic rotation vector.
+        val manager = RuntimeEnvironment.getApplication().getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        val geomagnetic = ShadowSensor.newInstance(Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR)
+        shadowOf(manager).addSensor(geomagnetic)
+        source.start()
+
+        // Quaternion (x, y, z, w) about the vertical axis: first facing the start, then 90 deg round.
+        fun turnedBy(degrees: Double) = SensorEvent::class.java.getDeclaredConstructor(Int::class.java).apply { isAccessible = true }
+            .newInstance(5).also { event ->
+                val half = Math.toRadians(degrees) / 2
+                event.values[0] = 0f
+                event.values[1] = 0f
+                event.values[2] = sin(half).toFloat()
+                event.values[3] = cos(half).toFloat()
+                event.values[4] = -1f
+                event.sensor = geomagnetic
+                event.timestamp = 1_000L
+            }
+        shadowOf(manager).sendSensorEventToListeners(turnedBy(0.0))
+        shadowOf(manager).sendSensorEventToListeners(turnedBy(90.0))
+
+        val yaws = runBlocking { withTimeout(3_000L) { source.updates.take(2).map { it.yawRad }.toList() } }
+
+        assertEquals(0.0, yaws.first(), 1e-6)
+        assertEquals(PI / 2, abs(yaws.last()), 0.05)
     }
 }
