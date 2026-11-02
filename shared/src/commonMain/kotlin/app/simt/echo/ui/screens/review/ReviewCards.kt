@@ -1,34 +1,26 @@
 package app.simt.echo.ui.screens.review
 
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.Fill
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import app.simt.echo.ai.AiCandidate
 import app.simt.echo.ai.CandidateMerger
-import app.simt.echo.ai.MaskPath
 import app.simt.echo.model.Landmark
-import app.simt.echo.platform.decodeImage
+import app.simt.echo.ui.motion.revealOnEnter
 import app.simt.echo.ui.components.CosmosBadge
 import app.simt.echo.ui.components.CosmosPrimaryButton
 import app.simt.echo.ui.components.CosmosRecordRow
@@ -82,10 +74,31 @@ fun NodeCard(
     onNextSuggestion: () -> Unit,
     onSkipSuggestions: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Story selection (W13-05): the selected timeline card reads by ring, never hue alone. */
+    selected: Boolean = false,
 ) {
     val node = reviewNode.node
     val kind = nodeKindWord(node.type.name)
-    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .then(
+                if (selected) {
+                    Modifier.border(
+                        2.dp,
+                        MaterialTheme.colorScheme.primary,
+                        MaterialTheme.shapes.medium,
+                    )
+                } else {
+                    Modifier
+                },
+            )
+            .padding(if (selected) 6.dp else 0.dp)
+            .semantics {
+                if (selected) contentDescription = "${node.label.ifEmpty { "Unnamed $kind" }} selected"
+            },
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         CosmosRecordRow(
             title = node.label.ifEmpty { "Unnamed $kind" },
             subtitle = "${node.atDistanceM.roundToInt()} m · $kind",
@@ -107,15 +120,20 @@ fun NodeCard(
             onValueChange = onCue,
         )
         if (suggestion != null) {
-            SuggestionCard(
-                candidate = suggestion,
-                heroBytes = suggestionImage ?: reviewNode.heroBytes,
-                position = suggestionPosition,
-                count = suggestionCount,
-                onUse = onUseSuggestion,
-                onNext = onNextSuggestion,
-                onSkip = onSkipSuggestions,
-            )
+            // Keyed so a checkpoint arrival slides its card in (W13-05);
+            // later arrivals for other nodes never replay this one.
+            key(suggestion.candidateId) {
+                SuggestionCard(
+                    candidate = suggestion,
+                    heroBytes = suggestionImage ?: reviewNode.heroBytes,
+                    position = suggestionPosition,
+                    count = suggestionCount,
+                    onUse = onUseSuggestion,
+                    onNext = onNextSuggestion,
+                    onSkip = onSkipSuggestions,
+                    modifier = Modifier.revealOnEnter(0),
+                )
+            }
         }
         reviewNode.landmarks.forEach { landmark ->
             LandmarkRow(
@@ -147,55 +165,7 @@ fun SuggestionCard(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        val bitmap = remember(heroBytes) { heroBytes?.let(::decodeImage) }
-        val accent = MaterialTheme.colorScheme.primary
-        val accentFill = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
-        val strokePx = with(LocalDensity.current) { 2.dp.toPx() }
-        if (bitmap != null) {
-            val box = CandidateMerger.candidateCropBox(candidate)
-            val mask = candidate.maskSvgPath
-                ?.takeIf { candidate.maskW != null && candidate.maskH != null }
-                ?.let { MaskPath.parseSvgPath(it) }
-            Canvas(
-                modifier = Modifier.fillMaxWidth().height(160.dp).semantics {
-                    contentDescription = "AI suggestion: ${candidate.title}"
-                },
-            ) {
-                drawImage(
-                    image = bitmap,
-                    dstOffset = IntOffset.Zero,
-                    dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt()),
-                )
-                // Box: normalised crop mapped onto the canvas.
-                drawRect(
-                    color = accent,
-                    topLeft = Offset(box.left * size.width, box.top * size.height),
-                    size = Size(
-                        (box.right - box.left) * size.width,
-                        (box.bottom - box.top) * size.height,
-                    ),
-                    style = Stroke(width = strokePx),
-                )
-                // Mask: SVG raster px → keyframe px (kfW/maskW, kfH/maskH) →
-                // canvas px. An unreadable mask draws nothing (box-only).
-                val maskW = candidate.maskW
-                val maskH = candidate.maskH
-                if (mask != null && maskW != null && maskH != null && maskW > 0 && maskH > 0) {
-                    for (subpath in mask) {
-                        val path = Path()
-                        subpath.points.forEachIndexed { i, point ->
-                            // Float scaling: mask raster → canvas directly
-                            // (the raster covers the frame the canvas shows).
-                            val x = point.x * (size.width / maskW.toFloat())
-                            val y = point.y * (size.height / maskH.toFloat())
-                            if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
-                        }
-                        if (subpath.closed) path.close()
-                        drawPath(path = path, color = accentFill, style = Fill)
-                    }
-                }
-            }
-        }
+        SuggestionArtwork(candidate = candidate, heroBytes = heroBytes)
         Text(
             text = "AI suggestion${
                 if (count > 1) " $position of $count" else ""

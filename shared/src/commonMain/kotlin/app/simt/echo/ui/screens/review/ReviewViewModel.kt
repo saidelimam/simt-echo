@@ -22,6 +22,8 @@ import app.simt.echo.model.LandmarkSource
 import app.simt.echo.model.defaultCue
 import app.simt.echo.model.PathPoint
 import app.simt.echo.model.RouteNode
+import app.simt.echo.nav.HealthResult
+import app.simt.echo.nav.routeHealth
 import app.simt.echo.platform.decodeImage
 import app.simt.echo.transfer.CloudApi
 import app.simt.echo.ui.copy.reviewLoadErrorCopy
@@ -71,6 +73,16 @@ data class ReviewUiState(
     /** Server job whose files outlived the draft (W3-08 delete offer). */
     val savedJobId: String? = null,
     val error: String? = null,
+    /**
+     * Route-story selection (plan W13-05): the film strip, the minimap
+     * cursor and the node timeline all read this one value, so scrubbing
+     * any of them moves all three. Defaults to the first frame on load.
+     */
+    val selectedNodeId: String? = null,
+    /** Node id with the full-screen keyframe inspector open, or null. */
+    val inspectorNodeId: String? = null,
+    /** Route Health score + nudges over the current draft (pure). */
+    val health: HealthResult? = null,
 )
 
 /**
@@ -376,6 +388,70 @@ class ReviewViewModel(
         }
     }
 
+    /**
+     * Film-strip scrub: moves the shared story selection. Unknown ids
+     * are ignored so a stale strip cell can never blank the timeline.
+     */
+    fun scrubTo(nodeId: String) {
+        val known = _ui.value.nodes.any { it.node.id == nodeId }
+        if (!known) return
+        _ui.update { it.copy(selectedNodeId = nodeId) }
+    }
+
+    /**
+     * Health-nudge jump: resolves the nudge's "near XX m" to the nearest
+     * node and selects it. Unparseable nudges keep the selection.
+     */
+    fun jumpToNudge(nudge: String) {
+        val target = nudgeTargetNodeId(_ui.value.nodes, nudge) ?: return
+        _ui.update { it.copy(selectedNodeId = target) }
+    }
+
+    /** Opens the full-screen keyframe inspector for [nodeId]. */
+    fun openInspector(nodeId: String) {
+        val known = _ui.value.nodes.any { it.node.id == nodeId }
+        if (!known) return
+        _ui.update { it.copy(inspectorNodeId = nodeId) }
+    }
+
+    fun closeInspector() {
+        _ui.update { it.copy(inspectorNodeId = null) }
+    }
+
+    /**
+     * Partial `checkpoint` arrival (plan W11-08, consumed per the
+     * W13-05 story): null-safe decode, geometry-free merge into the
+     * suggestion map — the draft route is never written here, so AI
+     * arrivals cannot move nodes, legs or path. New nodes preselect
+     * index 0; existing cards keep their position. Card images attach
+     * best-effort from the draft files the candidate was grounded on.
+     */
+    fun onCheckpointEvent(nodeId: String, candidatesRaw: String?) {
+        val current = route ?: return
+        val node = current.nodes.firstOrNull { it.id == nodeId } ?: return
+        val incoming = parseCheckpointCandidates(candidatesRaw)
+        if (incoming.isEmpty()) return
+        val images = mutableMapOf<String, ByteArray>()
+        for (candidate in incoming) {
+            val name = candidateFileName(current, node, candidate) ?: continue
+            drafts.readDraftFile(draftId, name)?.let { images[candidate.candidateId] = it }
+        }
+        _ui.update { state ->
+            val merged = mergePartialSuggestions(
+                state.suggestions,
+                nodeId,
+                incoming,
+                current.nodes.map { it.id }.toSet(),
+            )
+            if (merged === state.suggestions || merged[nodeId].isNullOrEmpty()) return@update state
+            state.copy(
+                suggestions = merged,
+                suggestionIndex = state.suggestionIndex + (nodeId to (state.suggestionIndex[nodeId] ?: 0)),
+                suggestionImages = state.suggestionImages + images,
+            )
+        }
+    }
+
     fun renameNode(nodeId: String, label: String) = mutate { route ->
         route.copy(nodes = route.nodes.map { node ->
             if (node.id != nodeId) node
@@ -538,21 +614,27 @@ class ReviewViewModel(
     }
 
     private fun publish(loaded: EchoRoute) {
+        val reviewNodes = loaded.nodes.map { node ->
+            ReviewNode(
+                node = node,
+                heroBytes = keyframeFileName(loaded, node)
+                    ?.let { drafts.readDraftFile(draftId, it) },
+                landmarks = loaded.landmarks.filter { landmark -> landmark.nodeId == node.id },
+            )
+        }
         _ui.update {
+            val selected = it.selectedNodeId
+                ?.takeIf { id -> reviewNodes.any { review -> review.node.id == id } }
+                ?: filmStripFrames(reviewNodes).firstOrNull()?.nodeId
             it.copy(
                 loading = false,
                 missing = false,
                 routeName = loaded.name,
                 startDescription = loaded.start.description,
                 path = loaded.path,
-                nodes = loaded.nodes.map { node ->
-                    ReviewNode(
-                        node = node,
-                        heroBytes = keyframeFileName(loaded, node)
-                            ?.let { drafts.readDraftFile(draftId, it) },
-                        landmarks = loaded.landmarks.filter { landmark -> landmark.nodeId == node.id },
-                    )
-                },
+                nodes = reviewNodes,
+                selectedNodeId = selected,
+                health = routeHealth(loaded),
             )
         }
     }
