@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Env } from "./index";
-import { handleCreateJobV11 } from "./uploads";
+import { deletePrefix, handleCreateJobV11, idemKey } from "./uploads";
 import {
   JobEventSchema,
   JobResultSchema,
@@ -21,6 +21,11 @@ const MAX_FILES = 60;
 const MAX_TOTAL_BYTES = 80 * 1024 * 1024;
 
 const jobsPrefix = (jobId: string) => `jobs/${jobId}/`;
+
+/** Job ids are UUIDs minted here, but any Workflow-instance-safe token is
+ * accepted; the reserved names are sibling trees under `jobs/`. */
+const RESERVED_JOB_IDS = new Set(["staging", "idem"]);
+const isJobId = (id: string) => /^[A-Za-z0-9_-]{1,100}$/.test(id) && !RESERVED_JOB_IDS.has(id);
 const manifestKey = (jobId: string) => `jobs/${jobId}/manifest.json`;
 const inputKey = (jobId: string, name: string) => `jobs/${jobId}/in/${name}`;
 const progressKey = (jobId: string) => `jobs/${jobId}/progress.json`;
@@ -209,8 +214,8 @@ export function registerJobsRoutes(app: Hono<{ Bindings: Env }>): void {
     }
     // Storage/creation failures are 500s: the manifest above was valid,
     // so reporting invalid_manifest here would mask an outage.
+    const jobId = crypto.randomUUID();
     try {
-      const jobId = crypto.randomUUID();
       for (const { name, file } of files) {
         await c.env.MEDIA.put(inputKey(jobId, name), await file.arrayBuffer(), {
           httpMetadata: { contentType: file.type || "application/octet-stream" },
@@ -221,6 +226,12 @@ export function registerJobsRoutes(app: Hono<{ Bindings: Env }>): void {
       await c.env.PIPELINE.create({ id: jobId, params: { jobId } });
       return c.json({ ok: true, jobId }, 202);
     } catch {
+      // No instance was created, so nothing will read the partial writes.
+      try {
+        await deletePrefix(c.env, jobsPrefix(jobId));
+      } catch {
+        // Best effort: an unreferenced job prefix is inert.
+      }
       return c.json({ ok: false, error: "job_create_failed" }, 500);
     }
   });
@@ -230,6 +241,7 @@ export function registerJobsRoutes(app: Hono<{ Bindings: Env }>): void {
       return c.json({ ok: false, error: "server_misconfigured" }, 500);
     }
     const id = c.req.param("id");
+    if (!isJobId(id)) return c.json({ ok: false, error: "job_not_found" }, 404);
     let status: string;
     try {
       status = (await (await c.env.PIPELINE.get(id)).status()).status;
@@ -268,6 +280,7 @@ export function registerJobsRoutes(app: Hono<{ Bindings: Env }>): void {
       return c.json({ ok: false, error: "server_misconfigured" }, 500);
     }
     const id = c.req.param("id");
+    if (!isJobId(id)) return c.json({ ok: false, error: "job_not_found" }, 404);
     let instance: WorkflowInstance;
     try {
       instance = await c.env.PIPELINE.get(id);
@@ -289,6 +302,9 @@ export function registerJobsRoutes(app: Hono<{ Bindings: Env }>): void {
 
   app.delete("/v1/jobs/:id", async (c) => {
     const id = c.req.param("id");
+    // The id becomes an R2 prefix: `staging` and `idem` are other trees,
+    // and an encoded slash would reach into them.
+    if (!isJobId(id)) return c.json({ ok: false, error: "invalid_request" }, 400);
     let handle: WorkflowInstance | null = null;
     const pipeline = c.env.PIPELINE;
     if (pipeline) {
@@ -309,16 +325,10 @@ export function registerJobsRoutes(app: Hono<{ Bindings: Env }>): void {
         handle = null;
       }
     }
-    const prefix = jobsPrefix(id);
-    let cursor: string | undefined;
-    for (;;) {
-      const page = await c.env.MEDIA.list({ prefix, cursor });
-      if (page.objects.length > 0) {
-        await c.env.MEDIA.delete(page.objects.map((o) => o.key));
-      }
-      if (!page.truncated) break;
-      cursor = page.cursor;
-    }
+    await deletePrefix(c.env, jobsPrefix(id));
+    // The idempotency record would otherwise keep answering replays with
+    // the id of this deleted job.
+    await c.env.MEDIA.delete(idemKey(id));
     // Remove the instance record too, so a later GET reports 404
     // (job_not_found) instead of 500 (result_missing for swept keys).
     if (handle) {

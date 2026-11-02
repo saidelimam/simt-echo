@@ -11,7 +11,8 @@ import {
 // W10-06 v1.1 contract. R2 layout (additive to the jobs/ tree in jobs.ts):
 //   jobs/staging/<uploadId>/meta.json  {files:[{name,sha256,bytes}], createdAt}
 //   jobs/staging/<uploadId>/<name>      staged blob, sha-verified on PUT
-//   jobs/idem/<sha256(idempotencyKey)>.json  {jobId} for idempotent job create
+//   jobs/idem/<jobId>.json  {jobId} marking a completed idempotent create;
+//     the job id itself is derived from the idempotency key (see jobIdForKey)
 // The v1 multipart path in jobs.ts is untouched; JSON job creates dispatch here.
 
 export const STAGING_TTL_MS = 3_600_000;
@@ -20,7 +21,8 @@ const MAX_TOTAL_BYTES = 80 * 1024 * 1024;
 const stagingPrefix = (uploadId: string) => `jobs/staging/${uploadId}/`;
 const stagingMetaKey = (uploadId: string) => `jobs/staging/${uploadId}/meta.json`;
 const stagingBlobKey = (uploadId: string, name: string) => `jobs/staging/${uploadId}/${name}`;
-const idemKey = (keyHex: string) => `jobs/idem/${keyHex}.json`;
+export const idemKey = (jobId: string) => `jobs/idem/${jobId}.json`;
+const jobManifestKey = (jobId: string) => `jobs/${jobId}/manifest.json`;
 
 interface StoredUploadMeta {
   files: UploadFileRef[];
@@ -37,7 +39,7 @@ async function readJson<T>(env: Env, key: string): Promise<T | null> {
   }
 }
 
-async function deletePrefix(env: Env, prefix: string): Promise<void> {
+export async function deletePrefix(env: Env, prefix: string): Promise<void> {
   let cursor: string | undefined;
   for (;;) {
     const page = await env.MEDIA.list({ prefix, cursor });
@@ -66,6 +68,27 @@ async function hexSha256Hex(data: Uint8Array | string): Promise<string> {
     bytes as unknown as ArrayBuffer,
   );
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * The job id for an idempotency key: the first 128 bits of its sha256 in
+ * RFC 4122 shape (version 5, variant 10), so it is a valid UUID and equal
+ * keys always name the same job. That makes concurrent creates collide on
+ * the Workflow instance id instead of racing to make two jobs.
+ */
+async function jobIdForKey(idempotencyKey: string): Promise<string> {
+  const hex = await hexSha256Hex(idempotencyKey);
+  const variant = ((parseInt(hex[16], 16) & 0x3) | 0x8).toString(16);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+async function instanceExists(pipeline: Workflow, jobId: string): Promise<boolean> {
+  try {
+    await pipeline.get(jobId);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Loads the staging record, sweeping it when it is older than 1 h. */
@@ -104,10 +127,32 @@ function missingOf(meta: StoredUploadMeta, staged: Set<string>): string[] {
   return meta.files.map((f) => f.name).filter((n) => !staged.has(n));
 }
 
+/** Removes idempotency records whose job no longer has a manifest (the job
+ * was deleted or never finished writing): they would answer a replay with
+ * the id of a job that is gone. */
+async function sweepOrphanedIdem(env: Env): Promise<void> {
+  const orphaned: string[] = [];
+  let cursor: string | undefined;
+  for (;;) {
+    const page = await env.MEDIA.list({ prefix: "jobs/idem/", cursor });
+    for (const o of page.objects) {
+      const rec = await readJson<{ jobId?: unknown }>(env, o.key);
+      const jobId = typeof rec?.jobId === "string" ? rec.jobId : null;
+      if (jobId === null || (await env.MEDIA.head(jobManifestKey(jobId))) === null) {
+        orphaned.push(o.key);
+      }
+    }
+    if (!page.truncated) break;
+    cursor = page.cursor;
+  }
+  if (orphaned.length > 0) await env.MEDIA.delete(orphaned);
+}
+
 /**
- * Best-effort sweep of staged uploads older than 1 h. Groups every key
- * under jobs/staging/ by upload id so orphan blobs (meta missing or
- * unreadable) are swept too. Returns the number of uploads removed.
+ * Best-effort sweep of staged uploads older than 1 h, then of orphaned
+ * idempotency records. Groups every key under jobs/staging/ by upload id so
+ * orphan blobs (meta missing or unreadable) are swept too. Returns the
+ * number of uploads removed.
  */
 export async function sweepExpiredUploads(env: Env, now: number = Date.now()): Promise<number> {
   const groups = new Map<string, { keys: string[]; metaKey: string | null }>();
@@ -142,6 +187,7 @@ export async function sweepExpiredUploads(env: Env, now: number = Date.now()): P
       swept++;
     }
   }
+  await sweepOrphanedIdem(env);
   return swept;
 }
 
@@ -168,15 +214,19 @@ export async function handleCreateJobV11(c: Context<{ Bindings: Env }>): Promise
     return c.json({ ok: false, error: "invalid_request" }, 400);
   }
 
-  // Idempotent replay: a stored key returns the original job id without
-  // touching staging, so double-create is safe even after the move below.
-  let idemHex: string | null = null;
-  if (idempotencyKey !== undefined) {
-    idemHex = await hexSha256Hex(idempotencyKey);
-    const hit = await readJson<{ jobId?: unknown }>(c.env, idemKey(idemHex));
-    if (hit !== null && typeof hit.jobId === "string" && hit.jobId !== "") {
-      return c.json({ ok: true, jobId: hit.jobId }, 202);
+  // The id is derived from the idempotency key, so concurrent creates with
+  // one key name the same Workflow instance and cannot make two jobs.
+  const jobId = idempotencyKey !== undefined ? await jobIdForKey(idempotencyKey) : crypto.randomUUID();
+
+  // Idempotent replay: a completed create returns the original job id
+  // without touching staging, so double-create is safe even after the move
+  // below. A record whose job lost its manifest is stale: discard it and
+  // create afresh.
+  if (idempotencyKey !== undefined && (await readJson(c.env, idemKey(jobId))) !== null) {
+    if ((await c.env.MEDIA.head(jobManifestKey(jobId))) !== null) {
+      return c.json({ ok: true, jobId }, 202);
     }
+    await c.env.MEDIA.delete(idemKey(jobId));
   }
 
   // Staged blobs to move under the job (manifest-only creates skip this).
@@ -234,8 +284,10 @@ export async function handleCreateJobV11(c: Context<{ Bindings: Env }>): Promise
     }
   }
 
+  // Set once the Workflow instance exists: from then on the job owns its
+  // files and a failure must not delete them.
+  let instanceCreated = false;
   try {
-    const jobId = crypto.randomUUID();
     for (const { name, bytes } of staged) {
       await c.env.MEDIA.put(`jobs/${jobId}/in/${name}`, bytes);
     }
@@ -257,9 +309,16 @@ export async function handleCreateJobV11(c: Context<{ Bindings: Env }>): Promise
       `jobs/${jobId}/progress.json`,
       JSON.stringify({ stage: "queued", updatedAt: Date.now() }),
     );
-    await c.env.PIPELINE.create({ id: jobId, params: { jobId } });
-    if (idemHex !== null && idempotencyKey !== undefined) {
-      await c.env.MEDIA.put(idemKey(idemHex), JSON.stringify({ jobId, idempotencyKey }));
+    try {
+      await c.env.PIPELINE.create({ id: jobId, params: { jobId } });
+    } catch (e) {
+      // A concurrent create with the same key won the instance id: this
+      // request is its replay, not a failure.
+      if (idempotencyKey === undefined || !(await instanceExists(c.env.PIPELINE, jobId))) throw e;
+    }
+    instanceCreated = true;
+    if (idempotencyKey !== undefined) {
+      await c.env.MEDIA.put(idemKey(jobId), JSON.stringify({ jobId }));
     }
     // The move consumes the staging areas: single-use uploads cannot seed
     // a second job, and replay arrives via the idempotency map above.
@@ -268,6 +327,18 @@ export async function handleCreateJobV11(c: Context<{ Bindings: Env }>): Promise
     }
     return c.json({ ok: true, jobId }, 202);
   } catch {
+    // No instance means nothing will read the partial writes: drop them
+    // (staging is untouched, so the client can retry the create). A keyed
+    // create whose id another request already owns leaves them alone.
+    if (!instanceCreated) {
+      try {
+        if (!(await instanceExists(c.env.PIPELINE, jobId))) {
+          await deletePrefix(c.env, `jobs/${jobId}/`);
+        }
+      } catch {
+        // Best effort: an unreferenced job prefix is inert.
+      }
+    }
     return c.json({ ok: false, error: "job_create_failed" }, 500);
   }
 }

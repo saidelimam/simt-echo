@@ -45,6 +45,10 @@ class FakeR2 {
     };
   }
 
+  async head(key: string) {
+    return this.store.has(key) ? { key } : null;
+  }
+
   async list({ prefix }: { prefix?: string; cursor?: string }) {
     const keys = [...this.store.keys()].filter((k) => !prefix || k.startsWith(prefix)).sort();
     return { objects: keys.map((key) => ({ key })), truncated: false as const, delimitedPrefixes: [] };
