@@ -225,18 +225,18 @@ No slice is Complete on a partial pass or on unit evidence for a device claim.
 | W10-06 | Complete | Worker API v1.1 freeze (uploads, budget, events, partials) | S | D | — | bc0fd7f0232c2ac73c9e341eab33c5e29558de60 |
 | W10-07 | Complete | Luminous design freeze (motion, motifs, haptic/sonic grammar) | S (V) | E | — | 88d2a75 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.brand.EchoMarkTest" --tests "app.simt.echo.ui.shell.EchoShellTest" |
 | W10-08 | Complete | Turn haptics emitted (LEFT/RIGHT/U_TURN) | T (S) | C | — | 3d4cb54584a6f3712368799dcbb1d67ce8852e42 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.nav.NavigatorTest" --tests "app.simt.echo.ui.screens.navigate.NavigateViewModelTest" |
-| W11-01 | Queued | Glimpse ledger: on-device frame quality per 0.5 m | L (T) | B | W10-03 | — |
+| W11-01 | Complete | Glimpse ledger: on-device frame quality per 0.5 m | L (T) | B | W10-03 | 5919d24ef85a89bacc523b4e52adfd771fe27b8f |
 | W11-02 | Queued | Approach strips + ledger keyframes (no video seeking) | T (S) | B | W11-01 | — |
 | W11-03 | Queued | Clip forge: 12-frame 480 p strips, exact frame↔distance map | F (T) | B | W11-02 | — |
 | W11-04 | Queued | On-device privacy pre-filter (faces, blur) before upload | T (S) | B | W11-02 | — |
 | W11-05 | Complete | Worker intake v1.1: content-addressed resumable uploads | F (S) | D | W10-06 | b74143be9eb7030b20667f25fe1e47397bdb0faa |
-| W11-06 | Queued | Worker SAM Lens: per-call steps, cache, governor, ladder | T (S) | D | W10-06, W11-07 | — |
+| W11-06 | Complete | Worker SAM Lens: per-call steps, cache, governor, ladder | T (S) | D | W10-06, W11-07 | 539e885070fb40c75f860523d416f7d52784aa9e |
 | W11-07 | Complete | SAM live probe: multi-phrase, strip clips, SSE hardening | T (S) | D | W10-06 | d7c988df1727df6ca86f48e64ec7b92f3826e62c |
 | W11-08 | Queued | App client v1.1: resumable upload, event stream, partials | F (T) | D | W11-03, W11-05, W11-06 | — |
 | W11-09 | Queued | Ready-on-arrival: opt-in upload while walking (P1) | T (S) | D | W11-08, W11-04 | — |
 | W11-10 | Queued | Live SAM envelope v2 on a walked route | T (S) | F | W11-08, W11-04 | — |
 | W12-01 | Complete | Heading quality: stillness, gyro-bias, quality score | S | C | W10-02 | 44cb4fd3fb25ac23b721146a323313827852be13 |
-| W12-02 | Queued | Ghost filter: along-route particle filter behind a flag | S | C | W12-01, W10-08, W10-05 | — |
+| W12-02 | Complete | Ghost filter: along-route particle filter behind a flag | S | C | W12-01, W10-08, W10-05 | 5fa18caece1cead41ce6a0bc8b27811dac21f2b1 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.nav.*" |
 | W12-03 | Queued | Self-calibrating stride from anchored legs | T (S) | C | W12-02 | — |
 | W12-04 | Queued | Magnetic signature capture + DTW observation (P1) | T (S) | C | W12-02 | — |
 | W12-05 | Queued | Visual fingerprints: capture, match, "That's it?" | T (S) | C | W12-02, W11-02 | — |
@@ -256,7 +256,7 @@ No slice is Complete on a partial pass or on unit evidence for a device claim.
 | W13-11 | Complete | Home sigil records, Arrived bloom (tour split to W13-13) | F (T, V) | E | W13-03, W13-02 | 263fbed · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.motion.*" --tests "app.simt.echo.ui.screens.*" --tests "app.simt.echo.ui.components.*" |
 | W13-12 | Queued | Wear guidance: ongoing activity + tile (P1) | F (T) | F | W13-08 | — |
 | W13-13 | Queued | Guided practice tour through the real Navigate instrument | T (S, V) | E | W13-08, W13-11 | — |
-| W13-14 | Queued | Transfer progress seam + real-rate particle flow | T (S, V) | C | W13-07 | — |
+| W13-14 | Complete | Transfer progress seam + real-rate particle flow | T (S, V) | C | W13-07 | fdd7e9e · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.transfer.TransferServiceTest" --tests "app.simt.echo.transfer.RelayClientTest" --tests "app.simt.echo.ui.screens.share.ShareViewModelTest" --tests "app.simt.echo.ui.screens.receive.ReceiveViewModelTest" --tests "app.simt.echo.ui.components.TransferParticlesTest" |
 | W14-01 | Queued | Performance gate on two devices | T | F | W10-04, W13-04, W13-08, W12-05 | — |
 | W14-02 | Queued | Accessibility & motion parity gate v2 | T (V) | F | W13-04…W13-11 | — |
 | W14-03 | Queued | Field A/B: v1 vs Ghost on the V2 §11 protocol | T (S) | F | W12-06, W12-08, W13-08 | — |
