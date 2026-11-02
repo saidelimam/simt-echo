@@ -11,6 +11,8 @@ import app.simt.echo.nav.ghost.FingerprintHit
 import app.simt.echo.platform.MotionUpdate
 import app.simt.echo.ui.screens.navigate.NavigateAction
 import app.simt.echo.ui.screens.navigate.navigatePhasePresentation
+import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -196,11 +198,14 @@ class RelockTest {
         filter.respreadUniform()
         assertTrue(filter.meanS in 15.0..30.0, "uniform mean was ${filter.meanS}")
         assertTrue(filter.sigma > 10.0, "uniform σ was ${filter.sigma}")
-        // Observed: straight, then a right turn — the L's signature near s = 20.
-        val signature = doubleArrayOf(0.0, 0.0, 0.0, 0.0, Math.PI / 2, 0.0)
-        filter.observe(Observation.TurnSignature(signature, 1.0))
-        filter.observeTurn(TurnDir.RIGHT)
-        assertTrue(filter.meanS in 12.0..28.0, "post-signature mean was ${filter.meanS}")
-        assertTrue(filter.sigma < 10.0, "post-signature σ was ${filter.sigma}")
+        // Observed, ending at the walker's position: straight for four
+        // metres, a right turn in the fifth, one more metre on. The L's
+        // right turn is at s = 20, so the walker stands ≈ 22 m along (the
+        // window looks backwards from s, never forward). One signature is
+        // deliberately soft (σ = 0.6 rad), so the walk's successive windows
+        // are modelled by repeating it until the evidence accumulates.
+        val signature = doubleArrayOf(0.0, 0.0, 0.0, 0.0, PI / 2, 0.0)
+        repeat(6) { filter.observe(Observation.TurnSignature(signature, 1.0)) }
+        assertTrue(abs(filter.meanS - 22.0) <= 2.0, "post-signature mean was ${filter.meanS}")
     }
 }

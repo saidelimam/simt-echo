@@ -54,7 +54,8 @@ sealed interface Observation {
 
     /**
      * A turn-signature window (W12-06): the observed yaw changes per
-     * [stepM] metres walked since "Lost", fused by
+     * [stepM] metres over the last stretch walked, ending at the walker's
+     * current position, fused by
      * [GhostFilter.observeTurnSignature] (DTW over the heading-change
      * sequence). Rotation-invariant, so the unknown alignment offset
      * cancels — the same single-observation seam as every other input.

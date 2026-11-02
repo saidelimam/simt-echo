@@ -3,6 +3,7 @@ package app.simt.echo.nav.ghost
 import app.simt.echo.capture.wrapPi
 import app.simt.echo.model.EchoRoute
 import app.simt.echo.model.TurnDir
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.sqrt
@@ -183,9 +184,11 @@ class GhostFilter(
     /**
      * Turn-signature likelihood (W12-06): DTW over the heading-change
      * sequence. [deltasRad] holds the observed yaw changes per [stepM]
-     * metres walked (rotation-invariant, so the unknown alignment offset
-     * cancels); each particle's expected sequence is the route-heading
-     * changes over its next `deltasRad.size` steps. The likelihood is
+     * metres walked, ending at the walker's current position
+     * (rotation-invariant, so the unknown alignment offset cancels); each
+     * particle's expected sequence is the route-heading changes over the
+     * `deltasRad.size` steps *behind* its position `[s - n*step, s]`. The
+     * match is a banded DTW ([DTW_BAND_STEPS]). The likelihood is
      * floored at [TURN_FLOOR], so a mismatched signature reads as
      * uninformative rather than collapsing the filter.
      */
@@ -193,9 +196,9 @@ class GhostFilter(
         val n = deltasRad.size
         if (n == 0 || n > MAX_SIGNATURE_STEPS || stepM <= 0.0) return
         for (i in 0 until PARTICLE_COUNT) {
-            var prev = geometry.headingAt(sA[i])
+            var prev = geometry.headingAt(sA[i] - n * stepM)
             for (j in 0 until n) {
-                val next = geometry.headingAt(sA[i] + (j + 1) * stepM)
+                val next = geometry.headingAt(sA[i] - (n - j - 1) * stepM)
                 sigExp[j] = wrapPi(next - prev)
                 prev = next
             }
@@ -207,8 +210,10 @@ class GhostFilter(
 
     /**
      * DTW distance (squared wrapped-angle cost) between the observed
-     * [n]-sequence and [sigExp]. Operates on the reused [dtwPrev]/[dtwCurr]
-     * rows — allocates nothing.
+     * [n]-sequence and [sigExp], constrained to a Sakoe-Chiba band of
+     * [DTW_BAND_STEPS] (|i - j| <= band): a heading change may slip by a
+     * step, not be matched to a distant one. Operates on the reused
+     * [dtwPrev]/[dtwCurr] rows — allocates nothing.
      */
     private fun dtwDistance(observed: DoubleArray, n: Int): Double {
         dtwPrev[0] = 0.0
@@ -216,6 +221,10 @@ class GhostFilter(
         for (i in 1..n) {
             dtwCurr[0] = Double.POSITIVE_INFINITY
             for (j in 1..n) {
+                if (abs(i - j) > DTW_BAND_STEPS) {
+                    dtwCurr[j] = Double.POSITIVE_INFINITY
+                    continue
+                }
                 val err = wrapPi(observed[i - 1] - sigExp[j - 1])
                 val cost = err * err
                 var best = dtwPrev[j]
@@ -401,6 +410,9 @@ class GhostFilter(
 
         /** Turn-signature DTW σ, radians (W12-06): generous on purpose — */
         const val RELOCK_SIGMA_RAD = 0.6
+
+        /** Sakoe-Chiba band half-width of the turn-signature DTW, in steps. */
+        const val DTW_BAND_STEPS = 1
 
         /** Turn-signature window: at most 8 heading-change steps (8 m at 1 m). */
         const val MAX_SIGNATURE_STEPS = 8

@@ -529,16 +529,18 @@ class Navigator(
     }
 
     /**
-     * Observed heading-change sequence since the search began: yaw deltas
-     * per [RELOCK_SIGNATURE_STEP_M], up to 8 steps back. Null until at
-     * least one full metre is walked. Rotation-invariant (yaw deltas), so
-     * the unknown alignment offset cancels.
+     * Observed heading-change sequence ending at the walker's current
+     * position: yaw deltas per [RELOCK_SIGNATURE_STEP_M] over the last up
+     * to 8 whole metres walked since the search began (a sliding window,
+     * never anchored to where the search started). Null until at least one
+     * full metre is walked. Rotation-invariant (yaw deltas), so the
+     * unknown alignment offset cancels.
      */
     private fun buildRelockSignature(distM: Double): DoubleArray? {
         val walked = distM - relockStartOdo
         val steps = walked.toInt().coerceAtMost(GhostFilter.MAX_SIGNATURE_STEPS)
         if (steps < 1) return null
-        val base = distM - walked
+        val base = distM - steps * RELOCK_SIGNATURE_STEP_M
         return DoubleArray(steps) { k ->
             wrapPi(yawAt(base + (k + 1) * RELOCK_SIGNATURE_STEP_M) - yawAt(base + k * RELOCK_SIGNATURE_STEP_M))
         }
