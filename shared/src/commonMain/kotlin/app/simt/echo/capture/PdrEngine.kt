@@ -5,6 +5,7 @@ import app.simt.echo.platform.MotionUpdate
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlin.concurrent.Volatile
 import kotlin.math.pow
 import kotlin.math.sqrt
 
@@ -34,11 +35,13 @@ class PdrEngine(
     /** Weinberg step-length constant, calibratable (W4-02). */
     k: Double = 0.48,
 ) : MotionSource, StepCalibratable {
+    @Volatile
     override var stepK: Double = k
 
     private val _updates = MutableSharedFlow<MotionUpdate>(extraBufferCapacity = 128)
     override val updates: Flow<MotionUpdate> = _updates.asSharedFlow()
 
+    @Volatile
     private var running = false
 
     // Step detection state (§6.2 steps 1–2).

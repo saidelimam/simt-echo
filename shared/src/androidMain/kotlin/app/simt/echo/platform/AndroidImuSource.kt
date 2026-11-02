@@ -15,9 +15,10 @@ import app.simt.echo.capture.StepCalibratable
 import app.simt.echo.capture.PressureSample
 import app.simt.echo.capture.RotSample
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -39,15 +40,24 @@ import kotlinx.coroutines.launch
  * Compose for the main looper. Updates deliver through a buffered channel
  * — steps need every sample, so the buffer suspends under backpressure
  * instead of conflating or dropping.
+ *
+ * Lifecycle: [start] is idempotent (a second call tears the first run down
+ * before beginning), the forwarder subscribes to the engine before any
+ * sensor is registered (the engine's flow does not replay, so a late
+ * subscriber would lose the first samples), and [stop] drains the channel
+ * so stale updates never reach the next run.
  */
-class BuiltInPdrMotionSource(context: Context) : MotionSource, StepCalibratable {
+class BuiltInPdrMotionSource internal constructor(
+    context: Context,
+    private val engine: PdrEngine,
+) : MotionSource, StepCalibratable {
+
+    constructor(context: Context) : this(context, PdrEngine())
 
     private val sensorManager =
         context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
-    private val engine = PdrEngine()
 
     private var imuThread: HandlerThread? = null
-    private var imuHandler: Handler? = null
 
     private val pipe = Channel<MotionUpdate>(
         capacity = 512,
@@ -56,7 +66,6 @@ class BuiltInPdrMotionSource(context: Context) : MotionSource, StepCalibratable 
     override val updates: Flow<MotionUpdate> = pipe.receiveAsFlow()
 
     private val forwardScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private var forwardJob: Job? = null
 
     /** Calibration reaches the engine it wraps (W4-02): without this
      * forward, `CaptureSession`'s step-K push silently no-ops on the
@@ -108,13 +117,16 @@ class BuiltInPdrMotionSource(context: Context) : MotionSource, StepCalibratable 
     }
 
     override fun start() {
+        teardown()
         engine.start()
-        forwardJob?.cancel()
-        forwardJob = forwardScope.launch { engine.updates.collect { pipe.send(it) } }
+        // UNDISPATCHED: subscribe on this thread, before any sensor can
+        // produce a sample, instead of whenever Default gets scheduled.
+        forwardScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            engine.updates.collect { pipe.send(it) }
+        }
         val thread = HandlerThread("echo-imu").apply { start() }
         imuThread = thread
         val handler = Handler(thread.looper)
-        imuHandler = handler
         register(Sensor.TYPE_ACCELEROMETER, SensorManager.SENSOR_DELAY_GAME, handler)
         register(Sensor.TYPE_GAME_ROTATION_VECTOR, SensorManager.SENSOR_DELAY_GAME, handler)
         register(Sensor.TYPE_MAGNETIC_FIELD, SensorManager.SENSOR_DELAY_GAME, handler)
@@ -128,12 +140,16 @@ class BuiltInPdrMotionSource(context: Context) : MotionSource, StepCalibratable 
     }
 
     override fun stop() {
+        teardown()
+        engine.stop()
+    }
+
+    /** Ends any previous run: sensors, IMU thread, forwarder, buffered updates. */
+    private fun teardown() {
         sensorManager.unregisterListener(listener)
-        forwardJob?.cancel()
-        forwardJob = null
         imuThread?.quitSafely()
         imuThread = null
-        imuHandler = null
-        engine.stop()
+        forwardScope.coroutineContext.cancelChildren()
+        while (pipe.tryReceive().isSuccess) Unit
     }
 }
