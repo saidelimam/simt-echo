@@ -118,6 +118,7 @@ kotlin {
                 // core) are already on this compilation's classpath.
                 implementation(libs.robolectric)
                 implementation(libs.compose.ui.test.junit4)
+                implementation(libs.zxing.core)
             }
         }
     }

@@ -8,6 +8,8 @@ import app.simt.echo.platform.FileSharing
 import app.simt.echo.transfer.TransferService
 import app.simt.echo.ui.copy.receiveFileErrorCopy
 import app.simt.echo.ui.copy.receiveSaveErrorCopy
+import app.simt.echo.ui.sigil.SigilGeometry
+import app.simt.echo.ui.sigil.routeSigil
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -22,6 +24,8 @@ data class ImportPreview(
     val landmarkCount: Int,
     val creatorLabel: String,
     val expiresAtEpochMs: Long?,
+    /** The route's sigil, unfolded on the import sheet (W13-07); presentation only. */
+    val sigil: SigilGeometry? = null,
 )
 
 /** Receive screen state (plan §8.3): scan → fetch → sheet → Save. */
@@ -128,6 +132,7 @@ class ReceiveViewModel(
             landmarkCount = route.landmarks.size,
             creatorLabel = route.creatorLabel,
             expiresAtEpochMs = route.privacy.expiresAtEpochMs,
+            sigil = routeSigil(route),
         )
     }
 
