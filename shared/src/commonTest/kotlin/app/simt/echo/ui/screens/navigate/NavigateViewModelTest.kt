@@ -7,6 +7,8 @@ import app.simt.echo.data.RouteRepository
 import app.simt.echo.data.TrialRepository
 import app.simt.echo.model.TrialMode
 import app.simt.echo.nav.NavPhase
+import app.simt.echo.nav.NavWearState
+import app.simt.echo.nav.WearNavSync
 import app.simt.echo.nav.walkLog
 import app.simt.echo.platform.HapticPattern
 import app.simt.echo.platform.Haptics
@@ -214,5 +216,39 @@ class NavigateViewModelTest {
         advanceUntilIdle()
 
         assertNull(vm.ui.value)
+    }
+
+    @Test
+    fun wearMirrorReceivesMappedSnapshots() = runTest(dispatcher) {
+        val mirrored = mutableListOf<NavWearState>()
+        val source = ReplayMotionSource(walkLog(listOf(5.0 to 0.0)), this)
+        val vm = NavigateViewModel(
+            Fixtures.L_ROUTE.routeId, routesWithLRoute(), source, FakeHaptics(),
+            wearNav = { mirrored += it },
+        ) {}
+        runCurrent()
+        vm.start()
+        vm.align()
+        advanceUntilIdle()
+
+        assertTrue(mirrored.isNotEmpty(), "mirror sink saw no snapshots")
+        val ui = vm.ui.value
+        assertEquals(ui?.phase?.name, mirrored.last().phase)
+        assertEquals(ui?.instruction?.take(WearNavSync.MAX_CUE_CHARS), mirrored.last().cue)
+    }
+
+    @Test
+    fun wearMirrorFailureNeverBreaksNavigation() = runTest(dispatcher) {
+        val source = ReplayMotionSource(walkLog(listOf(5.0 to 0.0)), this)
+        val vm = NavigateViewModel(
+            Fixtures.L_ROUTE.routeId, routesWithLRoute(), source, FakeHaptics(),
+            wearNav = { throw IllegalStateException("no radio") },
+        ) {}
+        runCurrent()
+        vm.start()
+        vm.align()
+        advanceUntilIdle()
+
+        assertTrue(vm.ui.value != null, "navigation survived a throwing mirror sink")
     }
 }

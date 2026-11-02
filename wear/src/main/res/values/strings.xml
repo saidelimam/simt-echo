@@ -2,4 +2,6 @@
 <resources>
     <string name="app_name">ECHO</string>
     <string name="wear_listening">Listening for ECHO…</string>
+    <!-- Latest /echo/nav snapshot: metres left and the nav phase. -->
+    <string name="wear_nav_distance">%1$d m · %2$s</string>
 </resources>

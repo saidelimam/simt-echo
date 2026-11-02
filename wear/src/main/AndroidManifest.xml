@@ -36,7 +36,8 @@
             </intent-filter>
         </activity>
 
-        <!-- Haptic receiver: phone → /echo/haptics → vibration. -->
+        <!-- Haptic + nav receivers: phone → /echo/haptics → vibration,
+             phone → /echo/nav → latest snapshot for MainActivity. -->
         <service
             android:name="app.simt.echo.wear.EchoHapticListenerService"
             android:exported="true">
