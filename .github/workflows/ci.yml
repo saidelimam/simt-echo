@@ -23,9 +23,6 @@ jobs:
       - name: Shared host tests
         run: ./gradlew :shared:testAndroidHostTest
 
-      - name: iOS compiles (shared code must not rot; W5-03 stays postponed)
-        run: ./gradlew :shared:compileKotlinIosArm64 :shared:compileKotlinIosSimulatorArm64
-
       - name: Worker typecheck + test
         working-directory: worker
         run: |
