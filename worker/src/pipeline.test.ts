@@ -32,6 +32,11 @@ class FakeR2 {
     };
   }
 
+  async head(key: string) {
+    const entry = this.store.get(key);
+    return entry ? { size: entry.byteLength } : null;
+  }
+
   async list({ prefix }: { prefix?: string; cursor?: string }) {
     const keys = [...this.store.keys()].filter((k) => !prefix || k.startsWith(prefix)).sort();
     return { objects: keys.map((key) => ({ key })), truncated: false as const, delimitedPrefixes: [] };
@@ -332,6 +337,7 @@ describe("EchoPipeline lens phase (W11-06)", () => {
       "load",
       "scout",
       "emit:stage:grounding",
+      "ground:plan:image",
       expect.stringMatching(/^ground:n2:0:[0-9a-f]{12}$/),
       "emit:checkpoint:n2",
       "emit:usage",

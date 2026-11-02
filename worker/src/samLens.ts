@@ -146,9 +146,11 @@ function priorityOf(cp: Checkpoint): number {
  * real billing; the governor caps on estimates regardless of price).
  */
 class Governor {
-  reserved = 0;
-  exhausted = false;
-  constructor(readonly max: number) {}
+  constructor(
+    readonly max: number,
+    public reserved = 0,
+    public exhausted = false,
+  ) {}
   reserve(estimate: number): boolean {
     if (this.reserved + estimate > this.max) {
       this.exhausted = true;
@@ -157,6 +159,54 @@ class Governor {
     this.reserved += estimate;
     return true;
   }
+}
+
+/** What the governor decided for one planned call. A `hit` is already in
+ * the content-hash cache, so it is replayed at zero frames and reserves
+ * nothing; a `refused` call keeps its box-only fallback. */
+type PlanDecision = "call" | "hit" | "refused";
+
+/** Recorded outcome of a planning step: the decisions plus the governor
+ * state they leave behind, so a Workflow replay restores both instead of
+ * re-deciding against a cache the first attempt has since filled. */
+interface PlanResult {
+  decisions: PlanDecision[];
+  reserved: number;
+  exhausted: boolean;
+}
+
+const cachePath = (jobId: string, key: string) => `jobs/${jobId}/sam/cache/${key}.txt`;
+
+/** True when a non-empty cached response exists for the key (own job, or
+ * the sanctioned `resumeOf` job). Metadata only: no body is read. */
+async function isCached(env: Env, jobId: string, key: string, resumeOf: string | undefined): Promise<boolean> {
+  for (const owner of resumeOf !== undefined ? [jobId, resumeOf] : [jobId]) {
+    const head = await env.MEDIA.head(cachePath(owner, key));
+    if (head !== null && head.size > 0) return true;
+  }
+  return false;
+}
+
+/**
+ * Cache first, then reserve: a cache hit consumes no budget, so a resume or
+ * retry cannot report a false `budgetExhausted`. Misses reserve in the order
+ * given (node priority). Pure in the governor state it is handed, so a
+ * retried step cannot double-reserve.
+ */
+async function planCalls(
+  env: Env,
+  jobId: string,
+  resumeOf: string | undefined,
+  start: Governor,
+  items: Array<{ key: string; estimate: number }>,
+): Promise<PlanResult> {
+  const gov = new Governor(start.max, start.reserved, start.exhausted);
+  const decisions: PlanDecision[] = [];
+  for (const { key, estimate } of items) {
+    if (await isCached(env, jobId, key, resumeOf)) decisions.push("hit");
+    else decisions.push(gov.reserve(estimate) ? "call" : "refused");
+  }
+  return { decisions, reserved: gov.reserved, exhausted: gov.exhausted };
 }
 
 interface LensBudget {
@@ -224,38 +274,43 @@ interface SamCall {
  * One SAM call with cache lookup-then-fetch. The cache write lands
  * immediately after a successful fetch — before evidence/parse — so a
  * Workflow retry of this step replays from R2 at zero frames (closes G7).
- * `resumeOf` is the only sanctioned cross-job reuse (W10-06 scoping): a hit
- * there is adopted into this job's own prefix.
+ * Empty text is never cached: it would turn one bad response into a
+ * permanent fallback. `resumeOf` is the only sanctioned cross-job reuse
+ * (W10-06 scoping): a hit there is adopted into this job's own prefix.
+ * `mustHit` is set when planning reserved nothing because the key was
+ * cached: a vanished entry then degrades to the fallback rather than
+ * sending an unreserved call.
  */
 async function samCall(
   env: Env,
   jobId: string,
   media: Uint8Array,
-  phrase: string,
-  params: string,
+  key: string,
   buildBody: (b64: string) => object,
   resumeOf: string | undefined,
+  mustHit: boolean,
   lensOpts: LensOptions,
 ): Promise<SamCall> {
-  const key = await cacheKeyHex(media, phrase, params);
-  const ownKey = `jobs/${jobId}/sam/cache/${key}.txt`;
+  const ownKey = cachePath(jobId, key);
   const own = await env.MEDIA.get(ownKey);
-  if (own) return { text: await own.text(), cached: true, samMs: 0 };
+  const ownText = own ? await own.text() : "";
+  if (ownText !== "") return { text: ownText, cached: true, samMs: 0 };
   if (resumeOf !== undefined) {
-    const prior = await env.MEDIA.get(`jobs/${resumeOf}/sam/cache/${key}.txt`);
-    if (prior) {
-      const text = await prior.text();
+    const prior = await env.MEDIA.get(cachePath(resumeOf, key));
+    const text = prior ? await prior.text() : "";
+    if (text !== "") {
       await env.MEDIA.put(ownKey, text);
       return { text, cached: true, samMs: 0 };
     }
   }
+  if (mustHit) throw new NonRetryableError("sam cache entry vanished after planning");
   const callStart = Date.now();
   const detailed = await metaResponsesDetailed(env, buildBody(toBase64(media)), {
     ...(lensOpts.samTimeoutMs !== undefined ? { timeoutMs: lensOpts.samTimeoutMs } : {}),
     ...(lensOpts.samIdleMs !== undefined ? { idleMs: lensOpts.samIdleMs } : {}),
   });
   const samMs = Date.now() - callStart;
-  await env.MEDIA.put(ownKey, detailed.text);
+  if (detailed.text.trim() !== "") await env.MEDIA.put(ownKey, detailed.text);
   return { text: detailed.text, reported: detailed.videoFramesProcessed, cached: false, samMs };
 }
 
@@ -343,6 +398,8 @@ const NO_SPEND: CallSpend = { sentFrames: 0, billedFrames: 0, ms: 0 };
 interface ImageStepResult extends CallSpend {
   k: number;
   candidate: Candidate;
+  /** Why the call degraded to the fallback (recorded in `sam/notes.json`). */
+  reason?: string;
 }
 
 /** Output of one video step; `candidate` is null when the clip added
@@ -350,6 +407,7 @@ interface ImageStepResult extends CallSpend {
 interface VideoStepResult extends CallSpend {
   k: number;
   candidate: Candidate | null;
+  reason?: string;
 }
 
 /**
@@ -429,7 +487,7 @@ export async function runGroundLens(
   }
 
   const budget = await readLensBudget(env, jobId);
-  const gov = new Governor(budget.maxSamFrames);
+  let gov = new Governor(budget.maxSamFrames);
   const notes: LensNote[] = budget.note ? [{ scope: "budget", reason: budget.note }] : [];
   const perCall = phrasesPerCall(env);
 
@@ -493,32 +551,59 @@ export async function runGroundLens(
     }
   }
   const spend = { samFrames: 0, samFramesBilled: 0, samMs: 0 };
-  const tally = (r: CallSpend) => {
+  const tally = (r: CallSpend & { reason?: string }, scope: string) => {
+    if (r.reason) notes.push({ scope, reason: r.reason });
     spend.samFrames += r.sentFrames;
     spend.samFramesBilled += r.billedFrames;
     spend.samMs += r.ms;
   };
 
-  // Image phase: 1 frame per hero call, reserved before any call is sent.
-  const imageTasks: Array<{ perCp: Map<number, Candidate>; run: () => Promise<ImageStepResult> }> = [];
+  /** Runs one governed phase: a recorded planning step decides each call
+   * (cache first, then reserve), then every non-refused call runs as its
+   * own step. The governor state it leaves is restored from the recorded
+   * plan, so a replay never re-decides against a cache that has since
+   * been filled. */
+  const planPhase = async (
+    name: string,
+    items: Array<{ key: string; estimate: number }>,
+  ): Promise<PlanDecision[]> => {
+    if (items.length === 0) return [];
+    const plan = await runner(name, () => planCalls(env, jobId, budget.resumeOf, gov, items));
+    gov = new Governor(gov.max, plan.reserved, plan.exhausted);
+    return plan.decisions;
+  };
+
+  // Image phase: 1 frame per hero call, planned before any call is sent.
+  const imageCalls: Array<{ p: Planned; k: number; media: Uint8Array; key: string }> = [];
   for (const p of byPriority) {
-    const perCp = finalResults.get(p.index) ?? new Map<number, Candidate>();
     for (const k of p.survivors) {
-      const sc = p.kept[k];
-      const fallback = perCp.get(k) ?? lensFallback(jobId, scout.model, p.cp, sc, k);
       const media = p.heroBytes.get(k);
-      if (!media || !gov.reserve(1)) continue;
-      const name = imageStepName(p.cp.nodeId, k, await phraseHash(sc.samPhrase));
-      const evidenceKey = `jobs/${jobId}/sam/${p.cp.nodeId}_${k}.txt`;
-      imageTasks.push({
-        perCp,
-        run: () =>
-          runner(name, async () => ({
-            k,
-            ...(await imageCall(env, jobId, p.cp, sc, k, media, fallback, evidenceKey, budget.resumeOf, lensOpts)),
-          })),
-      });
+      if (!media) continue;
+      imageCalls.push({ p, k, media, key: await cacheKeyHex(media, p.kept[k].samPhrase, IMAGE_PARAMS) });
     }
+  }
+  const imageDecisions = await planPhase(
+    "ground:plan:image",
+    imageCalls.map(({ key }) => ({ key, estimate: 1 })),
+  );
+  const imageTasks: Array<{ name: string; perCp: Map<number, Candidate>; run: () => Promise<ImageStepResult> }> = [];
+  for (const [i, { p, k, media, key }] of imageCalls.entries()) {
+    const decision = imageDecisions[i];
+    const perCp = finalResults.get(p.index);
+    const fallback = perCp?.get(k);
+    if (decision === "refused" || !perCp || !fallback) continue;
+    const sc = p.kept[k];
+    const name = imageStepName(p.cp.nodeId, k, await phraseHash(sc.samPhrase));
+    const evidenceKey = `jobs/${jobId}/sam/${p.cp.nodeId}_${k}.txt`;
+    imageTasks.push({
+      name,
+      perCp,
+      run: () =>
+        runner(name, async () => ({
+          k,
+          ...(await imageCall(env, jobId, p.cp, sc, k, media, key, decision === "hit", fallback, evidenceKey, budget.resumeOf, lensOpts)),
+        })),
+    });
   }
   const imageOut = await runPool(
     imageTasks.map((t) => t.run),
@@ -526,11 +611,18 @@ export async function runGroundLens(
   );
   imageOut.forEach((r, i) => {
     imageTasks[i].perCp.set(r.k, r.candidate);
-    tally(r);
+    tally(r, imageTasks[i].name);
   });
 
   // Video phase: top survivor only, TURN/DESTINATION or mid confidence.
-  const videoTasks: Array<{ perCp: Map<number, Candidate>; run: () => Promise<VideoStepResult> }> = [];
+  const videoCalls: Array<{
+    p: Planned;
+    perCp: Map<number, Candidate>;
+    topK: number;
+    top: Candidate;
+    clipBytes: Uint8Array;
+    key: string;
+  }> = [];
   for (const p of byPriority) {
     const perCp = finalResults.get(p.index);
     if (!perCp || !p.clipBytes || p.survivors.length === 0) continue;
@@ -544,25 +636,37 @@ export async function runGroundLens(
     const nodeWantsVideo = p.cp.type === "TURN" || p.cp.type === "DESTINATION";
     const confWantsVideo = conf !== null && conf !== undefined && conf >= 0.5 && conf < 0.85;
     if (!top || (!nodeWantsVideo && !confWantsVideo)) continue;
+    const key = await cacheKeyHex(p.clipBytes, p.kept[topK].samPhrase, VIDEO_PARAMS);
+    videoCalls.push({ p, perCp, topK, top, clipBytes: p.clipBytes, key });
+  }
+  const videoDecisions = await planPhase(
+    "ground:plan:video",
+    videoCalls.map(({ p, key }) => ({ key, estimate: p.cp.clip ? clipFrameEstimate(p.cp.clip) : 0 })),
+  );
+  const videoTasks: Array<{ name: string; perCp: Map<number, Candidate>; run: () => Promise<VideoStepResult> }> = [];
+  for (const [i, { p, perCp, topK, top, clipBytes, key }] of videoCalls.entries()) {
+    const decision = videoDecisions[i];
+    if (decision === "refused") continue;
     const sc = p.kept[topK];
-    const estimate = p.cp.clip ? clipFrameEstimate(p.cp.clip) : 0;
-    if (!gov.reserve(estimate)) continue;
     const name = videoStepName(p.cp.nodeId, topK, await phraseHash(sc.samPhrase));
     const evidenceKey = `jobs/${jobId}/sam/${p.cp.nodeId}_${topK}.txt`;
-    const clipBytes = p.clipBytes;
     const clip = { fps: p.clipFps, heroIdx: p.clipHeroIdx };
+    // The plan above is keyed on the first phrase; multi-phrase batching
+    // (default off, probe TBD) must plan per phrase before it is enabled.
     const phrases = [sc.samPhrase].slice(0, perCall);
     videoTasks.push({
+      name,
       perCp,
       run: () =>
         runner(name, async () => {
           const out: VideoStepResult = { k: topK, candidate: null, ...NO_SPEND };
           for (const phrase of phrases) {
-            const call = await videoCall(env, jobId, p.cp, sc, topK, clipBytes, phrase, evidenceKey, clip, top, budget.resumeOf, lensOpts);
+            const call = await videoCall(env, jobId, p.cp, sc, topK, clipBytes, phrase, key, decision === "hit", evidenceKey, clip, top, budget.resumeOf, lensOpts);
             out.sentFrames += call.sentFrames;
             out.billedFrames += call.billedFrames;
             out.ms += call.ms;
             if (call.candidate) out.candidate = call.candidate;
+            if (call.reason) out.reason = call.reason;
           }
           return out;
         }),
@@ -574,7 +678,7 @@ export async function runGroundLens(
   );
   videoOut.forEach((r, i) => {
     if (r.candidate) videoTasks[i].perCp.set(r.k, r.candidate);
-    tally(r);
+    tally(r, videoTasks[i].name);
   });
 
   const checkpoints: JobResult["checkpoints"] = planned.map((p) => {
@@ -600,8 +704,15 @@ export async function runGroundLens(
   return result;
 }
 
+
+/** Reason recorded when a non-retryable failure degrades a call to its
+ * fallback (truncated: vendor error bodies can be long). */
+function nonRetryableReason(e: NonRetryableError): string {
+  return `non_retryable: ${e.message.slice(0, 200)}`;
+}
+
 /** One hero-frame SAM call. A non-retryable failure degrades to the
- * box-only fallback at zero recorded spend. */
+ * box-only fallback at zero recorded spend, with the reason returned. */
 async function imageCall(
   env: Env,
   jobId: string,
@@ -609,25 +720,30 @@ async function imageCall(
   sc: ScoutCandidate,
   k: number,
   media: Uint8Array,
+  key: string,
+  mustHit: boolean,
   fallback: Candidate,
   evidenceKey: string,
   resumeOf: string | undefined,
   lensOpts: LensOptions,
-): Promise<{ candidate: Candidate } & CallSpend> {
+): Promise<{ candidate: Candidate; reason?: string } & CallSpend> {
   try {
-    const call = await samCall(env, jobId, media, sc.samPhrase, IMAGE_PARAMS, (b64) => imageBody(sc.samPhrase, b64), resumeOf, lensOpts);
+    const call = await samCall(env, jobId, media, key, (b64) => imageBody(sc.samPhrase, b64), resumeOf, mustHit, lensOpts);
     // Single hero frame sent; vendor image billing is unmeasured until
     // the W11-07 probe (row 3), so sent frames stand in.
     const spend: CallSpend = call.cached
       ? NO_SPEND
       : { sentFrames: call.reported ?? 1, billedFrames: call.reported ?? 0, ms: call.samMs };
+    if (call.text.trim() === "") return { candidate: fallback, reason: "empty_response", ...spend };
     await env.MEDIA.put(evidenceKey, call.text);
     const obs = parseSam(call.text);
     if (obs.length === 0) return { candidate: fallback, ...spend };
     const candidate = toGrounded(cp, sc, k, evidenceKey, obs, { clipB64: "", fps: 0, heroIdx: 0, heroTMs: cp.tMs }, fallback, true);
     return { candidate, ...spend };
   } catch (e) {
-    if (e instanceof NonRetryableError) return { candidate: fallback, ...NO_SPEND };
+    if (e instanceof NonRetryableError) {
+      return { candidate: fallback, reason: nonRetryableReason(e), ...NO_SPEND };
+    }
     throw e;
   }
 }
@@ -645,17 +761,20 @@ async function videoCall(
   k: number,
   media: Uint8Array,
   phrase: string,
+  key: string,
+  mustHit: boolean,
   evidenceKey: string,
   clip: { fps: number; heroIdx: number },
   standIn: Candidate,
   resumeOf: string | undefined,
   lensOpts: LensOptions,
-): Promise<{ candidate: Candidate | null } & CallSpend> {
+): Promise<{ candidate: Candidate | null; reason?: string } & CallSpend> {
   try {
-    const call = await samCall(env, jobId, media, phrase, VIDEO_PARAMS, (b64) => videoBody(phrase, b64), resumeOf, lensOpts);
+    const call = await samCall(env, jobId, media, key, (b64) => videoBody(phrase, b64), resumeOf, mustHit, lensOpts);
     const spend: CallSpend = call.cached
       ? NO_SPEND
       : { sentFrames: call.reported ?? (cp.clip ? clipFrameEstimate(cp.clip) : 0), billedFrames: call.reported ?? 0, ms: call.samMs };
+    if (call.text.trim() === "") return { candidate: null, reason: "empty_response", ...spend };
     await env.MEDIA.put(evidenceKey, call.text);
     const obs = parseSam(call.text);
     if (obs.length === 0) return { candidate: null, ...spend };
@@ -673,7 +792,9 @@ async function videoCall(
     );
     return { candidate: upgraded.source === "AI_GROUNDED" ? upgraded : null, ...spend };
   } catch (e) {
-    if (e instanceof NonRetryableError) return { candidate: null, ...NO_SPEND };
+    if (e instanceof NonRetryableError) {
+      return { candidate: null, reason: nonRetryableReason(e), ...NO_SPEND };
+    }
     throw e;
   }
 }
