@@ -49,7 +49,7 @@ const val LANDMARK_TEXT_DISCLOSURE =
  * must not be shared by QR or relay.
  */
 const val PERCEPTION_DISCLOSURE =
-    "On-device perception data (route fingerprints, including the magnetic profile) travels inside QR and " +
+    "On-device perception data (route fingerprints, magnetic and parallax profiles, and tiny image-derived view strips) travels inside QR and " +
         "relay transfers, which are encrypted and expire with the route. A shared file leaves it out unless " +
         "you choose to include it."
 

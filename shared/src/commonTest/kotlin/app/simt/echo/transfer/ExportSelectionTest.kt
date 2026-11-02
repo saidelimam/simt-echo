@@ -304,6 +304,8 @@ class ExportSelectionTest {
         assertTrue("QR and relay" in PERCEPTION_DISCLOSURE, PERCEPTION_DISCLOSURE)
         assertTrue("encrypted" in PERCEPTION_DISCLOSURE, PERCEPTION_DISCLOSURE)
         assertTrue("file leaves it out" in PERCEPTION_DISCLOSURE, PERCEPTION_DISCLOSURE)
+        assertTrue("parallax profiles" in PERCEPTION_DISCLOSURE, PERCEPTION_DISCLOSURE)
+        assertTrue("image-derived view strips" in PERCEPTION_DISCLOSURE, PERCEPTION_DISCLOSURE)
         assertFalse("same encryption" in PERCEPTION_DISCLOSURE, PERCEPTION_DISCLOSURE)
     }
 
