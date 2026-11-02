@@ -41,6 +41,15 @@ sealed interface EchoRoute {
     @Serializable
     data class Navigate(val routeId: String, val simulate: Boolean) : EchoRoute
 
+    /**
+     * Guided practice tour (W13-13): the bundled fixture walk through the
+     * real Navigate instrument. Labelled "Practice", never a saved route —
+     * it is never listed among routes and writes neither `routes/` nor
+     * `trials/`.
+     */
+    @Serializable
+    data object Practice : EchoRoute
+
     @Serializable
     data class Arrived(val routeId: String) : EchoRoute
 

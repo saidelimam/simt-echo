@@ -115,6 +115,9 @@ fun CosmosEmptyState(
     modifier: Modifier = Modifier,
     body: String? = null,
     hero: @Composable (() -> Unit)? = null,
+    /** Optional secondary path (W13-13 first-run Practice offer). Never a second primary. */
+    secondaryLabel: String? = null,
+    onSecondary: () -> Unit = {},
 ) {
     CosmosStateScaffold(
         kind = CosmosStateKind.Empty,
@@ -128,6 +131,13 @@ fun CosmosEmptyState(
                 onClick = onAction,
                 modifier = Modifier.fillMaxWidth(),
             )
+            if (secondaryLabel != null) {
+                CosmosSecondaryButton(
+                    label = secondaryLabel,
+                    onClick = onSecondary,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         },
     )
 }

@@ -32,6 +32,7 @@ import app.simt.echo.ui.copy.UNTITLED_WALK
 import app.simt.echo.ui.motion.echoSharedElement
 import app.simt.echo.ui.motion.revealOnEnter
 import app.simt.echo.ui.motion.sigilSharedKey
+import app.simt.echo.ui.screens.navigate.PRACTICE_OFFER_LABEL
 import app.simt.echo.ui.sigil.RouteSigil
 import app.simt.echo.ui.sigil.routeSigil
 
@@ -66,6 +67,12 @@ fun HomeScreen(
     onOpenRoute: (String) -> Unit = { onOpen(EchoRoute.RouteDetail(it)) },
     recoverableDrafts: List<RecoverableDraft> = emptyList(),
     onResumeDraft: (RecoverableDraft) -> Unit = { onOpen(it.destination()) },
+    /**
+     * Guided practice tour offer (W13-13): first run only, labelled
+     * Practice, never a saved-route row — the tour walk is bundled code,
+     * not a listed route.
+     */
+    onPractice: () -> Unit = { onOpen(EchoRoute.Practice) },
 ) {
     if (savedRoutes.isEmpty() && draftIds.isEmpty() && recoverableDrafts.isEmpty()) {
         // First-run Ignition: one centred task, one primary command, with
@@ -84,6 +91,12 @@ fun HomeScreen(
                     "this phone until you share.",
                 actionLabel = "Record a walk",
                 onAction = { onOpen(EchoRoute.Record()) },
+                // First-run Practice offer: replays the bundled fixture
+                // walk through the real Navigate instrument. Secondary —
+                // recording stays the one primary command — and labelled
+                // Practice, never listed among saved walks.
+                secondaryLabel = PRACTICE_OFFER_LABEL,
+                onSecondary = onPractice,
                 hero = {
                     EchoMark(markSize = if (tall) 132.dp else 72.dp, onDisc = true, idleEcho = true)
                 },
