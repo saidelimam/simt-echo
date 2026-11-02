@@ -27,4 +27,11 @@ sealed interface Observation {
 
     /** A confirmed landmark: hard anchor at the node's along-route [s]. */
     data class Anchor(val nodeS: Double) : Observation
+
+    /**
+     * A barometer-confirmed level change (W12-08): |Δh| from the
+     * leg-start baseline crossed 2.2 m, so the filter anchors at the
+     * LEVEL_CHANGE node's along-route [s] like a landmark confirm.
+     */
+    data class Level(val nodeS: Double) : Observation
 }

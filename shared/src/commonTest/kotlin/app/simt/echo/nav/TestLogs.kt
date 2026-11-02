@@ -3,6 +3,7 @@ package app.simt.echo.nav
 import app.simt.echo.model.CaptureLog
 import app.simt.echo.model.CaptureSample
 import kotlin.math.PI
+import kotlin.math.pow
 
 /**
  * Shared synthetic-capture builder for navigator-driven tests (W2-05
@@ -45,3 +46,11 @@ internal fun walkLog(
 }
 
 internal fun deg(v: Double) = v * PI / 180.0
+
+/**
+ * Inverse barometric formula shared by level fixtures (W12-08):
+ * pressure [dh] metres above datum [p0], so a fixture named "+3 m"
+ * really climbs 3 m from the leg-start baseline.
+ */
+internal fun pressureForDh(p0: Double, dh: Double): Double =
+    p0 * (1.0 - dh / 44330.0).pow(5.255)

@@ -440,6 +440,181 @@ class NavigatorTest {
         assertTrue(trace().isNotEmpty())
     }
 
+    /**
+     * W12-08: climbing 3 m with steps confirms the LEVEL_CHANGE target on
+     * both engines — a LEVEL anchor and CONFIRM haptic each. Starts from
+     * a blank stamped cue so the [defaultCue] fallback path is covered
+     * too. The engines consume the confirm differently: LINEAR keeps
+     * walking the leg, so the cue keeps its ✓; GHOST anchors at the
+     * leg-end node, which arrives the leg (like a landmark confirm).
+     */
+    @Test
+    fun stairsUpConfirmsLevelOnBothEngines() = runTest {
+        for (engine in engines()) {
+            val seen = mutableListOf<String>()
+            val (nav, events) = runDirect(levelRoute(levelDelta = 1), engine) { nav ->
+                nav.onInput(NavInput.Aligned)
+                feedLevelWalk(
+                    nav,
+                    pressures = rampDh(1013.25, 0.0, 3.0, 16),
+                    steps = List(16) { it },
+                    distStepM = 0.5,
+                    seen = seen,
+                )
+            }
+            assertTrue(
+                events.filterIsInstance<NavEvent.Anchor>()
+                    .any { it.kind == AnchorKind.LEVEL && it.nodeId == "n1" },
+                "engine $engine: no LEVEL anchor in $events",
+            )
+            assertTrue(
+                NavEvent.Haptic(HapticPattern.CONFIRM) in events,
+                "engine $engine: no CONFIRM haptic in $events",
+            )
+            if (engine == NavigatorEngine.LINEAR) {
+                assertTrue(
+                    "Up 1 level ✓" in seen,
+                    "engine $engine: never confirmed, saw $seen",
+                )
+            } else {
+                assertEquals(1, nav.ui.value.legIndex, "engine $engine")
+            }
+            assertEquals(NavPhase.WALK, nav.ui.value.phase, "engine $engine")
+        }
+    }
+
+    /**
+     * W12-08: a stepless 3 m descent reads as a lift and still confirms —
+     * "Down 1 level ✓" with a LEVEL anchor on both engines. Step count
+     * stays flat while distance barely advances, as in a lift car.
+     *
+     * Note: on GHOST the anchor mean lands just short of the leg end, so
+     * the leg does not auto-arrive and the ✓ stays rendered (the stairs
+     * test covers the arriving side). Both outcomes are valid
+     * consumptions of the same observation.
+     */
+    @Test
+    fun liftDownConfirmsLevelOnBothEngines() = runTest {
+        for (engine in engines()) {
+            val seen = mutableListOf<String>()
+            val (nav, events) = runDirect(levelRoute(levelDelta = -1), engine) { nav ->
+                nav.onInput(NavInput.Aligned)
+                feedLevelWalk(
+                    nav,
+                    pressures = rampDh(1013.25, 0.0, -3.0, 12),
+                    steps = List(12) { 0 },
+                    distStepM = 0.1,
+                    seen = seen,
+                )
+            }
+            assertTrue(
+                "Down 1 level ✓" in seen,
+                "engine $engine: never confirmed, saw $seen",
+            )
+            assertTrue(
+                events.filterIsInstance<NavEvent.Anchor>()
+                    .any { it.kind == AnchorKind.LEVEL && it.nodeId == "n1" },
+                "engine $engine: no LEVEL anchor in $events",
+            )
+            assertTrue(
+                NavEvent.Haptic(HapticPattern.CONFIRM) in events,
+                "engine $engine: no CONFIRM haptic in $events",
+            )
+            assertEquals(NavPhase.WALK, nav.ui.value.phase, "engine $engine")
+        }
+    }
+
+    /**
+     * Drives [nav] with hand-built motion updates (direct, not replayed)
+     * so pressure and step count are controlled independently — replay
+     * derives steps from sample indices and cannot express a lift.
+     * Records every rendered instruction in [seen].
+     */
+    private fun feedLevelWalk(
+        nav: Navigator,
+        pressures: List<Double>,
+        steps: List<Int>,
+        distStepM: Double,
+        seen: MutableList<String>,
+    ) {
+        require(pressures.size == steps.size)
+        var t = TEST_T0_NS
+        var d = 0.0
+        pressures.forEachIndexed { i, p ->
+            nav.onInput(
+                NavInput.Motion(
+                    MotionUpdate(
+                        tNs = t,
+                        distanceM = d,
+                        yawRad = 0.0,
+                        stepCount = steps[i],
+                        isStep = i > 0 && steps[i] > steps[i - 1],
+                        pressureHpa = p,
+                        source = "test",
+                    ),
+                ),
+            )
+            seen += nav.ui.value.instruction
+            d += distStepM
+            t += TEST_TICK_NS
+        }
+    }
+
+    /** Collects events around a direct (non-replay) feed, like [runReplay]. */
+    private fun TestScope.runDirect(
+        route: EchoRoute,
+        engine: NavigatorEngine,
+        feed: (Navigator) -> Unit,
+    ): Pair<Navigator, List<NavEvent>> {
+        val nav = Navigator(route, EchoConfig(navigatorEngine = engine))
+        val events = mutableListOf<NavEvent>()
+        val eventJob = launch { nav.events.collect { events += it } }
+        runCurrent()
+        feed(nav)
+        runCurrent()
+        eventJob.cancel()
+        return nav to events.toList()
+    }
+
+    /** Pressures ramping from [fromM] to [toM] above datum [p0]. */
+    private fun rampDh(p0: Double, fromM: Double, toM: Double, samples: Int): List<Double> =
+        List(samples) { i ->
+            pressureForDh(p0, fromM + (toM - fromM) * i / (samples - 1))
+        }
+
+    /** Two-leg straight route whose middle node changes level by [levelDelta]. */
+    private fun levelRoute(levelDelta: Int): EchoRoute = EchoRoute(
+        routeId = "level-route",
+        name = "Level route",
+        createdAtEpochMs = 0L,
+        creatorLabel = "test",
+        motionSource = "echo_builtin_pdr",
+        totalLengthM = 20.0,
+        start = StartAnchor(
+            description = "Start",
+            photoAssetId = null,
+            alignmentHint = "Face forward",
+        ),
+        nodes = listOf(
+            RouteNode(id = "n0", type = NodeType.START, atDistanceM = 0.0, label = "Start"),
+            // Blank cue: the instruction falls back to defaultCue until
+            // the barometer confirms, then appends the ✓ marker.
+            RouteNode(
+                id = "n1",
+                type = NodeType.LEVEL_CHANGE,
+                atDistanceM = 10.0,
+                label = "Stairs",
+                levelDelta = levelDelta,
+            ),
+            RouteNode(id = "n2", type = NodeType.DESTINATION, atDistanceM = 20.0, label = "Lobby"),
+        ),
+        legs = listOf(
+            RouteLeg(fromNode = "n0", toNode = "n1", lengthM = 10.0, headingRelDeg = 0.0),
+            RouteLeg(fromNode = "n1", toNode = "n2", lengthM = 10.0, headingRelDeg = 0.0),
+        ),
+        path = emptyList(),
+    )
+
     /** Two-leg straight route whose middle node turns [turn] (or not). */
     private fun turnRoute(turn: TurnDir?): EchoRoute = EchoRoute(
         routeId = "turn-cue-route",
