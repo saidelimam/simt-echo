@@ -109,22 +109,3 @@ object EchoNavCodec {
         return out
     }
 }
-
-/**
- * Latest nav snapshot, written by [EchoHapticListenerService] on the
- * background callback and read by [MainActivity] on resume. Plain volatile
- * box: the watch shows one screen, last-write-wins is the whole policy.
- */
-object EchoNavStore {
-    @Volatile
-    var latest: EchoNavState? = null
-        private set
-
-    fun update(state: EchoNavState) {
-        latest = state
-    }
-
-    fun clear() {
-        latest = null
-    }
-}

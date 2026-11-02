@@ -16,6 +16,7 @@ import app.simt.echo.nav.NavPhase
 import app.simt.echo.nav.NavUi
 import app.simt.echo.nav.NavWearState
 import app.simt.echo.nav.Navigator
+import app.simt.echo.nav.endedWearState
 import app.simt.echo.nav.toWearState
 import app.simt.echo.platform.CueOutput
 import app.simt.echo.platform.DistanceHeartbeat
@@ -287,6 +288,8 @@ class NavigateViewModel(
 
     override fun onCleared() {
         stopHeartbeat()
+        // Tell the watch the walk is over, so it does not keep an arrow up.
+        runCatching { wearNav(endedWearState()) }
         motion.stop()
     }
 }

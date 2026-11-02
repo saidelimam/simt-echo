@@ -59,6 +59,9 @@ actual fun rememberHaptics(): Haptics = remember {
 }
 
 @Composable
+actual fun rememberWearNavSink(): (app.simt.echo.nav.NavWearState) -> Unit = {}
+
+@Composable
 actual fun rememberCueOutput(earconsEnabled: Boolean): CueOutput = NoCueOutput
 
 @Composable

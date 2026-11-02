@@ -2,6 +2,18 @@
 <resources>
     <string name="app_name">ECHO</string>
     <string name="wear_listening">Listening for ECHO…</string>
-    <!-- Latest /echo/nav snapshot: metres left and the nav phase. -->
+    <!-- Latest /echo/nav snapshot: metres left and the nav phase label. -->
     <string name="wear_nav_distance">%1$d m · %2$s</string>
+    <!-- Phase this watch does not know (a newer phone): distance alone. -->
+    <string name="wear_nav_distance_only">%1$d m</string>
+    <string name="wear_phase_aligning">Aligning</string>
+    <string name="wear_phase_walking">On route</string>
+    <string name="wear_phase_approaching">Approaching</string>
+    <string name="wear_phase_turning">Turning</string>
+    <string name="wear_phase_confirming">Check landmark</string>
+    <string name="wear_phase_unsure">Not sure</string>
+    <string name="wear_phase_off_route">Off route</string>
+    <string name="wear_phase_arrived">Arrived</string>
+    <string name="wear_phase_finding">Finding you</string>
+    <string name="wear_phase_paused">Paused</string>
 </resources>

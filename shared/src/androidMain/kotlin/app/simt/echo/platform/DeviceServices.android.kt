@@ -95,6 +95,13 @@ actual fun KeepScreenOn() {
     }
 }
 
+/** One [GmsWearNavSender] per screen; its gate holds the ≤ 1 Hz rule. */
+@Composable
+actual fun rememberWearNavSink(): (app.simt.echo.nav.NavWearState) -> Unit {
+    val context = LocalContext.current.applicationContext
+    return remember(context) { GmsWearNavSender(context)::send }
+}
+
 @Composable
 actual fun rememberCueOutput(earconsEnabled: Boolean): CueOutput {
     val context = LocalContext.current.applicationContext

@@ -33,6 +33,14 @@ object NoCueOutput : CueOutput {
     override fun announce(text: String) = Unit
 }
 
+/**
+ * The platform's watch nav mirror sink (plan W13-12): hand each
+ * [app.simt.echo.nav.NavWearState] to it; the sender owns the ≤ 1 Hz gate.
+ * No-op where there is no watch (iOS).
+ */
+@Composable
+expect fun rememberWearNavSink(): (app.simt.echo.nav.NavWearState) -> Unit
+
 /** The platform's [CueOutput]; [earconsEnabled] is the Settings opt-in (default off). */
 @Composable
 expect fun rememberCueOutput(earconsEnabled: Boolean): CueOutput

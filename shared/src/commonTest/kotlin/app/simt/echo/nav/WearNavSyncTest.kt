@@ -116,6 +116,47 @@ class WearNavSyncTest {
     }
 
     @Test
+    fun aChangeDroppedByTheRateLimitTrailsOnceTheIntervalIsUp() {
+        val gate = WearNavSendGate()
+        assertTrue(gate.shouldSend(0L, state(distanceM = 12)))
+        assertNull(gate.trailingDelayMs(100L), "nothing pending yet")
+        // Two quick changes: the latest one is what trails.
+        assertFalse(gate.shouldSend(300L, state(distanceM = 11)))
+        assertFalse(gate.shouldSend(600L, state(distanceM = 10, cue = "Turn left")))
+        assertEquals(400L, gate.trailingDelayMs(600L))
+        assertNull(gate.takeTrailing(900L), "not due before the interval")
+        assertEquals(state(distanceM = 10, cue = "Turn left"), gate.takeTrailing(1000L))
+        // Sent exactly once, and the window restarts from the trailing send.
+        assertNull(gate.takeTrailing(1000L))
+        assertNull(gate.trailingDelayMs(1000L))
+        assertFalse(gate.shouldSend(1500L, state(distanceM = 9)))
+        assertEquals(500L, gate.trailingDelayMs(1500L))
+    }
+
+    @Test
+    fun aChangeThatRevertsBeforeTheTrailingSendCancelsIt() {
+        val gate = WearNavSendGate()
+        assertTrue(gate.shouldSend(0L, state(distanceM = 12)))
+        assertFalse(gate.shouldSend(300L, state(distanceM = 11)))
+        // Back to what the watch already shows: nothing to send.
+        assertFalse(gate.shouldSend(600L, state(distanceM = 12)))
+        assertNull(gate.trailingDelayMs(600L))
+        assertNull(gate.takeTrailing(2_000L))
+    }
+
+    @Test
+    fun theEndedSnapshotRoundTripsAndIsNotANavPhase() {
+        val ended = endedWearState()
+        assertEquals(ended, WearNavSync.decode(WearNavSync.encode(ended)))
+        assertTrue(NavPhase.entries.none { it.name == WearNavSync.PHASE_ENDED })
+        // And the gate lets it through even right after a send, via the trailing edge.
+        val gate = WearNavSendGate()
+        assertTrue(gate.shouldSend(0L, state()))
+        assertFalse(gate.shouldSend(200L, ended))
+        assertEquals(ended, gate.takeTrailing(1000L))
+    }
+
+    @Test
     fun mappingQuantizesArrowToFiveDegrees() {
         assertEquals(90, uiWith(arrowDeg = 90.0).toWearState().arrowDeg)
         assertEquals(90, uiWith(arrowDeg = 92.0).toWearState().arrowDeg)

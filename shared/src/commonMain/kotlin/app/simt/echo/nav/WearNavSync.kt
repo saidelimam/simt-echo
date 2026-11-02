@@ -31,6 +31,14 @@ data class NavWearState(
     val phase: String,
 )
 
+/**
+ * The final snapshot of a walk that ended without arriving (screen left,
+ * route abandoned): the watch drops the guidance and goes back to
+ * listening instead of showing a stale arrow forever.
+ */
+fun endedWearState(): NavWearState =
+    NavWearState(arrowDeg = 0, distanceM = 0, cue = "", phase = WearNavSync.PHASE_ENDED)
+
 /** Maps the rendered [NavUi] onto the quantized watch snapshot. */
 fun NavUi.toWearState(): NavWearState {
     val raw = (arrowRad * 180.0 / PI).roundToInt()
@@ -58,6 +66,9 @@ object WearNavSync {
 
     /** Minimum interval between sends in ms (the ≤ 1 Hz rule). */
     const val MIN_SEND_INTERVAL_MS = 1000L
+
+    /** Phase of the closing snapshot ([endedWearState]); not a [NavPhase]. */
+    const val PHASE_ENDED = "ENDED"
 
     private const val MAGIC = "v1"
 
@@ -157,18 +168,51 @@ object WearNavSync {
  * snapshot differs from the last sent one AND at least
  * [WearNavSync.MIN_SEND_INTERVAL_MS] elapsed since that send. Time is a
  * parameter so the rule is unit-testable without clocks.
+ *
+ * A changed snapshot dropped for arriving too soon is not lost: the gate
+ * remembers the latest one and offers it as a trailing send once the
+ * interval is up ([trailingDelayMs] / [takeTrailing]). Without it, the last
+ * change before a pause (the turn cue, the arrival) never reached the
+ * watch.
  */
 class WearNavSendGate {
     private var lastSent: NavWearState? = null
     private var lastSentMs: Long? = null
+    private var pending: NavWearState? = null
 
     fun shouldSend(nowMs: Long, candidate: NavWearState): Boolean {
         val last = lastSent
-        if (last != null && last == candidate) return false
+        if (last != null && last == candidate) {
+            // Back to what the watch already shows: nothing left to trail.
+            pending = null
+            return false
+        }
         val at = lastSentMs
-        if (last != null && at != null && nowMs - at < WearNavSync.MIN_SEND_INTERVAL_MS) return false
+        if (last != null && at != null && nowMs - at < WearNavSync.MIN_SEND_INTERVAL_MS) {
+            pending = candidate
+            return false
+        }
+        pending = null
         lastSent = candidate
         lastSentMs = nowMs
         return true
+    }
+
+    /** Milliseconds until the trailing send is due (0 when due now), or null when none is pending. */
+    fun trailingDelayMs(nowMs: Long): Long? {
+        if (pending == null) return null
+        val at = lastSentMs ?: return 0L
+        return (WearNavSync.MIN_SEND_INTERVAL_MS - (nowMs - at)).coerceAtLeast(0L)
+    }
+
+    /** The latest dropped snapshot once the interval is up (marking it sent), else null. */
+    fun takeTrailing(nowMs: Long): NavWearState? {
+        val candidate = pending ?: return null
+        val at = lastSentMs
+        if (at != null && nowMs - at < WearNavSync.MIN_SEND_INTERVAL_MS) return null
+        pending = null
+        lastSent = candidate
+        lastSentMs = nowMs
+        return candidate
     }
 }

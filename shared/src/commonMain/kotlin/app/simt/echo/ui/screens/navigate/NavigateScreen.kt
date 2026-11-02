@@ -49,6 +49,7 @@ import app.simt.echo.platform.rememberCueOutput
 import app.simt.echo.platform.rememberHaptics
 import app.simt.echo.platform.rememberMotionSource
 import app.simt.echo.platform.rememberOnline
+import app.simt.echo.platform.rememberWearNavSink
 import app.simt.echo.ui.components.CosmosBanner
 import app.simt.echo.ui.components.CosmosEmptyState
 import app.simt.echo.ui.components.StatusChip
@@ -103,6 +104,7 @@ fun NavigateScreen(
     val motion = motionSource ?: rememberMotionSource()
     val haptics = rememberHaptics()
     val cues = rememberCueOutput(earconsEnabled = config.earcons)
+    val wearNav = rememberWearNavSink()
     val online = rememberOnline()
     KeepScreenOn()
     // Scoped to this navigation back-stack entry, not `remember`: popping
@@ -112,7 +114,7 @@ fun NavigateScreen(
         key = routeId,
         factory = viewModelFactory {
             addInitializer(NavigateViewModel::class) {
-                NavigateViewModel(routeId, routes, motion, haptics, config, trials, device, baselineMode, configs = configs, cues = cues, onArrived = onArrived, ephemeralRoute = ephemeralRoute)
+                NavigateViewModel(routeId, routes, motion, haptics, config, trials, device, baselineMode, configs = configs, wearNav = wearNav, cues = cues, onArrived = onArrived, ephemeralRoute = ephemeralRoute)
             }
         },
     )

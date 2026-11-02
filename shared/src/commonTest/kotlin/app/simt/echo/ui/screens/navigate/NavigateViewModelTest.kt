@@ -1,5 +1,8 @@
 package app.simt.echo.ui.screens.navigate
 
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.viewmodel.viewModelFactory
 import app.simt.echo.Fixtures
 import app.simt.echo.capture.ReplayMotionSource
 import app.simt.echo.data.ConfigRepository
@@ -10,6 +13,7 @@ import app.simt.echo.model.TrialMode
 import app.simt.echo.nav.NavPhase
 import app.simt.echo.nav.NavWearState
 import app.simt.echo.nav.WearNavSync
+import app.simt.echo.nav.endedWearState
 import app.simt.echo.nav.walkLog
 import app.simt.echo.platform.HapticPattern
 import app.simt.echo.platform.Haptics
@@ -262,6 +266,33 @@ class NavigateViewModelTest {
         val ui = vm.ui.value
         assertEquals(ui?.phase?.name, mirrored.last().phase)
         assertEquals(ui?.instruction?.take(WearNavSync.MAX_CUE_CHARS), mirrored.last().cue)
+    }
+
+    @Test
+    fun leavingTheScreenSendsTheEndedSnapshotToTheWatch() = runTest(dispatcher) {
+        val mirrored = mutableListOf<NavWearState>()
+        val store = ViewModelStore()
+        val vm = ViewModelProvider.create(
+            store,
+            viewModelFactory {
+                addInitializer(NavigateViewModel::class) {
+                    NavigateViewModel(
+                        Fixtures.L_ROUTE.routeId, routesWithLRoute(),
+                        ReplayMotionSource(walkLog(listOf(5.0 to 0.0)), this@runTest), FakeHaptics(),
+                        wearNav = { mirrored += it },
+                    ) {}
+                }
+            },
+        )[NavigateViewModel::class]
+        runCurrent()
+        vm.start()
+        vm.align()
+        advanceUntilIdle()
+        assertTrue(mirrored.none { it.phase == WearNavSync.PHASE_ENDED })
+
+        store.clear()
+
+        assertEquals(endedWearState(), mirrored.last())
     }
 
     @Test
