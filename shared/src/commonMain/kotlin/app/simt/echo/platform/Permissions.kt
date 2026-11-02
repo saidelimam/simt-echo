@@ -9,8 +9,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import app.simt.echo.ui.components.EchoButton
-import app.simt.echo.ui.components.PillButton
+import app.simt.echo.ui.components.CosmosPrimaryButton
+import app.simt.echo.ui.components.CosmosSecondaryButton
 
 /**
  * Camera permission state (plan W4-03).
@@ -98,19 +98,19 @@ fun CameraPermissionGate(
                     color = MaterialTheme.colorScheme.error,
                 )
                 if (permanent) {
-                    EchoButton(
-                        text = "Open settings",
+                    CosmosPrimaryButton(
+                        label = "Open settings",
                         onClick = permission.openSettings,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    PillButton(
-                        text = "Try again",
+                    CosmosSecondaryButton(
+                        label = "Try again",
                         onClick = permission.request,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 } else {
-                    EchoButton(
-                        text = "Allow camera",
+                    CosmosPrimaryButton(
+                        label = "Allow camera",
                         onClick = permission.request,
                         modifier = Modifier.fillMaxWidth(),
                     )

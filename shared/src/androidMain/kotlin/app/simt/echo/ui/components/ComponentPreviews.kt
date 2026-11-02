@@ -20,9 +20,20 @@ private fun ButtonsDarkPreview() {
             verticalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.padding(16.dp),
         ) {
-            EchoButton(text = "Record", onClick = {})
-            PillButton(text = "Receive", onClick = {})
-            RoundActionButton(text = "Start", onClick = {})
+            CosmosPrimaryButton(label = "Record", onClick = {})
+            CosmosSecondaryButton(label = "Receive", onClick = {})
+            CosmosTertiaryButton(label = "Not now", onClick = {})
+            CosmosDestructiveButton(label = "Delete", onClick = {})
+            CosmosRecordButton(label = "Start", onClick = {})
+            CosmosChip(label = "Landmarks", selected = true, onSelect = {})
+            CosmosSegmentedControl(
+                options = listOf("Walk", "Wheel"),
+                selectedIndex = 0,
+                onSelect = {},
+            )
+            CosmosTextField(label = "Route name", value = "", onValueChange = {})
+            CosmosBanner(message = "You are offline. Saved walks still open.")
+            CosmosEmptyState(title = "No walks yet", actionLabel = "Record", onAction = {})
         }
     }
 }
@@ -35,9 +46,20 @@ private fun ButtonsLightPreview() {
             verticalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.padding(16.dp),
         ) {
-            EchoButton(text = "Record", onClick = {})
-            PillButton(text = "Receive", onClick = {})
-            RoundActionButton(text = "Start", onClick = {})
+            CosmosPrimaryButton(label = "Record", onClick = {})
+            CosmosSecondaryButton(label = "Receive", onClick = {})
+            CosmosTertiaryButton(label = "Not now", onClick = {})
+            CosmosDestructiveButton(label = "Delete", onClick = {})
+            CosmosRecordButton(label = "Start", onClick = {})
+            CosmosChip(label = "Landmarks", selected = false, onSelect = {})
+            CosmosSegmentedControl(
+                options = listOf("Walk", "Wheel"),
+                selectedIndex = 1,
+                onSelect = {},
+            )
+            CosmosTextField(label = "Route name", value = "Market", onValueChange = {})
+            CosmosBanner(message = "Saved.", kind = CosmosBannerKind.Success)
+            CosmosSuccessState(title = "Arrived", body = "Market hall")
         }
     }
 }

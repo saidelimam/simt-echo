@@ -16,9 +16,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import app.simt.echo.transfer.JobStage
-import app.simt.echo.ui.components.EchoButton
-import app.simt.echo.ui.components.ErrorState
-import app.simt.echo.ui.components.PillButton
+import app.simt.echo.ui.components.CosmosPrimaryButton
+import app.simt.echo.ui.components.CosmosErrorState
+import app.simt.echo.ui.components.CosmosSecondaryButton
 import app.simt.echo.ui.components.StatusChip
 import app.simt.echo.ui.copy.aiUnavailableCopy
 
@@ -55,20 +55,20 @@ fun ProcessingScreen(
             )
             ProcessingPhase.Uploading -> {
                 StageList(current = -1)
-                EchoButton(text = "Cancel", onClick = onDone, modifier = Modifier.fillMaxWidth())
+                CosmosPrimaryButton(label = "Cancel", onClick = onDone, modifier = Modifier.fillMaxWidth())
             }
             is ProcessingPhase.Working -> {
                 StageList(current = stageIndex(phase.stage))
                 Text(text = stageLabel(phase.stage), style = MaterialTheme.typography.bodyLarge)
-                PillButton(text = "Cancel", onClick = onDone, modifier = Modifier.fillMaxWidth())
+                CosmosSecondaryButton(label = "Cancel", onClick = onDone, modifier = Modifier.fillMaxWidth())
             }
             ProcessingPhase.Ready -> {
                 StageList(current = 3)
                 Text(text = "Landmark suggestions are in. Review will show them next.")
-                EchoButton(text = "Continue", onClick = onDone, modifier = Modifier.fillMaxWidth())
+                CosmosPrimaryButton(label = "Continue", onClick = onDone, modifier = Modifier.fillMaxWidth())
             }
             is ProcessingPhase.Failed -> {
-                ErrorState(
+                CosmosErrorState(
                     message = phase.message,
                     actionLabel = "Retry",
                     onAction = viewModel::retry,
@@ -96,16 +96,16 @@ private fun ConsentBody(
 ) {
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(text = consentCopy(info), style = MaterialTheme.typography.bodyLarge)
-        EchoButton(
-            text = "Send",
+        CosmosPrimaryButton(
+            label = "Send",
             onClick = onSend,
             modifier = Modifier.fillMaxWidth(),
             enabled = info.photos > 0,
         )
-        PillButton(text = "Not now", onClick = onNotNow, modifier = Modifier.fillMaxWidth())
+        CosmosSecondaryButton(label = "Not now", onClick = onNotNow, modifier = Modifier.fillMaxWidth())
         if (hasJob) {
-            PillButton(
-                text = "Delete uploaded files now",
+            CosmosSecondaryButton(
+                label = "Delete uploaded files now",
                 onClick = onDeleteNow,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -120,7 +120,7 @@ private fun AiUnavailableBody(
 ) {
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(text = aiUnavailableCopy(), style = MaterialTheme.typography.bodyLarge)
-        EchoButton(text = "Continue without AI", onClick = onContinue, modifier = Modifier.fillMaxWidth())
+        CosmosPrimaryButton(label = "Continue without AI", onClick = onContinue, modifier = Modifier.fillMaxWidth())
     }
 }
 

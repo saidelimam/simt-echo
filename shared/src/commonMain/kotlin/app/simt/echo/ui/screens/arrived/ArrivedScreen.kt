@@ -21,8 +21,8 @@ import androidx.compose.ui.unit.dp
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.data.TrialRepository
 import app.simt.echo.model.NodeType
-import app.simt.echo.ui.components.EchoButton
-import app.simt.echo.ui.components.PillButton
+import app.simt.echo.ui.components.CosmosPrimaryButton
+import app.simt.echo.ui.components.CosmosSecondaryButton
 import app.simt.echo.ui.components.oneDecimal
 import app.simt.echo.ui.copy.UNTITLED_WALK
 
@@ -71,7 +71,7 @@ fun ArrivedScreen(
         if (trial != null && trials != null) {
             TrialForm(trialId = trial.trialId, trials = trials)
         }
-        EchoButton(text = "Done", onClick = onDone, modifier = Modifier.fillMaxWidth())
+        CosmosPrimaryButton(label = "Done", onClick = onDone, modifier = Modifier.fillMaxWidth())
     }
 }
 
@@ -110,8 +110,8 @@ private fun TrialForm(trialId: String, trials: TrialRepository) {
         label = { Text("Notes") },
         modifier = Modifier.fillMaxWidth(),
     )
-    PillButton(
-        text = if (saved) "Trial saved" else "Save trial",
+    CosmosSecondaryButton(
+        label = if (saved) "Trial saved" else "Save trial",
         onClick = {
             trials.save(
                 existing.copy(

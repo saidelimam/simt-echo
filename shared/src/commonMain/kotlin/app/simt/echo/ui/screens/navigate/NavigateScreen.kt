@@ -42,10 +42,10 @@ import app.simt.echo.ui.components.CameraNavigateOverlay
 import app.simt.echo.ui.components.CropImage
 import app.simt.echo.ui.components.DirectionArrow
 import app.simt.echo.ui.components.DistanceReadout
-import app.simt.echo.ui.components.EchoButton
-import app.simt.echo.ui.components.EmptyState
+import app.simt.echo.ui.components.CosmosPrimaryButton
+import app.simt.echo.ui.components.CosmosEmptyState
 import app.simt.echo.ui.components.LandmarkCard
-import app.simt.echo.ui.components.PillButton
+import app.simt.echo.ui.components.CosmosSecondaryButton
 import app.simt.echo.ui.components.StatusChip
 import app.simt.echo.ui.components.oneDecimal
 import app.simt.echo.ui.components.overlayScrimAlpha
@@ -96,7 +96,7 @@ fun NavigateScreen(
 
     val nav = ui
     if (nav == null) {
-        EmptyState(
+        CosmosEmptyState(
             title = MISSING_ROUTE_ERROR.whatHappened,
             actionLabel = "Back",
             onAction = onBack,
@@ -235,32 +235,32 @@ private fun NavigateActions(
         when (nav.phase) {
             NavPhase.CONFIRM -> {
                 if (showCards) {
-                    EchoButton(text = "I see it", onClick = viewModel::seeLandmark, modifier = Modifier.fillMaxWidth())
+                    CosmosPrimaryButton(label = "I see it", onClick = viewModel::seeLandmark, modifier = Modifier.fillMaxWidth())
                 }
-                PillButton(text = "Not yet", onClick = viewModel::notYet, modifier = Modifier.fillMaxWidth())
+                CosmosSecondaryButton(label = "Not yet", onClick = viewModel::notYet, modifier = Modifier.fillMaxWidth())
             }
 
             NavPhase.UNCERTAIN -> {
                 if (showCards) {
-                    EchoButton(text = "I see it", onClick = viewModel::seeLandmark, modifier = Modifier.fillMaxWidth())
+                    CosmosPrimaryButton(label = "I see it", onClick = viewModel::seeLandmark, modifier = Modifier.fillMaxWidth())
                 }
-                PillButton(text = "Lost", onClick = viewModel::lost, modifier = Modifier.fillMaxWidth())
+                CosmosSecondaryButton(label = "Lost", onClick = viewModel::lost, modifier = Modifier.fillMaxWidth())
             }
 
             NavPhase.OFF_ROUTE -> {
-                EchoButton(text = "Go back to last", onClick = viewModel::restartFromLast, modifier = Modifier.fillMaxWidth())
-                PillButton(text = "Restart from start", onClick = viewModel::restartFromStart, modifier = Modifier.fillMaxWidth())
+                CosmosPrimaryButton(label = "Go back to last", onClick = viewModel::restartFromLast, modifier = Modifier.fillMaxWidth())
+                CosmosSecondaryButton(label = "Restart from start", onClick = viewModel::restartFromStart, modifier = Modifier.fillMaxWidth())
             }
 
             NavPhase.WALK, NavPhase.APPROACH, NavPhase.TURNING -> {
                 if (showCards && nav.landmark != null) {
-                    EchoButton(text = "I see it", onClick = viewModel::seeLandmark, modifier = Modifier.fillMaxWidth())
+                    CosmosPrimaryButton(label = "I see it", onClick = viewModel::seeLandmark, modifier = Modifier.fillMaxWidth())
                 }
                 if (nav.phase == NavPhase.WALK && viewModel.isLastLeg(nav)) {
-                    EchoButton(text = "I'm here", onClick = viewModel::imHere, modifier = Modifier.fillMaxWidth())
+                    CosmosPrimaryButton(label = "I'm here", onClick = viewModel::imHere, modifier = Modifier.fillMaxWidth())
                 }
-                PillButton(text = "At marker", onClick = viewModel::atMarker, modifier = Modifier.fillMaxWidth())
-                PillButton(text = "Lost", onClick = viewModel::lost, modifier = Modifier.fillMaxWidth())
+                CosmosSecondaryButton(label = "At marker", onClick = viewModel::atMarker, modifier = Modifier.fillMaxWidth())
+                CosmosSecondaryButton(label = "Lost", onClick = viewModel::lost, modifier = Modifier.fillMaxWidth())
             }
 
             NavPhase.ALIGN, NavPhase.ARRIVED -> Unit
