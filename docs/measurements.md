@@ -127,3 +127,37 @@ vendor-billed cost, and total latency to this file.
   media_missing arg bug, `69240608` + `a378a2cf` model no-response
   on UI screenshots, `85dc0c79` known-good probe) were all
   deleted (204 → 404).
+
+## 2.0 baselines (W10-01, 2026-11-02)
+
+- Baseline SHA: `e99c133` (main at slice time).
+- Devices: low-end **TBD**, mid/flagship **TBD** — named phones, not yet
+  assigned. Nothing below was measured in this environment (no Android
+  device or `adb`; no `META_API_KEY`; the JankStats/StrictMode/
+  macrobenchmark harness lands in W10-04), so every device- or
+  key-dependent cell is `unmeasured` with the exact command that fills
+  it. No numbers invented.
+
+| §4 budget | v1 today (W10-01) | Reproduce |
+|---|---|---|
+| SAM billed frames / 60 m route | unmeasurable here: no `META_API_KEY` (design ≤ 800 = 16 × ≥ 50, §7.4) | `META_API_KEY=… wrangler dev` → POST one 60 m job (6–8 checkpoints) → read `usage.videoFrames` (+ `videoFramesProcessed` from `response.completed` in `worker/src/meta.ts`) in `jobs/<id>/result.json` |
+| SAM calls / route; calls on retry | ≈2N video + ≤2N image, all re-billed (§4; code: per-candidate `groundOne` + hero-image fallback in `worker/src/ground.ts:183-190`) | same keyed job as above; count Meta calls in the worker log |
+| Upload bytes / route | unmeasured: no device (design: 7 HD clips + ~21 keyframes) | weigh `jobs/<id>/in/` via `wrangler r2 object list` / dashboard after a walked-record upload |
+| Result latency after Finish | **66 s** POST→complete, scout-only (W9-02, measured above) | already recorded; re-run per W11-10 on the walked route |
+| Record jank (JankStats, 60 s) | unmeasurable here: no device; harness lands in W10-04 | W10-04 `:benchmark` macrobenchmark (or debug JankStats summary) — 60 s Record on each named phone |
+| Frame Tap cost | n/a — no Frame Tap in v1 (first measured W10-03) | — |
+| Ghost filter update | n/a — new in 2.0 (first measured W12-02) | — |
+| Navigate battery, 10 min screen-on | unmeasurable here: no device | 10 min Navigate on the mid phone → `adb shell dumpsys batterystats` delta |
+| Job status requests / job | **≤ 150 polls** (`maxPolls = 150` @ 2 s in `shared/src/commonMain/kotlin/app/simt/echo/ui/screens/processing/ProcessingViewModel.kt:94-95`) | static; live count from logcat when the walked route runs |
+| Visual match precision | n/a — new in 2.0 (first measured W12-05) | — |
+
+W10-01 measurement slots (all TBD — commands to run on the named phones):
+
+- JankStats Record 60 s: TBD (W10-04 harness).
+- JankStats Navigate Simulate 60 s: TBD (W10-04 harness).
+- Keyframe/clip prep time + main-thread stalls: TBD
+  (`adb logcat | grep StrictMode` across Record → Processing).
+- Navigate battery 10 min: TBD (batterystats, mid phone).
+- Keyed SAM job `response.completed` billed frames: unavailable —
+  no `META_API_KEY` in this environment (collector ready:
+  `metaResponsesDetailed` in `worker/src/meta.ts:32`).
