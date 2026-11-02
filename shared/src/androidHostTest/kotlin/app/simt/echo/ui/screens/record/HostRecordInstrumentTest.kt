@@ -6,6 +6,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -140,7 +141,8 @@ class HostRecordInstrumentTest {
         compose.onNodeWithText("1:05").assertIsDisplayed()
         compose.onNodeWithText("31 steps").assertIsDisplayed()
         compose.onNodeWithText("2 spots").assertIsDisplayed()
-        compose.onNodeWithText("23.4 m").assertIsDisplayed()
+        compose.onNodeWithTag(RollingDistanceTag).assertIsDisplayed()
+        compose.onNodeWithTag(RollingDistanceTag).assertContentDescriptionEquals("Distance 23.4 m")
         compose.onNodeWithTag(RecordHeadingTag).assertIsDisplayed()
         compose.onNodeWithText("—").assertIsDisplayed()
         compose.onNodeWithText("Mark spot").assertDoesNotExist()
@@ -209,7 +211,7 @@ class HostRecordInstrumentTest {
         compose.onNodeWithTag(RecordHeadingTag).assertIsDisplayed()
         compose.onNodeWithText("0° N").assertIsDisplayed()
         compose.onNodeWithText("0:00").assertIsDisplayed()
-        compose.onNodeWithText("0.0 m").assertIsDisplayed()
+        compose.onNodeWithTag(RollingDistanceTag).assertContentDescriptionEquals("Distance 0.0 m")
     }
 
     @Test
@@ -339,7 +341,7 @@ class HostRecordInstrumentTest {
     fun errorBanner_rendersHumanCopyAboveDistance() {
         instrument(CaptureState.RECORDING, error = "Could not start recording. Nothing was captured. Check the camera and try again.")
         compose.onNodeWithText("Could not start recording. Nothing was captured. Check the camera and try again.").assertIsDisplayed()
-        compose.onNodeWithText("23.4 m").assertIsDisplayed()
+        compose.onNodeWithTag(RollingDistanceTag).assertContentDescriptionEquals("Distance 23.4 m")
     }
 
     @Test

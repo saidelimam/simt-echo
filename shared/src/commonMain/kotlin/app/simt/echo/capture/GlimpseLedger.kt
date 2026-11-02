@@ -23,13 +23,26 @@ sealed interface LedgerOffer {
     val bucketIndex: Long
     val score: Double
 
+    /**
+     * Novelty of the frame's hash against the previously kept hash
+     * ([FrameQuality.novelty]; 1.0 when it founded history). Carried so UI
+     * highlights (W13-04 brackets) can judge "top-decile and novel" without
+     * re-reading ledger internals.
+     */
+    val novelty: Double
+
     /** The bucket was empty; this frame founded it. */
-    data class Kept(override val bucketIndex: Long, override val score: Double) : LedgerOffer
+    data class Kept(
+        override val bucketIndex: Long,
+        override val score: Double,
+        override val novelty: Double,
+    ) : LedgerOffer
 
     /** This frame beat the incumbent and replaced it. */
     data class Replaced(
         override val bucketIndex: Long,
         override val score: Double,
+        override val novelty: Double,
         val oldScore: Double,
     ) : LedgerOffer
 
@@ -37,6 +50,7 @@ sealed interface LedgerOffer {
     data class Dropped(
         override val bucketIndex: Long,
         override val score: Double,
+        override val novelty: Double,
         val keptScore: Double,
     ) : LedgerOffer
 }
@@ -106,7 +120,7 @@ class GlimpseLedger(
         if (incumbent == null) {
             buckets[bucket] = GlimpseEntry(bucket, sample.tNs, odometerM, s, sharp, hash, persistKept(sample, bucket))
             lastKeptHash = hash
-            result = LedgerOffer.Kept(bucket, s)
+            result = LedgerOffer.Kept(bucket, s, nov)
         } else if (s > incumbent.score) {
             buckets[bucket] = incumbent.copy(
                 tNs = sample.tNs,
@@ -117,9 +131,9 @@ class GlimpseLedger(
                 jpegPath = persistKept(sample, bucket),
             )
             lastKeptHash = hash
-            result = LedgerOffer.Replaced(bucket, s, incumbent.score)
+            result = LedgerOffer.Replaced(bucket, s, nov, incumbent.score)
         } else {
-            result = LedgerOffer.Dropped(bucket, s, incumbent.score)
+            result = LedgerOffer.Dropped(bucket, s, nov, incumbent.score)
         }
         sample.release()
         return result
