@@ -1,5 +1,5 @@
 import { Hono, type Context } from "hono";
-import type { Env } from "./index";
+import type { AppEnv, Env } from "./index";
 import {
   CreateJobV11RequestSchema,
   CreateUploadRequestSchema,
@@ -11,10 +11,12 @@ import {
 
 // W11-05 intake: content-addressed resumable uploads backing the frozen
 // W10-06 v1.1 contract. R2 layout (additive to the jobs/ tree in jobs.ts):
-//   jobs/staging/<uploadId>/meta.json  {files:[{name,sha256,bytes}], createdAt}
+//   jobs/staging/<uploadId>/meta.json  {files:[{name,sha256,bytes}], owner, createdAt}
 //   jobs/staging/<uploadId>/<name>      staged blob, sha-verified on PUT
 //   jobs/idem/<jobId>.json  {jobId} marking a completed idempotent create;
 //     the job id itself is derived from the idempotency key (see jobIdForKey)
+//   jobs/<jobId>/owner.json  {owner:<deviceId>} — R9-01: the minting
+//     install that created the job; a foreign id reads it as 404
 // The v1 multipart path in jobs.ts is untouched; JSON job creates dispatch here.
 
 export const STAGING_TTL_MS = 3_600_000;
@@ -24,9 +26,13 @@ const stagingMetaKey = (uploadId: string) => `jobs/staging/${uploadId}/meta.json
 const stagingBlobKey = (uploadId: string, name: string) => `jobs/staging/${uploadId}/${name}`;
 export const idemKey = (jobId: string) => `jobs/idem/${jobId}.json`;
 const jobManifestKey = (jobId: string) => `jobs/${jobId}/manifest.json`;
+export const jobOwnerKey = (jobId: string) => `jobs/${jobId}/owner.json`;
 
 interface StoredUploadMeta {
   files: UploadFileRef[];
+  /** R9-01: the install that opened this session; every read/put/delete is
+   *  bound to it. */
+  owner: string;
   createdAt: number;
 }
 
@@ -58,8 +64,20 @@ function isExpired(createdAt: number, now: number): boolean {
 
 function isValidMeta(raw: unknown): raw is StoredUploadMeta {
   if (typeof raw !== "object" || raw === null) return false;
-  const m = raw as { files?: unknown; createdAt?: unknown };
-  return Array.isArray(m.files) && typeof m.createdAt === "number";
+  const m = raw as { files?: unknown; owner?: unknown; createdAt?: unknown };
+  return Array.isArray(m.files) && typeof m.owner === "string" && typeof m.createdAt === "number";
+}
+
+/** R9-01: the install id a job was created by, or null when the job has no
+ * owner record (a pre-R9-01 job, or a swept one). */
+export async function readJobOwner(env: Env, jobId: string): Promise<string | null> {
+  const rec = await readJson<{ owner?: unknown }>(env, jobOwnerKey(jobId));
+  return typeof rec?.owner === "string" ? rec.owner : null;
+}
+
+/** Stamps the job with the creating install (swept with the job prefix). */
+export async function writeJobOwner(env: Env, jobId: string, deviceId: string): Promise<void> {
+  await env.MEDIA.put(jobOwnerKey(jobId), JSON.stringify({ owner: deviceId }));
 }
 
 async function hexSha256Hex(data: Uint8Array | string): Promise<string> {
@@ -222,7 +240,7 @@ export async function sweepExpiredUploads(env: Env, now: number = Date.now()): P
 }
 
 /** POST /v1/jobs with a JSON v1.1 body (jobs.ts dispatches here). */
-export async function handleCreateJobV11(c: Context<{ Bindings: Env }>): Promise<Response> {
+export async function handleCreateJobV11(c: Context<AppEnv>): Promise<Response> {
   if (!c.env.PIPELINE) {
     return c.json({ ok: false, error: "server_misconfigured" }, 500);
   }
@@ -254,15 +272,24 @@ export async function handleCreateJobV11(c: Context<{ Bindings: Env }>): Promise
   // create afresh.
   if (idempotencyKey !== undefined && (await readJson(c.env, idemKey(jobId))) !== null) {
     if ((await c.env.MEDIA.head(jobManifestKey(jobId))) !== null) {
+      // R9-01: the replay hands out the creating install's job id, so only
+      // that install gets it; to every other install the key is unknown.
+      if ((await readJobOwner(c.env, jobId)) !== c.get("deviceId")) {
+        return c.json({ ok: false, error: "job_not_found" }, 404);
+      }
       return c.json({ ok: true, jobId }, 202);
     }
     await c.env.MEDIA.delete(idemKey(jobId));
   }
 
   // resumeOf later becomes an R2 key prefix for cache adoption, so it must
-  // name a job that exists in this deployment (every job shares one app
-  // token, so existence is the whole ownership check).
-  if (resumeOf !== undefined && (await c.env.MEDIA.head(jobManifestKey(resumeOf))) === null) {
+  // name a job that exists in this deployment AND was created by this
+  // install: a foreign job's SAM cache is not adoptable (R9-01).
+  if (
+    resumeOf !== undefined &&
+    ((await c.env.MEDIA.head(jobManifestKey(resumeOf))) === null ||
+      (await readJobOwner(c.env, resumeOf)) !== c.get("deviceId"))
+  ) {
     return c.json({ ok: false, error: "resume_not_found" }, 404);
   }
 
@@ -329,6 +356,8 @@ export async function handleCreateJobV11(c: Context<{ Bindings: Env }>): Promise
       await c.env.MEDIA.put(`jobs/${jobId}/in/${name}`, bytes);
     }
     await c.env.MEDIA.put(`jobs/${jobId}/manifest.json`, JSON.stringify(manifest));
+    // R9-01: bind the job to the creating install.
+    await writeJobOwner(c.env, jobId, c.get("deviceId"));
     // W11-06: the SAM lens governor reads this (never the request body —
     // the Workflow only gets the job id). An absent file caps at the hard
     // 240-frame ceiling (v1/manifest-only creates); resumeOf is the only sanctioned
@@ -380,7 +409,7 @@ export async function handleCreateJobV11(c: Context<{ Bindings: Env }>): Promise
   }
 }
 
-export function registerUploadRoutes(app: Hono<{ Bindings: Env }>): void {
+export function registerUploadRoutes(app: Hono<AppEnv>): void {
   app.post("/v1/uploads", async (c) => {
     let body: unknown;
     try {
@@ -405,7 +434,7 @@ export function registerUploadRoutes(app: Hono<{ Bindings: Env }>): void {
     }
     try {
       const uploadId = crypto.randomUUID();
-      const meta: StoredUploadMeta = { files, createdAt: Date.now() };
+      const meta: StoredUploadMeta = { files, owner: c.get("deviceId"), createdAt: Date.now() };
       await c.env.MEDIA.put(stagingMetaKey(uploadId), JSON.stringify(meta));
       // Opportunistic expiry sweep; never fails the create itself.
       try {
@@ -430,6 +459,10 @@ export function registerUploadRoutes(app: Hono<{ Bindings: Env }>): void {
         ? c.json({ ok: false, error: "upload_expired" }, 410)
         : c.json({ ok: false, error: "upload_not_found" }, 404);
     }
+    // R9-01: another install's session is indistinguishable from a missing one.
+    if (loaded.meta.owner !== c.get("deviceId")) {
+      return c.json({ ok: false, error: "upload_not_found" }, 404);
+    }
     const missing = missingOf(loaded.meta, await stagedNames(c.env, uploadId));
     return c.json({ ok: true, uploadId, missing });
   });
@@ -448,6 +481,10 @@ export function registerUploadRoutes(app: Hono<{ Bindings: Env }>): void {
       return loaded.error === "expired"
         ? c.json({ ok: false, error: "upload_expired" }, 410)
         : c.json({ ok: false, error: "upload_not_found" }, 404);
+    }
+    // R9-01: a foreign session cannot be written into.
+    if (loaded.meta.owner !== c.get("deviceId")) {
+      return c.json({ ok: false, error: "upload_not_found" }, 404);
     }
     const declared = loaded.meta.files.find((f) => f.name === name);
     if (!declared) {
@@ -482,14 +519,22 @@ export function registerUploadRoutes(app: Hono<{ Bindings: Env }>): void {
 
   // W11-09 ready-on-arrival: cancel/discard deletes staged uploads.
   // Idempotent like the job DELETE — unknown or expired sessions are
-  // already gone, so both answer 204 with nothing to sweep.
+  // already gone, so both answer 204 with nothing to sweep. R9-01: a
+  // session owned by another install is a 404, so the delete cannot be
+  // used to probe or destroy it.
   app.delete("/v1/uploads/:uploadId", async (c) => {
     const uploadId = c.req.param("uploadId");
     // The id becomes an R2 prefix: only a UUID names a staging session.
     if (!UuidSchema.safeParse(uploadId).success) {
       return c.json({ ok: false, error: "invalid_request" }, 400);
     }
-    await deletePrefix(c.env, stagingPrefix(uploadId));
+    const loaded = await loadUploadMeta(c.env, uploadId, Date.now());
+    if ("meta" in loaded) {
+      if (loaded.meta.owner !== c.get("deviceId")) {
+        return c.json({ ok: false, error: "upload_not_found" }, 404);
+      }
+      await deletePrefix(c.env, stagingPrefix(uploadId));
+    }
     return new Response(null, { status: 204 });
   });
 }

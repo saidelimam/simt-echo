@@ -1,6 +1,6 @@
 import { Hono } from "hono";
-import type { Env } from "./index";
-import { deletePrefix, handleCreateJobV11, idemKey } from "./uploads";
+import type { AppEnv, Env } from "./index";
+import { deletePrefix, handleCreateJobV11, idemKey, readJobOwner, writeJobOwner } from "./uploads";
 import {
   JobEventSchema,
   JobResultSchema,
@@ -169,7 +169,7 @@ async function readJson<T>(env: Env, key: string): Promise<T | null> {
   }
 }
 
-export function registerJobsRoutes(app: Hono<{ Bindings: Env }>): void {
+export function registerJobsRoutes(app: Hono<AppEnv>): void {
   app.post("/v1/jobs", async (c) => {
     if (!c.env.PIPELINE) {
       return c.json({ ok: false, error: "server_misconfigured" }, 500);
@@ -222,6 +222,8 @@ export function registerJobsRoutes(app: Hono<{ Bindings: Env }>): void {
         });
       }
       await c.env.MEDIA.put(manifestKey(jobId), JSON.stringify(manifest));
+      // R9-01: bind the job to the creating install.
+      await writeJobOwner(c.env, jobId, c.get("deviceId"));
       await putProgress(c.env, jobId, "queued");
       await c.env.PIPELINE.create({ id: jobId, params: { jobId } });
       return c.json({ ok: true, jobId }, 202);
@@ -242,6 +244,10 @@ export function registerJobsRoutes(app: Hono<{ Bindings: Env }>): void {
     }
     const id = c.req.param("id");
     if (!isJobId(id)) return c.json({ ok: false, error: "job_not_found" }, 404);
+    // R9-01: a job of another install is indistinguishable from a missing one.
+    if ((await readJobOwner(c.env, id)) !== c.get("deviceId")) {
+      return c.json({ ok: false, error: "job_not_found" }, 404);
+    }
     let status: string;
     try {
       status = (await (await c.env.PIPELINE.get(id)).status()).status;
@@ -281,6 +287,11 @@ export function registerJobsRoutes(app: Hono<{ Bindings: Env }>): void {
     }
     const id = c.req.param("id");
     if (!isJobId(id)) return c.json({ ok: false, error: "job_not_found" }, 404);
+    // R9-01: a foreign install's stream is a missing job, not a 200 with no
+    // data — the events carry the job's route context.
+    if ((await readJobOwner(c.env, id)) !== c.get("deviceId")) {
+      return c.json({ ok: false, error: "job_not_found" }, 404);
+    }
     let instance: WorkflowInstance;
     try {
       instance = await c.env.PIPELINE.get(id);
@@ -305,6 +316,13 @@ export function registerJobsRoutes(app: Hono<{ Bindings: Env }>): void {
     // The id becomes an R2 prefix: `staging` and `idem` are other trees,
     // and an encoded slash would reach into them.
     if (!isJobId(id)) return c.json({ ok: false, error: "invalid_request" }, 400);
+    // R9-01: a job owned by another install is a 404 (no existence leak, no
+    // cross-install sweep). A job with no owner record is the unknown/legacy
+    // case and keeps the idempotent 204.
+    const owner = await readJobOwner(c.env, id);
+    if (owner !== null && owner !== c.get("deviceId")) {
+      return c.json({ ok: false, error: "job_not_found" }, 404);
+    }
     let handle: WorkflowInstance | null = null;
     const pipeline = c.env.PIPELINE;
     if (pipeline) {

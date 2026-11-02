@@ -26,7 +26,10 @@ class FakeR2 {
 describe("scheduled() expiry backstop", () => {
   it("sweeps expired staged uploads and orphaned idem records, keeping live ones", async () => {
     const media = new FakeR2();
-    const meta = (createdAt: number) => JSON.stringify({ files: [], createdAt });
+    const meta = (createdAt: number) =>
+      // R9-01: a live session meta carries its owner, or the sweep treats it
+      // as corrupt and deletes it.
+      JSON.stringify({ files: [], owner: "idx-test-install", createdAt });
     await media.put("jobs/staging/old/meta.json", meta(Date.now() - STAGING_TTL_MS - 1));
     await media.put("jobs/staging/old/kf_n2_0", "blob");
     await media.put("jobs/staging/fresh/meta.json", meta(Date.now()));

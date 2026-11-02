@@ -4,6 +4,8 @@ import { app } from "./index";
 import { EchoPipeline } from "./pipeline";
 import { JobResultSchema } from "./types";
 import { STAGING_TTL_MS, sweepExpiredUploads } from "./uploads";
+import { bearer, seedDevice } from "./testkit";
+import { deviceIdForKey } from "./devices";
 import {
   CheckpointEventSchema,
   CompleteEventSchema,
@@ -18,7 +20,10 @@ import {
   UsageEventSchema,
 } from "./types";
 
-const TOKEN = "test-token-123";
+// R9-01: the bearer is a per-install device key. Two fixed installs prove
+// isolation; the minted key in the isolation test proves the entropy path.
+const KEY = "dk_test_install_one";
+const OTHER = "dk_test_install_two";
 
 // In-memory R2 stand-in: only the surface jobs.ts touches.
 class FakeR2 {
@@ -26,11 +31,17 @@ class FakeR2 {
 
   async put(
     key: string,
-    value: ArrayBuffer | string,
+    value: ArrayBuffer | Uint8Array | string,
     opts?: { httpMetadata?: { contentType?: string } },
   ): Promise<null> {
+    // Normalize to a detached ArrayBuffer: a Uint8Array view aliases its pool
+    // buffer, and TS's generics treat the view as a distinct type.
     const body =
-      typeof value === "string" ? new TextEncoder().encode(value).buffer as ArrayBuffer : value;
+      typeof value === "string"
+        ? (new TextEncoder().encode(value).buffer as ArrayBuffer)
+        : value instanceof Uint8Array
+          ? (value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength) as ArrayBuffer)
+          : value;
     this.store.set(key, { body, contentType: opts?.httpMetadata?.contentType });
     return null;
   }
@@ -99,9 +110,11 @@ class FakePipeline {
   }
 }
 
-function envFor(media: FakeR2, pipeline?: FakePipeline) {
+async function envFor(media: FakeR2, pipeline?: FakePipeline) {
+  // R9-01: register the test install so every authenticated request resolves.
+  await seedDevice(media, KEY);
   return {
-    ECHO_APP_TOKEN: TOKEN,
+    ECHO_APP_TOKEN: "retired",
     MEDIA: media as never,
     ...(pipeline ? { PIPELINE: pipeline as never } : {}),
   } as never;
@@ -149,7 +162,7 @@ function postJob(
   for (const f of files) form.append(f.id, new File([f.bytes], f.id, { type: f.type }));
   return app.request(
     "/v1/jobs",
-    { method: "POST", headers: { Authorization: `Bearer ${TOKEN}` }, body: form },
+    { method: "POST", headers: bearer(KEY), body: form },
     env,
   );
 }
@@ -158,7 +171,7 @@ describe("POST /v1/jobs", () => {
   it("stores allow-listed files, seeds progress, creates the workflow (202)", async () => {
     const media = new FakeR2();
     const pipeline = new FakePipeline();
-    const res = await postJob(envFor(media, pipeline), validManifest(), [
+    const res = await postJob(await envFor(media, pipeline), validManifest(), [
       { id: "kf_n2_0", bytes: new Uint8Array([1]), type: "image/jpeg" },
       { id: "evil", bytes: new Uint8Array([9]), type: "image/jpeg" },
     ]);
@@ -181,16 +194,17 @@ describe("POST /v1/jobs", () => {
   it("rejects a missing consent grant before storing anything (400)", async () => {
     const media = new FakeR2();
     const manifest = { ...validManifest(), consent: { sendFramesToCloudAi: false, atEpochMs: 0 } };
-    const res = await postJob(envFor(media, new FakePipeline()), manifest);
+    const res = await postJob(await envFor(media, new FakePipeline()), manifest);
 
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ ok: false, error: "consent_required" });
-    expect(media.store.size).toBe(0);
+    // Nothing job-related was stored (the seeded device record is not a job artifact).
+    expect([...media.store.keys()].filter((k) => !k.startsWith("devices/"))).toEqual([]);
   });
 
   it("rejects malformed and schema-violating manifests (400)", async () => {
     const media = new FakeR2();
-    const env = envFor(media, new FakePipeline());
+    const env = await envFor(media, new FakePipeline());
 
     const notJson = await postJob(env, "this is not json");
     expect(notJson.status).toBe(400);
@@ -208,7 +222,8 @@ describe("POST /v1/jobs", () => {
     delete (turnWithoutTurn.checkpoints[0] as Partial<{ turn: string }>).turn;
     expect((await postJob(env, turnWithoutTurn)).status).toBe(400);
 
-    expect(media.store.size).toBe(0);
+    // Nothing job-related was stored (the seeded device record is not a job artifact).
+    expect([...media.store.keys()].filter((k) => !k.startsWith("devices/"))).toEqual([]);
   });
 
   it("rejects more than 60 files (413)", async () => {
@@ -223,7 +238,7 @@ describe("POST /v1/jobs", () => {
       bytes: new Uint8Array([1]),
       type: "image/jpeg",
     }));
-    const res = await postJob(envFor(media, new FakePipeline()), manifest, files);
+    const res = await postJob(await envFor(media, new FakePipeline()), manifest, files);
 
     expect(res.status).toBe(413);
     expect(await res.json()).toEqual({ ok: false, error: "too_many_files" });
@@ -232,7 +247,7 @@ describe("POST /v1/jobs", () => {
   it("rejects payloads over 80 MB (413)", async () => {
     const media = new FakeR2();
     const big = new Uint8Array(80 * 1024 * 1024 + 1);
-    const res = await postJob(envFor(media, new FakePipeline()), validManifest(), [
+    const res = await postJob(await envFor(media, new FakePipeline()), validManifest(), [
       { id: "kf_n2_0", bytes: big, type: "image/jpeg" },
     ]);
 
@@ -242,19 +257,23 @@ describe("POST /v1/jobs", () => {
 
   it("fails closed without a workflow binding, storing nothing (500)", async () => {
     const media = new FakeR2();
-    const res = await postJob(envFor(media), validManifest());
+    const res = await postJob(await envFor(media), validManifest());
 
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual({ ok: false, error: "server_misconfigured" });
-    expect(media.store.size).toBe(0);
+    // Nothing job-related was stored (the seeded device record is not a job artifact).
+    expect([...media.store.keys()].filter((k) => !k.startsWith("devices/"))).toEqual([]);
   });
 
   it("reports storage failures as 500, not invalid_manifest", async () => {
     const media = new FakeR2();
+    // Seed the install first, then take R2 down: the failure is the job
+    // create's own writes, not the device record's.
+    const env = await envFor(media, new FakePipeline());
     media.put = async () => {
       throw new Error("R2 down");
     };
-    const res = await postJob(envFor(media, new FakePipeline()), validManifest());
+    const res = await postJob(env, validManifest());
 
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual({ ok: false, error: "job_create_failed" });
@@ -262,12 +281,12 @@ describe("POST /v1/jobs", () => {
 });
 
 describe("GET /v1/jobs/:id", () => {
-  const auth = { Authorization: `Bearer ${TOKEN}` };
+  const auth = bearer(KEY);
 
   it("reports queued with the seeded stage", async () => {
     const media = new FakeR2();
     const pipeline = new FakePipeline();
-    const env = envFor(media, pipeline);
+    const env = await envFor(media, pipeline);
     const { jobId } = (await (await postJob(env, validManifest())).json()) as { jobId: string };
 
     const res = await app.request(`/v1/jobs/${jobId}`, { headers: auth }, env);
@@ -278,7 +297,7 @@ describe("GET /v1/jobs/:id", () => {
   it("maps a running instance and its stage through", async () => {
     const media = new FakeR2();
     const pipeline = new FakePipeline();
-    const env = envFor(media, pipeline);
+    const env = await envFor(media, pipeline);
     const { jobId } = (await (await postJob(env, validManifest())).json()) as { jobId: string };
     pipeline.instances.get(jobId)!.statusValue = "running";
     await media.put(`jobs/${jobId}/progress.json`, JSON.stringify({ stage: "scouting", updatedAt: 1 }));
@@ -290,7 +309,7 @@ describe("GET /v1/jobs/:id", () => {
   it("returns the validated result on complete", async () => {
     const media = new FakeR2();
     const pipeline = new FakePipeline();
-    const env = envFor(media, pipeline);
+    const env = await envFor(media, pipeline);
     const { jobId } = (await (await postJob(env, validManifest())).json()) as { jobId: string };
     pipeline.instances.get(jobId)!.statusValue = "complete";
     const result = {
@@ -312,7 +331,7 @@ describe("GET /v1/jobs/:id", () => {
     const media = new FakeR2();
     const pipeline = new FakePipeline();
     pipeline.initial = "complete";
-    const env = envFor(media, pipeline);
+    const env = await envFor(media, pipeline);
     const { jobId } = (await (await postJob(env, validManifest())).json()) as { jobId: string };
     await media.delete(`jobs/${jobId}/result.json`);
 
@@ -324,7 +343,7 @@ describe("GET /v1/jobs/:id", () => {
   it("maps errored and terminated to errored with detail", async () => {
     const media = new FakeR2();
     const pipeline = new FakePipeline();
-    const env = envFor(media, pipeline);
+    const env = await envFor(media, pipeline);
     const { jobId } = (await (await postJob(env, validManifest())).json()) as { jobId: string };
     await media.put(`jobs/${jobId}/error.json`, JSON.stringify({ error: "scout exploded" }));
     await media.put(`jobs/${jobId}/progress.json`, JSON.stringify({ stage: "errored", updatedAt: 2 }));
@@ -347,7 +366,7 @@ describe("GET /v1/jobs/:id", () => {
   });
 
   it("returns 404 for an unknown job", async () => {
-    const env = envFor(new FakeR2(), new FakePipeline());
+    const env = await envFor(new FakeR2(), new FakePipeline());
     const res = await app.request("/v1/jobs/does-not-exist", { headers: auth }, env);
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ ok: false, error: "job_not_found" });
@@ -355,12 +374,12 @@ describe("GET /v1/jobs/:id", () => {
 });
 
 describe("DELETE /v1/jobs/:id", () => {
-  const auth = { Authorization: `Bearer ${TOKEN}` };
+  const auth = bearer(KEY);
 
   it("removes every job key and terminates a running instance (204)", async () => {
     const media = new FakeR2();
     const pipeline = new FakePipeline();
-    const env = envFor(media, pipeline);
+    const env = await envFor(media, pipeline);
     const { jobId } = (await (await postJob(env, validManifest())).json()) as { jobId: string };
     const instance = pipeline.instances.get(jobId)!;
 
@@ -373,7 +392,7 @@ describe("DELETE /v1/jobs/:id", () => {
   it("leaves a complete instance alone while sweeping its keys", async () => {
     const media = new FakeR2();
     const pipeline = new FakePipeline();
-    const env = envFor(media, pipeline);
+    const env = await envFor(media, pipeline);
     const { jobId } = (await (await postJob(env, validManifest())).json()) as { jobId: string };
     const instance = pipeline.instances.get(jobId)!;
     instance.statusValue = "complete";
@@ -381,11 +400,12 @@ describe("DELETE /v1/jobs/:id", () => {
     const res = await app.request(`/v1/jobs/${jobId}`, { method: "DELETE", headers: auth }, env);
     expect(res.status).toBe(204);
     expect(instance.terminated).toBe(false);
-    expect(media.store.size).toBe(0);
+    // Nothing job-related was stored (the seeded device record is not a job artifact).
+    expect([...media.store.keys()].filter((k) => !k.startsWith("devices/"))).toEqual([]);
   });
 
   it("is idempotent for an unknown job (204)", async () => {
-    const env = envFor(new FakeR2(), new FakePipeline());
+    const env = await envFor(new FakeR2(), new FakePipeline());
     const res = await app.request("/v1/jobs/nope", { method: "DELETE", headers: auth }, env);
     expect(res.status).toBe(204);
   });
@@ -393,7 +413,7 @@ describe("DELETE /v1/jobs/:id", () => {
   it("reports a deleted job as not found, not result_missing", async () => {
     const media = new FakeR2();
     const pipeline = new FakePipeline();
-    const env = envFor(media, pipeline);
+    const env = await envFor(media, pipeline);
     const { jobId } = (await (await postJob(env, validManifest())).json()) as { jobId: string };
     pipeline.instances.get(jobId)!.statusValue = "complete";
 
@@ -401,6 +421,41 @@ describe("DELETE /v1/jobs/:id", () => {
     const res = await app.request(`/v1/jobs/${jobId}`, { headers: auth }, env);
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ ok: false, error: "job_not_found" });
+  });
+});
+
+describe("per-install isolation (R9-01)", () => {
+  it("keeps one install's jobs unreadable and undeletable by another", async () => {
+    const media = new FakeR2();
+    const pipeline = new FakePipeline();
+    const env = await envFor(media, pipeline);
+    const { jobId } = (await (await postJob(env, validManifest())).json()) as { jobId: string };
+
+    // A second install on the same deployment.
+    await seedDevice(media, OTHER);
+    const foreign = bearer(OTHER);
+
+    // Read: 404, no existence leak, no state change.
+    const read = await app.request(`/v1/jobs/${jobId}`, { headers: foreign }, env);
+    expect(read.status).toBe(404);
+    expect(await read.json()).toEqual({ ok: false, error: "job_not_found" });
+    expect(pipeline.instances.has(jobId)).toBe(true);
+
+    // Delete: 404 — the foreign install cannot sweep the job.
+    const del = await app.request(`/v1/jobs/${jobId}`, { method: "DELETE", headers: foreign }, env);
+    expect(del.status).toBe(404);
+    expect(media.store.has(`jobs/${jobId}/manifest.json`)).toBe(true);
+
+    // The owner reads and deletes freely.
+    const own = await app.request(`/v1/jobs/${jobId}`, { headers: bearer(KEY) }, env);
+    expect(own.status).toBe(200);
+    const ownDel = await app.request(
+      `/v1/jobs/${jobId}`,
+      { method: "DELETE", headers: bearer(KEY) },
+      env,
+    );
+    expect(ownDel.status).toBe(204);
+    expect([...media.store.keys()].filter((k) => k.startsWith(`jobs/${jobId}/`))).toEqual([]);
   });
 });
 
@@ -549,7 +604,7 @@ describe("v1.1 contract freeze (W10-06)", () => {
   it("still accepts the frozen v1 multipart job create (202)", async () => {
     const media = new FakeR2();
     const pipeline = new FakePipeline();
-    const res = await postJob(envFor(media, pipeline), validManifest());
+    const res = await postJob(await envFor(media, pipeline), validManifest());
 
     expect(res.status).toBe(202);
     const body = (await res.json()) as { ok: boolean; jobId: string };
@@ -559,7 +614,7 @@ describe("v1.1 contract freeze (W10-06)", () => {
 });
 
 describe("v1.1 resumable uploads (W11-05)", () => {
-  const auth = { Authorization: `Bearer ${TOKEN}` };
+  const auth = bearer(KEY);
   const jsonAuth = { ...auth, "Content-Type": "application/json" };
 
   async function shaHexOf(data: number[]): Promise<string> {
@@ -624,7 +679,7 @@ describe("v1.1 resumable uploads (W11-05)", () => {
 
   it("resumes: missing[] shrinks as sha-verified blobs arrive", async () => {
     const media = new FakeR2();
-    const env = envFor(media, new FakePipeline());
+    const env = await envFor(media, new FakePipeline());
     const files = stagedFiles();
     const uploadId = await createUploadFor(env, files);
 
@@ -656,7 +711,7 @@ describe("v1.1 resumable uploads (W11-05)", () => {
 
   it("rejects sha mismatches with 400 and stores nothing", async () => {
     const media = new FakeR2();
-    const env = envFor(media, new FakePipeline());
+    const env = await envFor(media, new FakePipeline());
     const uploadId = await createUploadFor(env);
 
     const res = await putBlob(env, uploadId, "kf_n2_0", [9, 9, 9]);
@@ -672,7 +727,7 @@ describe("v1.1 resumable uploads (W11-05)", () => {
 
   it("rejects unknown files, bad names, and unknown uploads", async () => {
     const media = new FakeR2();
-    const env = envFor(media, new FakePipeline());
+    const env = await envFor(media, new FakePipeline());
     const uploadId = await createUploadFor(env);
 
     const unknown = await putBlob(env, uploadId, "kf_n9_9", [1]);
@@ -703,7 +758,7 @@ describe("v1.1 resumable uploads (W11-05)", () => {
   it("creates a job by moving staged blobs under it, then consumes staging", async () => {
     const media = new FakeR2();
     const pipeline = new FakePipeline();
-    const env = envFor(media, pipeline);
+    const env = await envFor(media, pipeline);
     const files = stagedFiles();
     const uploadId = await createUploadFor(env, files);
     for (const f of files) {
@@ -731,7 +786,7 @@ describe("v1.1 resumable uploads (W11-05)", () => {
   it("returns the same job id for an idempotent double-create", async () => {
     const media = new FakeR2();
     const pipeline = new FakePipeline();
-    const env = envFor(media, pipeline);
+    const env = await envFor(media, pipeline);
     const files = stagedFiles();
     const uploadId = await createUploadFor(env, files);
     for (const f of files) {
@@ -759,10 +814,12 @@ describe("v1.1 resumable uploads (W11-05)", () => {
   it("persists the v1.1 budget and resume source for the W11-06 governor", async () => {
     const media = new FakeR2();
     const pipeline = new FakePipeline();
-    const env = envFor(media, pipeline);
-    // resumeOf must name a job that exists.
+    const env = await envFor(media, pipeline);
+    // resumeOf must name a job that exists AND belongs to this install.
     const prior = "33333333-3333-4333-8333-333333333333";
     await media.put(`jobs/${prior}/manifest.json`, "{}");
+    const priorId = await seedDevice(media, KEY);
+    await media.put(`jobs/${prior}/owner.json`, JSON.stringify({ owner: priorId }));
     const res = await postJobJson(env, {
       manifest: validManifest(),
       budget: { maxSamFrames: 120 },
@@ -782,7 +839,7 @@ describe("v1.1 resumable uploads (W11-05)", () => {
   it("refuses to create from an incomplete upload, naming what is missing", async () => {
     const media = new FakeR2();
     const pipeline = new FakePipeline();
-    const env = envFor(media, pipeline);
+    const env = await envFor(media, pipeline);
     const uploadId = await createUploadFor(env);
     expect((await putBlob(env, uploadId, "kf_n2_0", [1, 2, 3])).status).toBe(200);
 
@@ -798,17 +855,20 @@ describe("v1.1 resumable uploads (W11-05)", () => {
 
   it("expires staged uploads after 1h on every endpoint and sweeps them", async () => {
     const media = new FakeR2();
-    const env = envFor(media, new FakePipeline());
+    const env = await envFor(media, new FakePipeline());
     const uploadId = await createUploadFor(env);
     await putBlob(env, uploadId, "kf_n2_0", [1, 2, 3]);
 
     // Backdate past the TTL: deterministic without waiting an hour.
+    const ownerId = await deviceIdForKey(KEY);
     const backdated = {
       files: [
         { name: "kf_n2_0", sha256: await shaHexOf([1, 2, 3]), bytes: 3 },
         { name: "kf_n2_1", sha256: await shaHexOf([4, 5, 6]), bytes: 3 },
         { name: "clip_n2", sha256: await shaHexOf([7, 8, 9]), bytes: 3 },
       ],
+      // R9-01: a backdated meta is still the test install's session.
+      owner: ownerId,
       createdAt: Date.now() - STAGING_TTL_MS - 1,
     };
     await media.put(`jobs/staging/${uploadId}/meta.json`, JSON.stringify(backdated));
@@ -855,7 +915,7 @@ describe("v1.1 resumable uploads (W11-05)", () => {
 
   it("holds the 60-file / 80 MB caps on the new endpoints", async () => {
     const media = new FakeR2();
-    const env = envFor(media, new FakePipeline());
+    const env = await envFor(media, new FakePipeline());
     const sha = await shaHexOf([1]);
 
     const tooBig = await createUpload(env, [
@@ -879,7 +939,7 @@ describe("v1.1 resumable uploads (W11-05)", () => {
   it("creates manifest-only v1.1 jobs and rejects bad v1.1 bodies", async () => {
     const media = new FakeR2();
     const pipeline = new FakePipeline();
-    const env = envFor(media, pipeline);
+    const env = await envFor(media, pipeline);
 
     const res = await postJobJson(env, { manifest: validManifest() });
     expect(res.status).toBe(202);
@@ -911,7 +971,7 @@ describe("EchoPipeline skeleton", () => {  it("runs load → scout → ground �
     const ai = {
       run: async () => ({ response: { nodeId: "n2", candidates: [] } }),
     };
-    const base = envFor(media, new FakePipeline()) as unknown as Record<string, unknown>;
+    const base = (await envFor(media, new FakePipeline())) as unknown as Record<string, unknown>;
     const env = {
       ...base,
       AI: ai,
@@ -969,7 +1029,7 @@ describe("EchoPipeline skeleton", () => {  it("runs load → scout → ground �
   it("records errored progress and rethrows when loading fails", async () => {
     const media = new FakeR2();
     const jobId = crypto.randomUUID();
-    const env = envFor(media, new FakePipeline()) as import("./index").Env;
+    const env = (await envFor(media, new FakePipeline())) as import("./index").Env;
     const pipeline = new EchoPipeline({} as ExecutionContext, env);
     const step = {
       do: async (_name: string, _config: unknown, fn: () => Promise<unknown>) => fn(),

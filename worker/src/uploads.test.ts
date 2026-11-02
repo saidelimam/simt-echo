@@ -1,23 +1,33 @@
 import { describe, expect, it } from "vitest";
 import { app, type Env } from "./index";
 import { sweepExpiredUploads } from "./uploads";
+import { bearer, seedDevice } from "./testkit";
 
 // W11-09 ready-on-arrival: per-window staged sessions, multi-session job
 // create, and staged-upload discard. The FakeR2/FakePipeline stand-ins
 // mirror jobs.test.ts (duplicated per file, the established pattern).
 
-const TOKEN = "test-token-123";
+// R9-01: the bearer is a per-install device key. Two fixed installs prove
+// isolation; the seeded one is the owner in every test.
+const KEY = "dk_test_install_one";
+const OTHER = "dk_test_install_two";
 
 class FakeR2 {
   store = new Map<string, { body: ArrayBuffer; contentType?: string }>();
 
   async put(
     key: string,
-    value: ArrayBuffer | string,
+    value: ArrayBuffer | Uint8Array | string,
     opts?: { httpMetadata?: { contentType?: string } },
   ): Promise<null> {
+    // Normalize to a detached ArrayBuffer: a Uint8Array view aliases its pool
+    // buffer, and TS's generics treat the view as a distinct type.
     const body =
-      typeof value === "string" ? new TextEncoder().encode(value).buffer as ArrayBuffer : value;
+      typeof value === "string"
+        ? (new TextEncoder().encode(value).buffer as ArrayBuffer)
+        : value instanceof Uint8Array
+          ? (value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength) as ArrayBuffer)
+          : value;
     this.store.set(key, { body, contentType: opts?.httpMetadata?.contentType });
     return null;
   }
@@ -82,15 +92,17 @@ class FakePipeline {
   }
 }
 
-function envFor(media: FakeR2, pipeline?: FakePipeline) {
+async function envFor(media: FakeR2, pipeline?: FakePipeline) {
+  // R9-01: register the test install so every authenticated request resolves.
+  await seedDevice(media, KEY);
   return {
-    ECHO_APP_TOKEN: TOKEN,
+    ECHO_APP_TOKEN: "retired",
     MEDIA: media as never,
     ...(pipeline ? { PIPELINE: pipeline as never } : {}),
   } as never;
 }
 
-const auth = { Authorization: `Bearer ${TOKEN}` };
+const auth = bearer(KEY);
 const jsonAuth = { ...auth, "Content-Type": "application/json" };
 
 async function shaHexOf(data: number[]): Promise<string> {
@@ -170,7 +182,7 @@ function postJobJson(env: never, payload: unknown) {
 describe("W11-09 ready-on-arrival uploads", () => {
   it("discards staged uploads and treats unknown ids as gone", async () => {
     const media = new FakeR2();
-    const env = envFor(media, new FakePipeline());
+    const env = await envFor(media, new FakePipeline());
     const uploadId = await createUploadFor(env, [{ name: "kf_n2_0", data: [1, 2, 3] }]);
     expect((await putBlob(env, uploadId, "kf_n2_0", [1, 2, 3])).status).toBe(200);
 
@@ -190,7 +202,7 @@ describe("W11-09 ready-on-arrival uploads", () => {
   it("creates a job against per-window sessions and consumes all of them", async () => {
     const media = new FakeR2();
     const pipeline = new FakePipeline();
-    const env = envFor(media, pipeline);
+    const env = await envFor(media, pipeline);
     const first = await createUploadFor(env, [{ name: "kf_n2_0", data: [1, 2, 3] }]);
     const second = await createUploadFor(env, [
       { name: "kf_n2_1", data: [4, 5, 6] },
@@ -218,7 +230,7 @@ describe("W11-09 ready-on-arrival uploads", () => {
 
   it("rejects a create naming both uploadId and uploadIds", async () => {
     const media = new FakeR2();
-    const env = envFor(media, new FakePipeline());
+    const env = await envFor(media, new FakePipeline());
     const uploadId = await createUploadFor(env, [{ name: "kf_n2_0", data: [1, 2, 3] }]);
     const res = await postJobJson(env, {
       manifest: validManifest(),
@@ -232,7 +244,7 @@ describe("W11-09 ready-on-arrival uploads", () => {
   it("measures multi-session completeness over the union", async () => {
     const media = new FakeR2();
     const pipeline = new FakePipeline();
-    const env = envFor(media, pipeline);
+    const env = await envFor(media, pipeline);
     const first = await createUploadFor(env, [{ name: "kf_n2_0", data: [1, 2, 3] }]);
     const second = await createUploadFor(env, [
       { name: "kf_n2_1", data: [4, 5, 6] },
@@ -260,7 +272,7 @@ describe("idempotent create and job cleanup", () => {
   it("derives one job id from the key so concurrent creates cannot double-create", async () => {
     const media = new FakeR2();
     const pipeline = new FakePipeline();
-    const env = envFor(media, pipeline);
+    const env = await envFor(media, pipeline);
 
     const [a, b] = await Promise.all([create(env), create(env)]);
     expect([a.status, b.status]).toEqual([202, 202]);
@@ -277,7 +289,7 @@ describe("idempotent create and job cleanup", () => {
   it("discards a stale record whose job lost its manifest, then creates afresh", async () => {
     const media = new FakeR2();
     const pipeline = new FakePipeline();
-    const env = envFor(media, pipeline);
+    const env = await envFor(media, pipeline);
     const jobId = await idJson(await create(env));
     // The job vanished without going through DELETE.
     media.store.delete(`jobs/${jobId}/manifest.json`);
@@ -293,7 +305,7 @@ describe("idempotent create and job cleanup", () => {
   it("DELETE removes the idempotency record so the key can create again", async () => {
     const media = new FakeR2();
     const pipeline = new FakePipeline();
-    const env = envFor(media, pipeline);
+    const env = await envFor(media, pipeline);
     const jobId = await idJson(await create(env));
     expect(media.store.has(`jobs/idem/${jobId}.json`)).toBe(true);
 
@@ -309,7 +321,7 @@ describe("idempotent create and job cleanup", () => {
 
   it("sweeps orphaned idempotency records but keeps live ones", async () => {
     const media = new FakeR2();
-    const env = envFor(media, new FakePipeline());
+    const env = await envFor(media, new FakePipeline());
     const live = await idJson(await create(env));
     await media.put("jobs/idem/gone.json", JSON.stringify({ jobId: "gone-job" }));
     await media.put("jobs/idem/garbage.json", "not json");
@@ -325,7 +337,7 @@ describe("idempotent create and job cleanup", () => {
     const media = new FakeR2();
     const pipeline = new FakePipeline();
     pipeline.failCreate = true;
-    const env = envFor(media, pipeline);
+    const env = await envFor(media, pipeline);
     const files = [
       { name: "kf_n2_0", data: [1, 2, 3] },
       { name: "kf_n2_1", data: [4, 5, 6] },
@@ -339,7 +351,10 @@ describe("idempotent create and job cleanup", () => {
     expect(await res.json()).toEqual({ ok: false, error: "job_create_failed" });
 
     const leftover = [...media.store.keys()].filter(
-      (k) => !k.startsWith("jobs/staging/") && !k.startsWith("jobs/idem/"),
+      (k) =>
+        !k.startsWith("jobs/staging/") &&
+        !k.startsWith("jobs/idem/") &&
+        !k.startsWith("devices/"),
     );
     expect(leftover).toEqual([]);
     // Staging survives, so the client can simply retry the create.
@@ -350,7 +365,7 @@ describe("idempotent create and job cleanup", () => {
 
   it("refuses to DELETE the staging and idem trees through a job id", async () => {
     const media = new FakeR2();
-    const env = envFor(media, new FakePipeline());
+    const env = await envFor(media, new FakePipeline());
     const uploadId = await createUploadFor(env, [{ name: "kf_n2_0", data: [1, 2, 3] }]);
     await media.put("jobs/idem/keep.json", JSON.stringify({ jobId: "x" }));
     const before = media.store.size;
@@ -377,7 +392,7 @@ describe("upload PUT and id hardening", () => {
 
   it("rejects a Content-Length that differs from the declared bytes, storing nothing", async () => {
     const media = new FakeR2();
-    const env = envFor(media, new FakePipeline());
+    const env = await envFor(media, new FakePipeline());
     const uploadId = await createUploadFor(env, [{ name: "kf_n2_0", data: DATA }]);
 
     const res = await putRaw(env, uploadId, {
@@ -391,7 +406,7 @@ describe("upload PUT and id hardening", () => {
 
   it("stops reading an oversized streamed body early and stores nothing", async () => {
     const media = new FakeR2();
-    const env = envFor(media, new FakePipeline());
+    const env = await envFor(media, new FakePipeline());
     const uploadId = await createUploadFor(env, [{ name: "kf_n2_0", data: DATA }]);
     let pulled = 0;
     const stream = new ReadableStream<Uint8Array>({
@@ -411,7 +426,7 @@ describe("upload PUT and id hardening", () => {
 
   it("rejects a body shorter than declared and accepts the exact one", async () => {
     const media = new FakeR2();
-    const env = envFor(media, new FakePipeline());
+    const env = await envFor(media, new FakePipeline());
     const uploadId = await createUploadFor(env, [{ name: "kf_n2_0", data: DATA }]);
 
     expect((await putRaw(env, uploadId, { body: new Uint8Array([1, 2]) })).status).toBe(400);
@@ -423,7 +438,7 @@ describe("upload PUT and id hardening", () => {
   it("requires resumeOf to be a UUID naming an existing job", async () => {
     const media = new FakeR2();
     const pipeline = new FakePipeline();
-    const env = envFor(media, pipeline);
+    const env = await envFor(media, pipeline);
 
     const traversal = await postJobJson(env, { manifest: validManifest(), resumeOf: "../other/x" });
     expect(traversal.status).toBe(400);
@@ -440,7 +455,7 @@ describe("upload PUT and id hardening", () => {
 
   it("only treats UUIDs as upload session ids", async () => {
     const media = new FakeR2();
-    const env = envFor(media, new FakePipeline());
+    const env = await envFor(media, new FakePipeline());
     const uploadId = await createUploadFor(env, [{ name: "kf_n2_0", data: DATA }]);
     const before = media.store.size;
 
@@ -454,7 +469,7 @@ describe("upload PUT and id hardening", () => {
   });
 
   it("bounds declared sizes and requires unique file names", async () => {
-    const env = envFor(new FakeR2(), new FakePipeline());
+    const env = await envFor(new FakeR2(), new FakePipeline());
     const sha = await shaHexOf(DATA);
     const dup = await createUpload(env, [
       { name: "kf_n2_0", sha256: sha, bytes: 3 },
@@ -464,5 +479,55 @@ describe("upload PUT and id hardening", () => {
     const huge = await createUpload(env, [{ name: "kf_n2_0", sha256: sha, bytes: 2 ** 40 }]);
     expect(huge.status).toBe(413);
     expect(await huge.json()).toEqual({ ok: false, error: "payload_too_large" });
+  });
+});
+
+describe("per-install isolation (R9-01)", () => {
+  it("keeps one install's staged session unreadable, unwritable, and undeletable by another", async () => {
+    const media = new FakeR2();
+    const env = await envFor(media, new FakePipeline());
+    const uploadId = await createUploadFor(env, [{ name: "kf_n2_0", data: [1, 2, 3] }]);
+
+    // A second install on the same deployment.
+    await seedDevice(media, OTHER);
+    const foreign = bearer(OTHER);
+
+    // Read: 404, no existence leak.
+    const read = await app.request(`/v1/uploads/${uploadId}`, { headers: foreign }, env);
+    expect(read.status).toBe(404);
+    expect(await read.json()).toEqual({ ok: false, error: "upload_not_found" });
+
+    // Write: 404 — a foreign session cannot be written into.
+    const put = await app.request(
+      `/v1/uploads/${uploadId}/kf_n2_0`,
+      {
+        method: "PUT",
+        headers: { ...foreign, "Content-Type": "application/octet-stream" },
+        body: new Blob([new Uint8Array([1, 2, 3])]),
+      },
+      env,
+    );
+    expect(put.status).toBe(404);
+    expect(media.store.has(`jobs/staging/${uploadId}/kf_n2_0`)).toBe(false);
+
+    // Delete: 404 — the foreign install cannot destroy the session.
+    const del = await app.request(
+      `/v1/uploads/${uploadId}`,
+      { method: "DELETE", headers: foreign },
+      env,
+    );
+    expect(del.status).toBe(404);
+    expect(media.store.has(`jobs/staging/${uploadId}/meta.json`)).toBe(true);
+
+    // The owner discards it freely.
+    const ownDel = await app.request(
+      `/v1/uploads/${uploadId}`,
+      { method: "DELETE", headers: bearer(KEY) },
+      env,
+    );
+    expect(ownDel.status).toBe(204);
+    expect([...media.store.keys()].filter((k) => k.startsWith(`jobs/staging/${uploadId}/`))).toEqual(
+      [],
+    );
   });
 });

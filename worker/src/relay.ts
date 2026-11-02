@@ -1,5 +1,5 @@
 import type { Context } from "hono";
-import type { Env } from "./index";
+import type { AppEnv } from "./index";
 
 /**
  * Zero-knowledge relay (plan W4-05, §5.5).
@@ -55,7 +55,7 @@ function relayKey(code: string): string {
   return `relay/${code}`;
 }
 
-export async function postRelay(c: Context<{ Bindings: Env }>) {
+export async function postRelay(c: Context<AppEnv>) {
   const body = await c.req.arrayBuffer();
   if (body.byteLength === 0) {
     return c.json({ ok: false, error: "empty_body" }, 400);
@@ -71,14 +71,15 @@ export async function postRelay(c: Context<{ Bindings: Env }>) {
     return c.json({ ok: false, error: "code_unavailable" }, 503);
   }
   const expiresAt = Date.now() + RELAY_TTL_MS;
+  // R9-01: the minting install owns the code; a foreign GET is a 404.
   await bucket.put(relayKey(code), body, {
     httpMetadata: { contentType: "application/octet-stream" },
-    customMetadata: { expiresAt: String(expiresAt) },
+    customMetadata: { expiresAt: String(expiresAt), owner: c.get("deviceId") },
   });
   return c.json({ ok: true, code, expiresAt });
 }
 
-export async function getRelay(c: Context<{ Bindings: Env }>) {
+export async function getRelay(c: Context<AppEnv>) {
   const code = c.req.param("code") ?? "";
   if (!CODE_PATTERN.test(code)) {
     return c.json({ ok: false, error: "not_found" }, 404);
@@ -92,6 +93,15 @@ export async function getRelay(c: Context<{ Bindings: Env }>) {
   if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
     // Expired codes are gone, and the object goes with them.
     await bucket.delete(relayKey(code));
+    return c.json({ ok: false, error: "not_found" }, 404);
+  }
+  // R9-01: the owner check comes after expiry (expiry sweeps regardless of
+  // who asks) and never deletes — a foreign read must not burn the owner's
+  // code, and it must not reveal that the code exists. Legacy objects with
+  // no owner stamp predate the model; the app pair that produced the QR
+  // both hold the code, so an unowned code stays readable.
+  const owner = object.customMetadata?.owner;
+  if (owner !== undefined && owner !== c.get("deviceId")) {
     return c.json({ ok: false, error: "not_found" }, 404);
   }
   return c.body(object.body, 200, {
