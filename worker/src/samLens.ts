@@ -6,12 +6,12 @@
 //      zero SAM spend, AI_BOX_ONLY (stable output shape, same treatment as
 //      a governor refusal).
 //   2. SAM image on the hero frame for the top-2 survivors (1 frame each),
-//      one Workflow step `ground:<nodeId>:<phraseHash>` per call, so a retry
+//      one Workflow step `ground:<nodeId>:<k>:<phraseHash>` per call, so a retry
 //      re-bills one call — and the content-hash cache makes the re-bill zero
 //      frames when the first attempt already fetched.
 //   3. SAM video on the staged clip only for the top candidate at
 //      TURN/DESTINATION, or when image confidence is in [0.5, 0.85)
-//      (step `ground:<nodeId>:<phraseHash>:video`).
+//      (step `ground:<nodeId>:<k>:<phraseHash>:video`).
 // The budget governor reserves every estimate before any call is sent and
 // never exceeds `budget.maxSamFrames`; `usage.samFramesBilled` sums only
 // vendor-reported `response.completed` frames and `budgetExhausted` records
@@ -32,6 +32,7 @@ import {
   JobResultSchema,
   type Candidate,
   type Checkpoint,
+  type JobEvent,
   type JobResult,
   type Manifest,
 } from "./types";
@@ -39,12 +40,31 @@ import type { ScoutCandidate, ScoutResult } from "./scout";
 import { heroIndex } from "./selection";
 
 /** One Workflow step per SAM call: the unit of retry (plan §10 W11-06).
- * Steps only wrap SAM calls (side effects into preallocated maps), so the
- * callback returns void — never pipeline data across the step boundary. */
-export type StepRunner = (name: string, fn: () => Promise<void>) => Promise<void>;
+ * A step returns everything the lens needs from it (candidate, frames, ms)
+ * and the lens aggregates only from those returned values: on a Workflow
+ * replay a completed step returns its recorded output without running the
+ * callback, so nothing may live in callback side effects. */
+export type StepRunner = <T extends Rpc.Serializable<T>>(
+  name: string,
+  fn: () => Promise<T>,
+) => Promise<T>;
 
 /** Direct execution (tests, non-Workflow callers): steps run inline. */
 export const inlineRunner: StepRunner = (_name, fn) => fn();
+
+/** Emits one job event inside its own step: a replay returns the recorded
+ * step instead of emitting a duplicate under a fresh event id. */
+export function emitStep(
+  runner: StepRunner,
+  env: Env,
+  jobId: string,
+  name: string,
+  build: (id: string) => JobEvent,
+): Promise<void> {
+  return runner(name, async () => {
+    await emitJobEvent(env, jobId, build(newEventId()));
+  });
+}
 
 /** Test/threading knobs for the Meta transport bounds (defaults: 60 s/20 s). */
 export interface LensOptions {
@@ -82,12 +102,14 @@ export async function phraseHash(phrase: string): Promise<string> {
   return (await hexSha256(new TextEncoder().encode(phrase))).slice(0, 12);
 }
 
-export function imageStepName(nodeId: string, hash: string): string {
-  return `ground:${nodeId}:${hash}`;
+/** `k` is the candidate's checkpoint-local index, so two survivors that
+ * share a phrase still get distinct, replay-stable step names. */
+export function imageStepName(nodeId: string, k: number, hash: string): string {
+  return `ground:${nodeId}:${k}:${hash}`;
 }
 
-export function videoStepName(nodeId: string, hash: string): string {
-  return `ground:${nodeId}:${hash}:video`;
+export function videoStepName(nodeId: string, k: number, hash: string): string {
+  return `ground:${nodeId}:${k}:${hash}:video`;
 }
 
 /**
@@ -118,15 +140,12 @@ function priorityOf(cp: Checkpoint): number {
 /**
  * Spend guard (S-review-grade: enforced before any call). Estimates are
  * reserved synchronously while planning — atomically in JS, so concurrent
- * pool tasks cannot double-spend. Actuals are recorded on success; vendor
+ * pool tasks cannot double-spend. Actuals come back in the step results; vendor
  * billing above the estimate is a recorded residual risk (W11-07 measures
  * real billing; the governor caps on estimates regardless of price).
  */
 class Governor {
   reserved = 0;
-  samFrames = 0;
-  samFramesBilled = 0;
-  samMs = 0;
   exhausted = false;
   constructor(readonly max: number) {}
   reserve(estimate: number): boolean {
@@ -289,6 +308,62 @@ async function runPool<T>(tasks: Array<() => Promise<T>>, limit: number): Promis
   return out;
 }
 
+/** Frames and time one SAM call consumed. Zero when the call replayed from
+ * the content-hash cache or fell back. */
+interface CallSpend {
+  sentFrames: number;
+  billedFrames: number;
+  ms: number;
+}
+
+const NO_SPEND: CallSpend = { sentFrames: 0, billedFrames: 0, ms: 0 };
+
+/** Serializable output of one image step: everything the lens aggregates
+ * is read from this value, never from callback side effects. */
+interface ImageStepResult extends CallSpend {
+  k: number;
+  candidate: Candidate;
+}
+
+/** Output of one video step; `candidate` is null when the clip added
+ * nothing and the image result stands. */
+interface VideoStepResult extends CallSpend {
+  k: number;
+  candidate: Candidate | null;
+}
+
+/**
+ * Event emits and the `ground.json` write, each in its own step so a replay
+ * neither re-emits under new ids nor rewrites the sealed result.
+ */
+async function sealLens(
+  env: Env,
+  jobId: string,
+  runner: StepRunner,
+  result: JobResult,
+  emitUsage: boolean,
+): Promise<void> {
+  for (const c of result.checkpoints) {
+    await emitStep(runner, env, jobId, `emit:checkpoint:${c.nodeId}`, (id) => ({
+      id,
+      type: "checkpoint",
+      nodeId: c.nodeId,
+      status: c.candidates.some((cand) => cand.source === "AI_GROUNDED") ? "grounded" : "skipped",
+      candidates: c.candidates,
+    }));
+  }
+  if (emitUsage) {
+    await emitStep(runner, env, jobId, "emit:usage", (id) => ({
+      id,
+      type: "usage",
+      usage: result.usage,
+    }));
+  }
+  await runner("ground:seal", async () => {
+    await env.MEDIA.put(`jobs/${jobId}/ground.json`, JSON.stringify(result));
+  });
+}
+
 /**
  * The W11-06 SAM lens (see file header). Seals the same
  * `jobs/<id>/ground.json` shape as the legacy path, plus
@@ -321,22 +396,13 @@ export async function runGroundLens(
         new Map(cp.keyframes.map((k) => [k.id, k.tMs])),
       ).sort((a, b) => b.rank - a.rank),
     }));
-    for (const c of checkpoints) {
-      await emitJobEvent(env, jobId, {
-        id: newEventId(),
-        type: "checkpoint",
-        nodeId: c.nodeId,
-        status: "skipped",
-        candidates: c.candidates,
-      });
-    }
     const result = JobResultSchema.parse({
       jobId,
       models: { scout: scout.model, ground: "none" },
       checkpoints,
       usage: {},
     });
-    await env.MEDIA.put(`jobs/${jobId}/ground.json`, JSON.stringify(result));
+    await sealLens(env, jobId, runner, result, false);
     return result;
   }
 
@@ -356,6 +422,8 @@ export async function runGroundLens(
     clipHeroIdx: number;
   }
 
+  // Planning is a pure function of the manifest, the scout step output, the
+  // staged media and budget.json, so a replay reproduces it exactly.
   const planned: Planned[] = [];
   for (let index = 0; index < manifest.checkpoints.length; index++) {
     const cp = manifest.checkpoints[index];
@@ -391,42 +459,55 @@ export async function runGroundLens(
     (a, b) => priorityOf(a.cp) - priorityOf(b.cp) || a.index - b.index,
   );
 
-  // Image phase: 1 frame per hero call, reserved before any call is sent.
-  const imageResults = new Map<number, Map<number, Candidate>>();
-  const imageTasks: Array<() => Promise<void>> = [];
-  for (const p of byPriority) {
-    const perCp = new Map<number, Candidate>();
-    imageResults.set(p.index, perCp);
-    for (const k of p.survivors) {
-      const sc = p.kept[k];
-      const fallback = lensFallback(jobId, scout.model, p.cp, sc, k);
-      const media = p.heroBytes.get(k);
-      if (!media || !gov.reserve(1)) {
-        perCp.set(k, fallback);
-        continue;
-      }
-      const hash = await phraseHash(sc.samPhrase);
-      const name = imageStepName(p.cp.nodeId, hash);
-      const evidenceKey = `jobs/${jobId}/sam/${p.cp.nodeId}_${k}.txt`;
-      imageTasks.push(() =>
-        runner(name, async () => {
-          perCp.set(k, await imageCall(env, jobId, p.cp, sc, k, media, fallback, evidenceKey, budget.resumeOf, gov, lensOpts));
-        }),
-      );
-    }
-  }
-  await runPool(imageTasks, LENS_CONCURRENCY);
-
-  // Video phase: top survivor only, TURN/DESTINATION or mid confidence.
+  // Candidates per checkpoint, starting as box-only fallbacks; step results
+  // replace them below. Refused and media-less calls keep the fallback.
   const finalResults = new Map<number, Map<number, Candidate>>();
   for (const p of planned) {
     const perCp = new Map<number, Candidate>();
     finalResults.set(p.index, perCp);
     for (let k = 0; k < p.kept.length; k++) {
-      perCp.set(k, imageResults.get(p.index)?.get(k) ?? lensFallback(jobId, scout.model, p.cp, p.kept[k], k));
+      perCp.set(k, lensFallback(jobId, scout.model, p.cp, p.kept[k], k));
     }
   }
-  const videoTasks: Array<() => Promise<void>> = [];
+  const spend = { samFrames: 0, samFramesBilled: 0, samMs: 0 };
+  const tally = (r: CallSpend) => {
+    spend.samFrames += r.sentFrames;
+    spend.samFramesBilled += r.billedFrames;
+    spend.samMs += r.ms;
+  };
+
+  // Image phase: 1 frame per hero call, reserved before any call is sent.
+  const imageTasks: Array<{ perCp: Map<number, Candidate>; run: () => Promise<ImageStepResult> }> = [];
+  for (const p of byPriority) {
+    const perCp = finalResults.get(p.index) ?? new Map<number, Candidate>();
+    for (const k of p.survivors) {
+      const sc = p.kept[k];
+      const fallback = perCp.get(k) ?? lensFallback(jobId, scout.model, p.cp, sc, k);
+      const media = p.heroBytes.get(k);
+      if (!media || !gov.reserve(1)) continue;
+      const name = imageStepName(p.cp.nodeId, k, await phraseHash(sc.samPhrase));
+      const evidenceKey = `jobs/${jobId}/sam/${p.cp.nodeId}_${k}.txt`;
+      imageTasks.push({
+        perCp,
+        run: () =>
+          runner(name, async () => ({
+            k,
+            ...(await imageCall(env, jobId, p.cp, sc, k, media, fallback, evidenceKey, budget.resumeOf, lensOpts)),
+          })),
+      });
+    }
+  }
+  const imageOut = await runPool(
+    imageTasks.map((t) => t.run),
+    LENS_CONCURRENCY,
+  );
+  imageOut.forEach((r, i) => {
+    imageTasks[i].perCp.set(r.k, r.candidate);
+    tally(r);
+  });
+
+  // Video phase: top survivor only, TURN/DESTINATION or mid confidence.
+  const videoTasks: Array<{ perCp: Map<number, Candidate>; run: () => Promise<VideoStepResult> }> = [];
   for (const p of byPriority) {
     const perCp = finalResults.get(p.index);
     if (!perCp || !p.clipBytes || p.survivors.length === 0) continue;
@@ -443,22 +524,35 @@ export async function runGroundLens(
     const sc = p.kept[topK];
     const estimate = p.cp.clip?.frameCount ?? 0;
     if (!gov.reserve(estimate)) continue;
-    const hash = await phraseHash(sc.samPhrase);
-    const name = videoStepName(p.cp.nodeId, hash);
+    const name = videoStepName(p.cp.nodeId, topK, await phraseHash(sc.samPhrase));
     const evidenceKey = `jobs/${jobId}/sam/${p.cp.nodeId}_${topK}.txt`;
     const clipBytes = p.clipBytes;
     const clip = { fps: p.clipFps, heroIdx: p.clipHeroIdx };
     const phrases = [sc.samPhrase].slice(0, perCall);
-    videoTasks.push(() =>
-      runner(name, async () => {
-        for (const phrase of phrases) {
-          const upgraded = await videoCall(env, jobId, p.cp, sc, topK, clipBytes, phrase, evidenceKey, clip, top, budget.resumeOf, gov, lensOpts);
-          if (upgraded) perCp.set(topK, upgraded);
-        }
-      }),
-    );
+    videoTasks.push({
+      perCp,
+      run: () =>
+        runner(name, async () => {
+          const out: VideoStepResult = { k: topK, candidate: null, ...NO_SPEND };
+          for (const phrase of phrases) {
+            const call = await videoCall(env, jobId, p.cp, sc, topK, clipBytes, phrase, evidenceKey, clip, top, budget.resumeOf, lensOpts);
+            out.sentFrames += call.sentFrames;
+            out.billedFrames += call.billedFrames;
+            out.ms += call.ms;
+            if (call.candidate) out.candidate = call.candidate;
+          }
+          return out;
+        }),
+    });
   }
-  await runPool(videoTasks, LENS_CONCURRENCY);
+  const videoOut = await runPool(
+    videoTasks.map((t) => t.run),
+    LENS_CONCURRENCY,
+  );
+  videoOut.forEach((r, i) => {
+    if (r.candidate) videoTasks[i].perCp.set(r.k, r.candidate);
+    tally(r);
+  });
 
   const checkpoints: JobResult["checkpoints"] = planned.map((p) => {
     const perCp = finalResults.get(p.index);
@@ -467,33 +561,24 @@ export async function runGroundLens(
     return { nodeId: p.cp.nodeId, candidates };
   });
 
-  for (const c of checkpoints) {
-    await emitJobEvent(env, jobId, {
-      id: newEventId(),
-      type: "checkpoint",
-      nodeId: c.nodeId,
-      status: c.candidates.some((c) => c.source === "AI_GROUNDED") ? "grounded" : "skipped",
-      candidates: c.candidates,
-    });
-  }
   const usage = {
-    ...(gov.samFrames > 0 ? { samFrames: Math.round(gov.samFrames) } : {}),
-    ...(gov.samMs > 0 ? { samMs: Math.round(gov.samMs) } : {}),
-    samFramesBilled: Math.round(gov.samFramesBilled),
+    ...(spend.samFrames > 0 ? { samFrames: Math.round(spend.samFrames) } : {}),
+    ...(spend.samMs > 0 ? { samMs: Math.round(spend.samMs) } : {}),
+    samFramesBilled: Math.round(spend.samFramesBilled),
     budgetExhausted: gov.exhausted,
   };
-  await emitJobEvent(env, jobId, { id: newEventId(), type: "usage", usage });
-
   const result = JobResultSchema.parse({
     jobId,
     models: { scout: scout.model, ground: "sam-3.1" },
     checkpoints,
     usage,
   });
-  await env.MEDIA.put(`jobs/${jobId}/ground.json`, JSON.stringify(result));
+  await sealLens(env, jobId, runner, result, true);
   return result;
 }
 
+/** One hero-frame SAM call. A non-retryable failure degrades to the
+ * box-only fallback at zero recorded spend. */
 async function imageCall(
   env: Env,
   jobId: string,
@@ -504,32 +589,30 @@ async function imageCall(
   fallback: Candidate,
   evidenceKey: string,
   resumeOf: string | undefined,
-  gov: Governor,
   lensOpts: LensOptions,
-): Promise<Candidate> {
+): Promise<{ candidate: Candidate } & CallSpend> {
   try {
     const call = await samCall(env, jobId, media, sc.samPhrase, IMAGE_PARAMS, (b64) => imageBody(sc.samPhrase, b64), resumeOf, lensOpts);
-    if (!call.cached) {
-      gov.samMs += call.samMs;
-      // Single hero frame sent; vendor image billing is unmeasured until
-      // the W11-07 probe (row 3), so sent frames stand in.
-      gov.samFrames += call.reported ?? 1;
-      gov.samFramesBilled += call.reported ?? 0;
-    }
+    // Single hero frame sent; vendor image billing is unmeasured until
+    // the W11-07 probe (row 3), so sent frames stand in.
+    const spend: CallSpend = call.cached
+      ? NO_SPEND
+      : { sentFrames: call.reported ?? 1, billedFrames: call.reported ?? 0, ms: call.samMs };
     await env.MEDIA.put(evidenceKey, call.text);
     const obs = parseSam(call.text);
-    if (obs.length === 0) return fallback;
-    return toGrounded(cp, sc, k, evidenceKey, obs, { clipB64: "", fps: 0, heroIdx: 0, heroTMs: cp.tMs }, fallback, true);
+    if (obs.length === 0) return { candidate: fallback, ...spend };
+    const candidate = toGrounded(cp, sc, k, evidenceKey, obs, { clipB64: "", fps: 0, heroIdx: 0, heroTMs: cp.tMs }, fallback, true);
+    return { candidate, ...spend };
   } catch (e) {
-    if (e instanceof NonRetryableError) return fallback;
+    if (e instanceof NonRetryableError) return { candidate: fallback, ...NO_SPEND };
     throw e;
   }
 }
 
 /**
- * Video escalation for the top candidate. Returns the upgraded candidate,
- * or null when the clip yields nothing usable (the image result stands —
- * never a downgrade to box-only).
+ * Video escalation for the top candidate. `candidate` is the upgraded
+ * candidate, or null when the clip yields nothing usable (the image result
+ * stands — never a downgrade to box-only).
  */
 async function videoCall(
   env: Env,
@@ -543,19 +626,16 @@ async function videoCall(
   clip: { fps: number; heroIdx: number },
   standIn: Candidate,
   resumeOf: string | undefined,
-  gov: Governor,
   lensOpts: LensOptions,
-): Promise<Candidate | null> {
+): Promise<{ candidate: Candidate | null } & CallSpend> {
   try {
     const call = await samCall(env, jobId, media, phrase, VIDEO_PARAMS, (b64) => videoBody(phrase, b64), resumeOf, lensOpts);
-    if (!call.cached) {
-      gov.samMs += call.samMs;
-      gov.samFrames += call.reported ?? (cp.clip?.frameCount ?? 0);
-      gov.samFramesBilled += call.reported ?? 0;
-    }
+    const spend: CallSpend = call.cached
+      ? NO_SPEND
+      : { sentFrames: call.reported ?? (cp.clip?.frameCount ?? 0), billedFrames: call.reported ?? 0, ms: call.samMs };
     await env.MEDIA.put(evidenceKey, call.text);
     const obs = parseSam(call.text);
-    if (obs.length === 0) return null;
+    if (obs.length === 0) return { candidate: null, ...spend };
     // Mismatch degrades to the image result, not to box-only: the video
     // disagreeing never erases grounding the hero frame already earned.
     const upgraded = toGrounded(
@@ -568,9 +648,9 @@ async function videoCall(
       { ...standIn, evidenceKey, models: standIn.models },
       false,
     );
-    return upgraded.source === "AI_GROUNDED" ? upgraded : null;
+    return { candidate: upgraded.source === "AI_GROUNDED" ? upgraded : null, ...spend };
   } catch (e) {
-    if (e instanceof NonRetryableError) return null;
+    if (e instanceof NonRetryableError) return { candidate: null, ...NO_SPEND };
     throw e;
   }
 }

@@ -937,7 +937,16 @@ describe("EchoPipeline skeleton", () => {  it("runs load → scout → ground �
     // SAM calls — and zero calls means zero per-call `ground:…` steps. The
     // ground phase still runs (box-only seal below); per-call steps appear
     // only when SAM calls are actually sent (pipeline.test.ts proves it).
-    expect(seen).toEqual(["load", "scout", "assemble"]);
+    // Event emits and the ground.json seal are their own replay-safe steps.
+    expect(seen).toEqual([
+      "load",
+      "scout",
+      "emit:stage:grounding",
+      "emit:checkpoint:n2",
+      "ground:seal",
+      "assemble",
+      "emit:complete",
+    ]);
     const progress = JSON.parse(
       new TextDecoder().decode(media.store.get(`jobs/${jobId}/progress.json`)!.body),
     );

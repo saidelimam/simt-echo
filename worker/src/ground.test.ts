@@ -583,6 +583,10 @@ function stepRecorder(names: string[]): StepRunner {
   };
 }
 
+/** SAM-call steps only: event emits and the ground.json seal are separate steps. */
+const isCallStep = (name: string) => /^ground:[a-z0-9_]+:\d+:/.test(name);
+const callSteps = (names: string[]) => names.filter(isCallStep);
+
 describe("runGround SAM lens (W11-06)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -601,8 +605,9 @@ describe("runGround SAM lens (W11-06)", () => {
     const result = await runGround(env, "job1", manifest, lensScout(), stepRecorder(names));
 
     expect(calls).toEqual(["image"]);
-    expect(names).toHaveLength(1);
-    expect(names[0]).toMatch(/^ground:n2:[0-9a-f]{12}$/);
+    const steps = callSteps(names);
+    expect(steps).toHaveLength(1);
+    expect(steps[0]).toMatch(/^ground:n2:0:[0-9a-f]{12}$/);
     const c = result.checkpoints[0].candidates[0];
     expect(c.source).toBe("AI_GROUNDED");
     expect(c.samConfidence).toBeCloseTo(0.92);
@@ -621,8 +626,9 @@ describe("runGround SAM lens (W11-06)", () => {
     const result = await runGround(env, "job1", manifest, lensScout(), stepRecorder(names));
 
     expect(calls).toEqual(["image", "video"]);
-    expect(names).toHaveLength(2);
-    expect(names[1]).toBe(`${names[0]}:video`);
+    const steps = callSteps(names);
+    expect(steps).toHaveLength(2);
+    expect(steps[1]).toBe(`${steps[0]}:video`);
     const top = result.checkpoints[0].candidates[0];
     expect(top.source).toBe("AI_GROUNDED");
     // The strip call earned a real track and mask.
@@ -763,7 +769,7 @@ describe("runGround SAM lens (W11-06)", () => {
   it("retries a single billed call from cache at zero re-billed frames", async () => {
     const { manifest, env } = lensSetup({ type: "CHECKPOINT" });
     const calls = stubMeta("", imgLine(0.92));
-    const target = `ground:n2:${await phraseHash("red pillar")}`;
+    const target = `ground:n2:0:${await phraseHash("red pillar")}`;
     const seen = new Map<string, number>();
     const lossy: StepRunner = async (name, fn) => {
       seen.set(name, (seen.get(name) ?? 0) + 1);
@@ -781,7 +787,8 @@ describe("runGround SAM lens (W11-06)", () => {
     // The Workflow retries only the lost step; every other step is untouched
     // and the lost one replays from cache.
     const strict: StepRunner = async (name, fn) => {
-      if (name !== target) throw new Error(`must not re-run ${name}`);
+      // Only the lost SAM step may re-run; emits and the seal follow it.
+      if (isCallStep(name) && name !== target) throw new Error(`must not re-run ${name}`);
       return fn();
     };
     const retried = await runGround(env, "job1", manifest, lensScout(), strict);
@@ -789,6 +796,59 @@ describe("runGround SAM lens (W11-06)", () => {
     expect(retried.checkpoints[0].candidates[0].source).toBe("AI_GROUNDED");
     expect(retried.usage.samFrames ?? 0).toBe(0);
     expect(retried.usage.samFramesBilled).toBe(0);
+  });
+
+  it("replays a cached-step run to identical aggregates with no duplicate events", async () => {
+    const { manifest, env } = lensSetup({ type: "TURN" });
+    vi.stubGlobal("fetch", async (_url: string, init: { body: string }) => {
+      await new Promise((r) => setTimeout(r, 5));
+      const video = init.body.includes("input_video");
+      const completed = video
+        ? `data: ${JSON.stringify({ type: "response.completed", response: { usage: { video_frames_processed: 12 } } })}\n\n`
+        : "";
+      const text = video ? STRIP_VIDEO : imgLine(0.95);
+      return new Response(
+        `data: ${JSON.stringify({ type: "response.output_text.delta", delta: text })}\n\n${completed}data: [DONE]\n\n`,
+        { status: 200 },
+      );
+    });
+    // A Workflow stand-in: a completed step returns its recorded output
+    // (structured-cloned, like the real serialization) without running.
+    const recorded = new Map<string, unknown>();
+    const replaying: StepRunner = async (name, fn) => {
+      if (recorded.has(name)) return structuredClone(recorded.get(name)) as Awaited<ReturnType<typeof fn>>;
+      const out = await fn();
+      recorded.set(name, structuredClone(out));
+      return out;
+    };
+    const first = await runGround(env, "job1", manifest, lensScout(), replaying);
+    const eventsAfterFirst = await readJobEvents(env, "job1");
+    expect(first.usage.samFramesBilled).toBe(12);
+    expect(first.checkpoints[0].candidates[0].source).toBe("AI_GROUNDED");
+
+    vi.stubGlobal("fetch", async () => {
+      throw new Error("a replay must not reach SAM");
+    });
+    const second = await runGround(env, "job1", manifest, lensScout(), replaying);
+
+    expect(second).toEqual(first);
+    expect(await readJobEvents(env, "job1")).toEqual(eventsAfterFirst);
+  });
+
+  it("gives two survivors that share a phrase distinct step names", async () => {
+    const { manifest, env } = lensSetup({ type: "CHECKPOINT", clip: false });
+    stubMeta("", imgLine(0.92));
+    const names: string[] = [];
+    const twins = lensScout([
+      scoutCandidate({ title: "Red pillar A" }),
+      scoutCandidate({ title: "Red pillar B" }),
+    ]);
+    await runGround(env, "job1", manifest, twins, stepRecorder(names));
+
+    const steps = callSteps(names);
+    expect(steps).toHaveLength(2);
+    expect(new Set(steps).size).toBe(2);
+    expect(steps.map((n) => n.split(":")[2]).sort()).toEqual(["0", "1"]);
   });
 
   it("aborts a hanging SAM call on idle silence", async () => {

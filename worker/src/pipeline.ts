@@ -6,6 +6,7 @@ import { JobResultSchema, ManifestSchema, type JobResult, type JobStage, type Ma
 import { emitJobEvent, newEventId, putError, putProgress } from "./jobs";
 import { runScout, ScoutError, type ScoutResult } from "./scout";
 import { runGround, runGroundLens } from "./ground";
+import { emitStep, type StepRunner } from "./samLens";
 
 export interface PipelineParams {
   jobId: string;
@@ -22,7 +23,7 @@ const STEP_OPTS = {
  * slice, W3-06) re-sorts by §6.6 rank, attaches measured usage and seals
  * `jobs/<id>/result.json` for the app to poll.
  * W11-06: the ground phase runs the SAM lens by default — one Workflow
- * step `ground:<nodeId>:<phraseHash>` per SAM call, so a retry re-bills one
+ * step `ground:<nodeId>:<k>:<phraseHash>` per SAM call, so a retry re-bills one
  * call, never all. `GROUND_MODE=legacy` keeps the single W3-05 `ground`
  * step until W11-10. */
 export class EchoPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
@@ -32,6 +33,7 @@ export class EchoPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
   ): Promise<unknown> {
     const { jobId } = event.payload;
     const lensMode = (this.env.GROUND_MODE ?? "lens") !== "legacy";
+    const runner: StepRunner = (name, fn) => step.do(name, STEP_OPTS, fn);
     try {
       const manifest = await step.do("load", STEP_OPTS, () => loadManifest(this.env, jobId));
       // Wall-clock usage for result.json (plan §10 W3-06: timings). Measured
@@ -41,17 +43,17 @@ export class EchoPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
       const scout = await step.do("scout", STEP_OPTS, () => runScoutStep(this.env, jobId, manifest));
       const scoutMs = Date.now() - t0;
       const ground = lensMode
-        ? await runGroundLensPhase(this.env, jobId, manifest, scout, step)
+        ? await runGroundLensPhase(this.env, jobId, manifest, scout, runner)
         : await step.do("ground", STEP_OPTS, () => runGroundStep(this.env, jobId, manifest, scout));
       const assembled = await step.do("assemble", STEP_OPTS, () =>
         assembleFromGround(this.env, jobId, manifest, ground, { scoutMs }),
       );
       if (lensMode) {
-        await emitJobEvent(this.env, jobId, {
-          id: newEventId(),
+        await emitStep(runner, this.env, jobId, "emit:complete", (id) => ({
+          id,
           type: "complete",
           result: assembled,
-        });
+        }));
       }
       return assembled;
     } catch (e) {
@@ -154,7 +156,7 @@ async function runGroundStep(
 
 /**
  * W11-06 lens ground phase: per-call steps, not one `ground` step. Each
- * SAM call runs as `step.do("ground:<nodeId>:<phraseHash>", …)` inside the
+ * SAM call runs as `step.do("ground:<nodeId>:<k>:<phraseHash>", …)` inside the
  * lens, so the Workflow retries a failed call — never the whole phase.
  * Emits the W10-06 `stage` event for grounding alongside progress.json.
  */
@@ -163,10 +165,15 @@ async function runGroundLensPhase(
   jobId: string,
   manifest: Manifest,
   scout: ScoutResult,
-  step: WorkflowStep,
+  runner: StepRunner,
 ): Promise<JobResult> {
   await putProgress(env, jobId, "grounding");
   const stage: JobStage = "grounding";
-  await emitJobEvent(env, jobId, { id: newEventId(), type: "stage", stage, updatedAt: Date.now() });
-  return runGroundLens(env, jobId, manifest, scout, (name, fn) => step.do(name, STEP_OPTS, fn));
+  await emitStep(runner, env, jobId, "emit:stage:grounding", (id) => ({
+    id,
+    type: "stage",
+    stage,
+    updatedAt: Date.now(),
+  }));
+  return runGroundLens(env, jobId, manifest, scout, runner);
 }

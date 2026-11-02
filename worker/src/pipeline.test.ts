@@ -327,10 +327,18 @@ describe("EchoPipeline lens phase (W11-06)", () => {
     const out = (await pipeline.run({ payload: { jobId: "job1" } } as never, step as never)) as JobResult;
 
     // One step per SAM call — a retry re-bills one call, never all.
-    expect(names).toHaveLength(4);
-    expect(names.slice(0, 2)).toEqual(["load", "scout"]);
-    expect(names[2]).toMatch(/^ground:n2:[0-9a-f]{12}$/);
-    expect(names[3]).toBe("assemble");
+    expect(names.filter((n) => /^ground:n2:\d+:[0-9a-f]{12}/.test(n))).toHaveLength(1);
+    expect(names).toEqual([
+      "load",
+      "scout",
+      "emit:stage:grounding",
+      expect.stringMatching(/^ground:n2:0:[0-9a-f]{12}$/),
+      "emit:checkpoint:n2",
+      "emit:usage",
+      "ground:seal",
+      "assemble",
+      "emit:complete",
+    ]);
     expect(out.models).toEqual({ scout: expect.any(String), ground: "sam-3.1" });
     expect(out.checkpoints[0].candidates[0].source).toBe("AI_GROUNDED");
     expect(out.usage.samFrames).toBe(1);
