@@ -4,6 +4,14 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.Color
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import app.simt.echo.host.RobolectricActivityRule
 import app.simt.echo.ui.EchoRoute
 import app.simt.echo.ui.shell.EchoShell
@@ -75,5 +83,43 @@ class EchoThemeHomeRenderTest {
         compose.onNodeWithText("Walk it once. Share the way.").assertIsDisplayed()
         compose.onNodeWithText("Record").assertIsDisplayed()
         compose.onNodeWithText("Receive").assertIsDisplayed()
+    }
+
+    /**
+     * W7-12/W9-11 device finding: screens draw on CosmosBackground (not
+     * an M3 Surface), so unstyled Text fell back to Black — invisible
+     * on void. EchoTheme must provide the scheme ink as content color
+     * in both schemes.
+     */
+    @Test
+    fun contentInkFollowsDeepSpaceScheme() {
+        var ink: Color? = null
+        var onBackground: Color? = null
+        compose.setContent {
+            EchoTheme(darkTheme = true) {
+                ink = LocalContentColor.current
+                onBackground = MaterialTheme.colorScheme.onBackground
+            }
+        }
+        compose.runOnIdle {
+            assertEquals(onBackground, ink)
+            assertNotEquals(Color.Black, ink)
+        }
+    }
+
+    @Test
+    fun contentInkFollowsDaylightScheme() {
+        var ink: Color? = null
+        var onBackground: Color? = null
+        compose.setContent {
+            EchoTheme(darkTheme = false) {
+                ink = LocalContentColor.current
+                onBackground = MaterialTheme.colorScheme.onBackground
+            }
+        }
+        compose.runOnIdle {
+            assertEquals(onBackground, ink)
+            assertNotEquals(Color.Black, ink)
+        }
     }
 }

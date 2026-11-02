@@ -1,6 +1,7 @@
 package app.simt.echo.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -102,9 +103,18 @@ fun EchoTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit,
 ) {
-    CompositionLocalProvider(LocalEchoExtraColors provides if (darkTheme) EchoDarkExtras else EchoLightExtras) {
+    // Screens draw on CosmosBackground (not an M3 Surface), so nothing
+    // provides a content color and unstyled Text falls back to Black —
+    // invisible on void (W7-12/W9-11 device finding). Provide the
+    // scheme's on-background ink once, here; components that set
+    // explicit colors are unaffected.
+    val scheme = if (darkTheme) EchoDarkScheme else EchoLightScheme
+    CompositionLocalProvider(
+        LocalEchoExtraColors provides if (darkTheme) EchoDarkExtras else EchoLightExtras,
+        LocalContentColor provides scheme.onBackground,
+    ) {
         MaterialTheme(
-            colorScheme = if (darkTheme) EchoDarkScheme else EchoLightScheme,
+            colorScheme = scheme,
             typography = rememberEchoTypography(),
             shapes = EchoShapes,
             content = content,
