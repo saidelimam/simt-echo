@@ -647,15 +647,20 @@ class ProcessingViewModel(
     }
 
     /**
-     * Polling fallback after the stream fails (plan W11-08): at most
-     * five polls (`FALLBACK_POLL_DELAYS_MS` gaps), the same transient
-     * tolerance as [poll], `job.json` on stage change only.
+     * Polling fallback after the stream fails (plan W11-08): backs off
+     * through [FALLBACK_POLL_DELAYS_MS] (2 → 4 → 8 → 16 s) and then holds
+     * at the last gap until the overall deadline — `maxPolls` of the
+     * first gap, the 300 s the fixed-interval [poll] allows — because SAM
+     * jobs take minutes. Same transient tolerance as [poll], `job.json`
+     * on stage change only. The deadline counts the scheduled gaps, so it
+     * is exact under a virtual clock.
      */
     private suspend fun fallbackPoll(jobId: String) {
         var consecutiveFailures = 0
-        val attempts = minOf(maxPolls, FALLBACK_POLL_DELAYS_MS.size + 1)
-        repeat(attempts) { index ->
-            if (index > 0) delay(FALLBACK_POLL_DELAYS_MS[index - 1])
+        val deadlineMs = maxPolls * FALLBACK_POLL_DELAYS_MS.first()
+        var elapsedMs = 0L
+        var attempt = 0
+        while (true) {
             val poll = try {
                 api.get(jobId)
             } catch (e: CancellationException) {
@@ -670,21 +675,28 @@ class ProcessingViewModel(
                     _ui.update { it.copy(phase = ProcessingPhase.Failed(processingErrorCopy())) }
                     return
                 }
-                return@repeat
+                null
             }
-            consecutiveFailures = 0
-            persist(jobId, poll.status, poll.stage)
-            when (poll.status) {
-                "complete" -> {
-                    _ui.update { it.copy(phase = ProcessingPhase.Ready) }
-                    return
+            if (poll != null) {
+                consecutiveFailures = 0
+                persist(jobId, poll.status, poll.stage)
+                when (poll.status) {
+                    "complete" -> {
+                        _ui.update { it.copy(phase = ProcessingPhase.Ready) }
+                        return
+                    }
+                    "errored" -> {
+                        _ui.update { it.copy(phase = ProcessingPhase.Failed(processingJobErrorCopy())) }
+                        return
+                    }
+                    else -> _ui.update { it.copy(phase = ProcessingPhase.Working(poll.stage)) }
                 }
-                "errored" -> {
-                    _ui.update { it.copy(phase = ProcessingPhase.Failed(processingJobErrorCopy())) }
-                    return
-                }
-                else -> _ui.update { it.copy(phase = ProcessingPhase.Working(poll.stage)) }
             }
+            val gapMs = FALLBACK_POLL_DELAYS_MS[minOf(attempt, FALLBACK_POLL_DELAYS_MS.lastIndex)]
+            if (elapsedMs + gapMs > deadlineMs) break
+            delay(gapMs)
+            elapsedMs += gapMs
+            attempt++
         }
         _ui.update { it.copy(phase = ProcessingPhase.Failed(processingJobTimeoutCopy())) }
     }

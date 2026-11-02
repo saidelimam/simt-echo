@@ -47,6 +47,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -927,6 +928,45 @@ class ProcessingViewModelTest {
         assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
         assertEquals(3, api.getCalls)
         assertEquals("complete", h.drafts.loadJobRecord("draft-1")?.status)
+    }
+
+    @Test
+    fun fallbackPollingBacksOffThenHoldsAtSixteenSecondsUntilTheDeadline() = runTest(dispatcher) {
+        val h = harness()
+        // A SAM job that never finishes: the stream is down, polls stay "running".
+        val api = FakeCloudApi().apply {
+            flows = ArrayDeque(listOf(flow { throw EchoApiError.Network(RuntimeException("down")) }))
+        }
+        val vm = h.vm(api, maxPolls = 150)
+        advanceUntilIdle()
+        vm.send()
+        advanceUntilIdle()
+
+        val failed = assertIs<ProcessingPhase.Failed>(vm.ui.value.phase)
+        assertTrue(failed.message.contains("Timed out", ignoreCase = true), failed.message)
+        // Polls at 0, 2, 6, 14, 30 s, then every 16 s while the next poll
+        // still lands inside the 300 s window (last at 286 s): 21 polls, not 5.
+        assertEquals(21, api.getCalls)
+        assertEquals(286_000L, currentTime)
+    }
+
+    @Test
+    fun fallbackPollingStillFindsAJobThatFinishesMinutesIn() = runTest(dispatcher) {
+        val h = harness()
+        val api = FakeCloudApi(
+            polls = ArrayDeque(List(14) { running(JobStage.GROUNDING) } + complete()),
+        ).apply {
+            flows = ArrayDeque(listOf(flow { throw EchoApiError.Network(RuntimeException("down")) }))
+        }
+        val vm = h.vm(api, maxPolls = 150)
+        advanceUntilIdle()
+        vm.send()
+        advanceUntilIdle()
+
+        // The 15th poll lands at 190 s — far past the old 30 s give-up.
+        assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
+        assertEquals(15, api.getCalls)
+        assertEquals(190_000L, currentTime)
     }
 
     @Test
