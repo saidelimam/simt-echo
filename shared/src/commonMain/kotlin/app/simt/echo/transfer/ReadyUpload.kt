@@ -153,10 +153,9 @@ class ReadyUploader(
 
     /**
      * Stages [files]: declares them and PUTs the bytes the server lacks. Skips
-     * (never throws) on the consent, network and session-cap gates; files
-     * already staged with the same bytes are not sent twice. The session id is
-     * recorded as soon as it exists, before any PUT, so a crash mid-batch still
-     * leaves [discard] a session to delete.
+     * on the consent, network and session-cap gates; files already staged
+     * with the same bytes are not sent twice. A transport failure throws,
+     * leaving the session recorded for [discard] but its files unclaimed.
      */
     suspend fun stage(files: List<UploadFile>): ReadyStageOutcome {
         if (!consent.enabled) return ReadyStageOutcome.SkippedNoConsent
@@ -169,6 +168,19 @@ class ReadyUploader(
         if (fresh.isEmpty()) return ReadyStageOutcome.SkippedEmpty
         if ((staged?.uploadIds?.size ?: 0) >= MAX_STAGED_SESSIONS) return ReadyStageOutcome.SkippedFull
         val created = api.createUpload(fresh.map { (file, sha) -> UploadFileRef(file.id, sha, file.bytes.size.toLong()) })
+        // The session is recorded before any PUT so a crash or cancel mid-batch
+        // still leaves discard something to delete; the file hashes are claimed
+        // only once every byte landed, so Finish never trusts a half-sent batch.
+        drafts.saveReadyStagedRecord(
+            draftId,
+            ReadyStagedRecord(
+                uploadIds = staged?.uploadIds.orEmpty() + created.uploadId,
+                updatedAtMs = nowMs(),
+                files = staged?.files.orEmpty(),
+            ),
+        )
+        val byId = fresh.associate { (file, _) -> file.id to file }
+        created.missing.forEach { id -> byId[id]?.let { api.putUploadFile(created.uploadId, it) } }
         drafts.saveReadyStagedRecord(
             draftId,
             ReadyStagedRecord(
@@ -177,8 +189,6 @@ class ReadyUploader(
                 files = staged?.files.orEmpty() + fresh.associate { (file, sha) -> file.id to sha },
             ),
         )
-        val byId = fresh.associate { (file, _) -> file.id to file }
-        created.missing.forEach { id -> byId[id]?.let { api.putUploadFile(created.uploadId, it) } }
         return ReadyStageOutcome.Staged
     }
 

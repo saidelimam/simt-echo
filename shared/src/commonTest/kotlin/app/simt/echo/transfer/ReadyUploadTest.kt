@@ -3,8 +3,6 @@ package app.simt.echo.transfer
 import app.simt.echo.data.DraftRepository
 import app.simt.echo.data.FileStore
 import app.simt.echo.media.sha256Hex
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.runTest
 import okio.Path.Companion.toPath
 import okio.fakefilesystem.FakeFileSystem
@@ -21,58 +19,6 @@ import kotlin.test.assertTrue
  * and Finish creates the job against already-uploaded blobs.
  */
 class ReadyUploadTest {
-
-    private class FakeV11Api : V11CloudApi {
-        val uploadCreates = mutableListOf<List<UploadFileRef>>()
-        val puts = mutableListOf<UploadFile>()
-        val uploadDeletes = mutableListOf<String>()
-        val stagedCreates = mutableListOf<Triple<String, List<String>, String>>()
-        var deleteError: EchoApiError? = null
-        var putError: EchoApiError? = null
-        var staleOnCreate: EchoApiError? = null
-        private var nextUpload = 0
-
-        override suspend fun submit(manifestJson: String, files: List<UploadFile>): String = "job-x"
-
-        override suspend fun get(jobId: String): JobPoll = JobPoll("complete", JobStage.COMPLETE)
-
-        override suspend fun delete(jobId: String) = Unit
-
-        override suspend fun samEnabled(): Boolean = false
-
-        override suspend fun createUpload(files: List<UploadFileRef>): CreatedUpload {
-            uploadCreates += files
-            nextUpload++
-            return CreatedUpload("upload-$nextUpload", files.map { it.name })
-        }
-
-        override suspend fun uploadMissing(uploadId: String): List<String> = emptyList()
-
-        override suspend fun putUploadFile(uploadId: String, file: UploadFile) {
-            putError?.let { throw it }
-            puts += file
-        }
-
-        override suspend fun createJob(manifestJson: String, uploadId: String, idempotencyKey: String, resumeOf: String?): String =
-            "job-x"
-
-        override suspend fun deleteUpload(uploadId: String) {
-            deleteError?.let { throw it }
-            uploadDeletes += uploadId
-        }
-
-        override suspend fun createJobFromStaged(
-            manifestJson: String,
-            uploadIds: List<String>,
-            idempotencyKey: String,
-        ): String {
-            staleOnCreate?.let { throw it }
-            stagedCreates += Triple(manifestJson, uploadIds, idempotencyKey)
-            return "job-1"
-        }
-
-        override fun watchEvents(jobId: String, lastEventId: String?): Flow<JobEvent> = emptyFlow()
-    }
 
     private data class Harness(
         val api: FakeV11Api,
@@ -209,9 +155,26 @@ class ReadyUploadTest {
         h.uploader.grantConsent()
         h.api.putError = EchoApiError.Server(500, "boom")
         assertFailsWith<EchoApiError.Server> { h.uploader.stage(listOf(file("a"))) }
-        assertEquals(listOf("upload-1"), h.drafts.loadReadyStagedRecord("draft-1")?.uploadIds)
+        val record = checkNotNull(h.drafts.loadReadyStagedRecord("draft-1"))
+        assertEquals(listOf("upload-1"), record.uploadIds)
+        assertTrue(record.files.isEmpty(), "a half-sent batch claims no file")
         h.uploader.discard()
         assertEquals(listOf("upload-1"), h.api.uploadDeletes)
+    }
+
+    @Test
+    fun finishResendsAFileWhoseBatchNeverFinishedLanding() = runTest {
+        val h = harness()
+        h.uploader.grantConsent()
+        h.api.putError = EchoApiError.Server(500, "cut off")
+        assertFailsWith<EchoApiError.Server> { h.uploader.stage(listOf(file("a"))) }
+        h.api.putError = null
+        h.api.uploadCreates.clear()
+
+        createJobFromWalkStaging(h.api, h.drafts, "draft-1", "{}", listOf(file("a")), "key-1")
+
+        assertEquals(listOf("a"), h.api.puts.map { it.id }, "the unclaimed file goes in the final session")
+        assertEquals(listOf("upload-2", "upload-1"), h.api.stagedCreates.single().second)
     }
 
     @Test

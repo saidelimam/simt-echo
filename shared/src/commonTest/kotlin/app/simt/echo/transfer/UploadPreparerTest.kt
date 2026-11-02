@@ -5,9 +5,6 @@ import app.simt.echo.capture.FaceVerdict
 import app.simt.echo.capture.GlimpseEntry
 import app.simt.echo.data.DraftRepository
 import app.simt.echo.data.FileStore
-import app.simt.echo.media.ClipInfo
-import app.simt.echo.media.CropBox
-import app.simt.echo.media.MediaTools
 import app.simt.echo.media.clipId
 import app.simt.echo.media.keyframeSpecs
 import app.simt.echo.model.CaptureLog
@@ -19,7 +16,6 @@ import app.simt.echo.model.StartAnchor
 import app.simt.echo.model.TurnDir
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
-import okio.Path
 import okio.Path.Companion.toPath
 import okio.fakefilesystem.FakeFileSystem
 import kotlin.test.Test
@@ -35,28 +31,9 @@ class UploadPreparerTest {
 
     private val fileSystem = FakeFileSystem()
     private val drafts = DraftRepository(FileStore(fileSystem, "/data".toPath()))
-    private val forged = mutableListOf<String>()
-    private var videoCuts = 0
-
-    private fun media(stripForge: Boolean) = object : MediaTools {
-        override val supportsStripForge: Boolean = stripForge
-
-        override suspend fun extractFrame(video: Path, atMs: Long, maxSide: Int, out: Path) = error("no extraction while walking")
-
-        override suspend fun cropJpeg(input: Path, box: CropBox, maxSide: Int, out: Path) = error("no crops")
-
-        override suspend fun cutClip(video: Path, startMs: Long, endMs: Long, maxFps: Int, out: Path): ClipInfo {
-            videoCuts++
-            error("the video is still being written")
-        }
-
-        override suspend fun forgeStripClip(frames: List<Path>, out: Path): ClipInfo {
-            forged += "${out.name}:${frames.size}"
-            out.parent?.let { fileSystem.createDirectories(it) }
-            fileSystem.write(out) { write("forged".encodeToByteArray()) }
-            return ClipInfo(out, frameCount = frames.size, durationMs = frames.size * 250L)
-        }
-    }
+    private var strips = FakeStripMedia(fileSystem)
+    private val forged get() = strips.forged
+    private val videoCuts get() = strips.videoCuts
 
     private val node = RouteNode(
         id = "n1", type = NodeType.TURN, atDistanceM = 20.0, label = "pillar",
@@ -88,7 +65,7 @@ class UploadPreparerTest {
     }
 
     private fun preparer(stripForge: Boolean, detector: FaceDetector? = null) =
-        UploadPreparer(drafts, media(stripForge), "draft-1", detector, Dispatchers.Unconfined) { 1_762_000_100_000L }
+        UploadPreparer(drafts, FakeStripMedia(fileSystem, stripForge).also { strips = it }, "draft-1", detector, Dispatchers.Unconfined) { 1_762_000_100_000L }
 
     private val clearDetector = object : FaceDetector {
         override fun verdictFor(entry: GlimpseEntry): FaceVerdict = FaceVerdict.FACE_FREE
