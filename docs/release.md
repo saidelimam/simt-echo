@@ -80,3 +80,48 @@ Built with `./gradlew :androidApp:assembleRelease` in the W9-10 worktree:
 
 Debug-signed smoke artefact — not a shippable release. A shippable
 release requires the env-wired production keystore above plus W9-12's gate.
+
+## Production deploy (W9-01, 2026-11-02)
+
+Remote mutations (owner-approved for this slice; every id recorded):
+
+- R2 bucket `echo-media` created: `PUT
+  /accounts/3f031459999d10bf707212469b0a2748/r2/buckets/echo-media` →
+  `{name: echo-media, location: WEUR, created: 2026-11-02T00:50:50Z}`.
+  Wrangler config already bound it (`MEDIA` in `worker/wrangler.jsonc`).
+- AI Gateway `echo` created (the worker's `AI_GATEWAY_ID` had no
+  gateway and the first live job failed `2001: configure AI Gateway`):
+  `POST .../ai-gateway/gateways {id: echo}` → created 2026-11-02
+  00:52:52, Workers AI postpaid billing (the metered spend this
+  enables was part of the same approval).
+- Worker secret `ECHO_APP_TOKEN` set via `wrangler secret put`
+  (generated value; lives only in the secret store and the
+  operator's gitignored `local.properties` — never in the repo).
+  `META_API_KEY` deliberately unset (no value available): health
+  reports `metaKeyConfigured: false`, SAM grounding stays off by
+  config, Workers AI scout is the live path.
+- `worker/wrangler.jsonc`: removed the `limits.cpu_ms: 300000`
+  stanza — the account is on the Free plan (Cloudflare code 10028)
+  and rejects deploys that set CPU limits. Worker/API contracts
+  untouched. Deploy command: `wrangler deploy --var ENV:production`.
+
+Deploy evidence (all live):
+
+- URL: `https://echo-api.saidelimam.workers.dev`, version id
+  `df4792af-aaf0-4bdb-b309-1a848a78e994`, bindings MEDIA (echo-media)
+  + AI + RL + PIPELINE confirmed in deploy output.
+- `GET /v1/health` (public): `{ok: true, version: 0.1.0,
+  metaKeyConfigured: false, providers: {workersAi: true, metaKey:
+  false}}` — true-to-config.
+- Throwaway job `fe7f506f-b1e1-431e-97d7-dc82f9958d0c`: POST 202 with
+  a real emulator-camera door photo → `complete` in <60 s with a
+  genuine Llama 4 Scout candidate ("Door / Turn left at the door",
+  box-only, `scoutMs: 4320`) → result fetched (readable) →
+  `DELETE` 204 → `GET` 404 `job_not_found`. A first job errored on
+  the missing gateway, was also deleted (204 → 404). Full lifecycle
+  proven on production data and code.
+- Release builds need no developer `local.properties` for the cloud
+  path: `androidApp/build.gradle.kts` release type defaults
+  `WORKERS_API_BASE` to the URL above (`ECHO_PROD_API_BASE`
+  overrides) and reads `ECHO_APP_TOKEN` only from
+  `ECHO_PROD_APP_TOKEN` (empty default — fail-closed per W7-07).

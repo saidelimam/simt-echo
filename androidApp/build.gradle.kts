@@ -51,7 +51,20 @@ android {
 
     buildTypes {
         release {
-            // W9-10 minify decision: stays OFF — see docs/release.md.
+            // W9-01: release builds talk to production without developer
+            // local.properties. WORKERS_API_BASE defaults to the deployed
+            // worker (env ECHO_PROD_API_BASE overrides); ECHO_APP_TOKEN
+            // comes ONLY from env ECHO_PROD_APP_TOKEN (never committed).
+            // Debug keeps the local.properties behaviour above.
+            buildConfigField(
+                "String", "WORKERS_API_BASE",
+                "\"" + (System.getenv("ECHO_PROD_API_BASE")
+                    ?: "https://echo-api.saidelimam.workers.dev") + "\"",
+            )
+            buildConfigField(
+                "String", "ECHO_APP_TOKEN",
+                "\"" + (System.getenv("ECHO_PROD_APP_TOKEN") ?: "") + "\"",
+            )            // W9-10 minify decision: stays OFF — see docs/release.md.
             // Keep rules are committed (proguard-rules.pro) for the future
             // enablement; the release smoke run below proves the shipped
             // configuration, not an untested minified one.
