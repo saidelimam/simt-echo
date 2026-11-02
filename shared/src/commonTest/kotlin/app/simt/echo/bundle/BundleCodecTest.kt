@@ -1,11 +1,19 @@
 package app.simt.echo.bundle
 
 import app.simt.echo.Fixtures
+import app.simt.echo.V1RouteView
 import app.simt.echo.model.Asset
+import app.simt.echo.model.EchoJson
+import app.simt.echo.model.EchoSchemaVersion
+import app.simt.echo.model.EmbeddedPrint
 import app.simt.echo.model.PrivacyInfo
+import app.simt.echo.model.WaypointPrint
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.encodeToString
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.TimeSource
 
@@ -111,5 +119,59 @@ class BundleCodecTest {
         // Spec target is < 100 ms on device; host gate stays lenient (2 s)
         // so CI load cannot flake it — the shape, not the stopwatch, is gated.
         assertTrue(elapsedMs < 2_000, "encode+open took ${elapsedMs}ms")
+    }
+
+    // ---- W10-05 bundle v2 contract freeze ----
+
+    @Test
+    fun v1FixtureReadsInV2() = runTest {
+        val container = BundleCodec.encode(Fixtures.L_ROUTE, assets)
+        val opened = BundleCodec.open(container).getOrThrow()
+        assertEquals(Fixtures.L_ROUTE, opened.route)
+        assertNull(opened.route.perception)
+        assertEquals(EchoSchemaVersion.V1, opened.route.schemaVersion)
+    }
+
+    @Test
+    fun v2BundleRoundTrips() = runTest {
+        val container = BundleCodec.encode(Fixtures.V2_ROUTE, assets)
+        val opened = BundleCodec.open(container).getOrThrow()
+        assertEquals(Fixtures.V2_ROUTE, opened.route)
+    }
+
+    @Test
+    fun v2SealedBundleRoundTrips() = runTest {
+        // Fingerprints inherit the bundle's encryption: sealed v2 opens whole.
+        val (sealed, key) = BundleCodec.seal(BundleCodec.encode(Fixtures.V2_ROUTE, assets))
+        val opened = BundleCodec.open(sealed, key).getOrThrow()
+        assertEquals(Fixtures.V2_ROUTE, opened.route)
+    }
+
+    @Test
+    fun v2BundleOpensAsV1View() = runTest {
+        // End to end for the decided v2→v1 behaviour: a v1 reader meets the
+        // v2 container, drops `perception`, keeps the geometry — no crash.
+        val container = BundleCodec.encode(Fixtures.V2_ROUTE, assets)
+        val body = BundleCodec.open(container).getOrThrow()
+        val viewed = EchoJson.decodeFromString<V1RouteView>(EchoJson.encodeToString(body.route))
+        assertEquals(Fixtures.V2_ROUTE.routeId, viewed.routeId)
+        assertEquals(Fixtures.V2_ROUTE.nodes, viewed.nodes)
+    }
+
+    @Test
+    fun oversizePerceptionRejectedOnEncode() = runTest {
+        val big = Fixtures.V2_ROUTE.perception!!.copy(
+            waypointPrints = List(250) { i ->
+                WaypointPrint(
+                    atDistanceM = i.toDouble(),
+                    print = EmbeddedPrint("echo-embed-01", 1, Fixtures.printB64(i)),
+                )
+            },
+        )
+        val route = Fixtures.V2_ROUTE.copy(perception = big)
+        val e = assertFailsWith<IllegalArgumentException> {
+            BundleCodec.encode(route, assets)
+        }
+        assertTrue(e.message!!.contains("65536"), e.message)
     }
 }

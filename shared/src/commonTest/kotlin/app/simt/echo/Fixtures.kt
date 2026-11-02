@@ -2,15 +2,24 @@ package app.simt.echo
 
 import app.simt.echo.model.EchoIds
 import app.simt.echo.model.EchoRoute
+import app.simt.echo.model.EmbeddedPrint
 import app.simt.echo.model.Landmark
 import app.simt.echo.model.Confirmation
 import app.simt.echo.model.LandmarkSource
+import app.simt.echo.model.MagProfile
+import app.simt.echo.model.NodeFingerprint
 import app.simt.echo.model.NodeType
 import app.simt.echo.model.PathPoint
+import app.simt.echo.model.RouteHealth
 import app.simt.echo.model.RouteLeg
 import app.simt.echo.model.RouteNode
+import app.simt.echo.model.RoutePerception
 import app.simt.echo.model.StartAnchor
 import app.simt.echo.model.TurnDir
+import app.simt.echo.model.WaypointPrint
+import app.simt.echo.model.withPerception
+import kotlinx.serialization.Serializable
+import kotlin.io.encoding.Base64
 
 /**
  * Canonical test route: start → 20 m → right → 15 m → left → 10 m →
@@ -20,6 +29,41 @@ import app.simt.echo.model.TurnDir
 object Fixtures {
 
     val L_ROUTE: EchoRoute = buildLRoute()
+
+    /** L_ROUTE stamped to schema v2 with deterministic perception (W10-05). */
+    val V2_ROUTE: EchoRoute = buildLRoute().withPerception(demoPerception())
+
+    /** One deterministic int8[256] vector, varied per [salt], as base64. */
+    fun printB64(salt: Int): String =
+        Base64.encode(ByteArray(EmbeddedPrint.PRINT_BYTES) { i -> (i + salt * 13).toByte() })
+
+    private fun demoPrint(salt: Int): EmbeddedPrint = EmbeddedPrint(
+        embedderId = "echo-embed-01",
+        projectionSeedVersion = 1,
+        dataB64 = printB64(salt),
+    )
+
+    private fun demoPerception(): RoutePerception {
+        val nodes = listOf(EchoIds.nodeId(1), EchoIds.nodeId(2)).mapIndexed { index, nodeId ->
+            NodeFingerprint(nodeId = nodeId, prints = listOf(demoPrint(index)))
+        }
+        // Waypoint prints every 5 m over the 45 m fixture (10 entries).
+        val waypoints = (0..45 step 5).map { d ->
+            WaypointPrint(atDistanceM = d.toDouble(), print = demoPrint(100 + d))
+        }
+        // Mag profile every 0.5 m: 90 int16 samples of magnitude + vertical.
+        val mag = MagProfile(
+            magnitude = List(90) { i -> (480 + i % 7).toShort() },
+            vertical = List(90) { i -> (400 + i % 5).toShort() },
+        )
+        return RoutePerception(
+            fingerprints = nodes,
+            waypointPrints = waypoints,
+            magProfile = mag,
+            sigilSeed = 123456789L,
+            health = RouteHealth(score01 = 0.9, checkedAtEpochMs = 1_762_000_000_000L),
+        )
+    }
 
     private fun buildLRoute(): EchoRoute {
         val nodes = listOf(
@@ -96,3 +140,18 @@ object Fixtures {
         return points
     }
 }
+
+/**
+ * The v1 reader's view of a route (W10-05): every v1 field the old app
+ * knows, and nothing newer. Decoding v2 JSON into this must succeed with
+ * `perception` silently dropped — the executable form of the "ignore, never
+ * a crash" decision.
+ */
+@Serializable
+data class V1RouteView(
+    val schemaVersion: Int = 1,
+    val routeId: String = "",
+    val name: String = "",
+    val totalLengthM: Double = 0.0,
+    val nodes: List<RouteNode> = emptyList(),
+)
