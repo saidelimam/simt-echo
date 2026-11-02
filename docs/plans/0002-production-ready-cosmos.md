@@ -240,11 +240,11 @@ with device model + build SHA. No slice is Complete on a partial pass.
 | W9-04 | Queued | Two-phone field E2E (transfer, airplane navigate, haptics) | T | F | W7-12, W8-12 | — |
 | W9-05 | Queued | Device robustness pass (kill, deny, airplane, no-sensor) | F (T) | F | W9-04 | — |
 | W9-06 | Queued | Calibration + §11 field trials (5+5, CSV, honest report) | F (T) | F | W9-04, W9-05 | — |
-| W9-07 | Queued | Local model proven on device/LAN — or claims removed | T (S) | D | W9-02 | — |
+| W9-07 | Complete | Local model proven on device/LAN — or claims removed | T (S) | D | W9-02 | 0575bf22cfc278ef3dd61ce0394e1140c585db93 |
 | W9-08 | Complete | Wear module restored; paired-watch haptic proof | F (T) | F | W7-12 | 682041d39ae4d1398e6db341e7532f0a48d2789d |
-| W9-09 | Queued | Security & privacy production audit | S | D | W9-01, W9-03 | — |
+| W9-09 | Complete | Security & privacy production audit | S | D | W9-01, W9-03 | 99c3295e48315ca0d037e593686ab4da7c0e97a9 |
 | W9-10 | Complete | Release engineering: CI, signing, versioned release build | F (S) | A | W7-02 | 9a229529ca6ab1ee8499bf8b9c48fd4b861cca8d |
-| W9-11 | Queued | First-run, icon, splash, screenshots in Cosmos | L (T) | E | W8-12 | — |
+| W9-11 | Complete | First-run, icon, splash, screenshots in Cosmos | L (T) | E | W8-12 | 20c4e937d6a38c9cd1041508ffaf1517bd58f482 |
 | W9-12 | Queued | MVP v1 release gate (README, demo, limitations, APK) | S | F | W9-02, W9-04, W9-05, W9-06, W9-09, W9-10, W9-11 | — |
 
 Tier totals: **L 2 · F 15 · T 14 · S 5** (primary tiers; reviewers in
