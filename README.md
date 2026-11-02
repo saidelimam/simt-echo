@@ -97,3 +97,7 @@ after 1 day, and an AI Gateway named `echo` (dashboard → AI → AI Gateway).
   `gradle/libs.versions.toml` and wired by the slice that first imports them.
 - No secrets in git: app secrets in `local.properties`, worker secrets via
   `wrangler secret put`.
+- Local AI is not in v1: on-phone (`.litertlm`) and LAN-server inference was
+  never verified on a device here, so Settings exposes no local-model
+  section. The provider seam (`EchoConfig`/`AppGraph`) stays for a future
+  slice.
