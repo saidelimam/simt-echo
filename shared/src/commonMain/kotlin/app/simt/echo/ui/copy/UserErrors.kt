@@ -224,8 +224,10 @@ private val MONTHS = arrayOf(
  * Receive expiry and Share created/expiry lines never show a raw epoch.
  */
 fun formatEpochUtc(epochMs: Long): String {
-    val epochDays = Math.floorDiv(epochMs, 86_400_000L)
-    val dayMs = Math.floorMod(epochMs, 86_400_000L)
+    // W9-10: pure-Kotlin floor div/mod — java.lang.Math is unavailable on
+    // Kotlin/Native (iOS), and this is commonMain. Identical semantics.
+    val epochDays = if (epochMs >= 0) epochMs / 86_400_000L else (epochMs - 86_400_000L + 1L) / 86_400_000L
+    val dayMs = epochMs - 86_400_000L * epochDays
     val z = epochDays + 719_468L
     val era = if (z >= 0) z / 146_097L else (z - 146_096L) / 146_097L
     val doe = z - era * 146_097L

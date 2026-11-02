@@ -1,0 +1,37 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  # W9-10: CI runs the exact gates of plan 0002 §6 evidence naming.
+  plan-gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Shared host tests
+        run: ./gradlew :shared:testAndroidHostTest
+
+      - name: iOS compiles (shared code must not rot; W5-03 stays postponed)
+        run: ./gradlew :shared:compileKotlinIosArm64 :shared:compileKotlinIosSimulatorArm64
+
+      - name: Worker typecheck + test
+        working-directory: worker
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+
+      - name: Debug assembly
+        run: ./gradlew :androidApp:assembleDebug
