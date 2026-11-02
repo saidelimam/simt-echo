@@ -28,6 +28,12 @@ data class EchoRoute(
     val landmarks: List<Landmark> = emptyList(),
     val privacy: PrivacyInfo = PrivacyInfo(),
     val ai: AiProvenance? = null,
+    /**
+     * Bundle v2 perception substrate (W10-05). Null for every v1 bundle;
+     * additive with a default, so v1 JSON and v1 coders decode unchanged.
+     * See [RoutePerception] for the frozen compatibility contract.
+     */
+    val perception: RoutePerception? = null,
 )
 
 @Serializable

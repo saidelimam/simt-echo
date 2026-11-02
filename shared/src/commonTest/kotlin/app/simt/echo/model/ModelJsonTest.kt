@@ -1,11 +1,15 @@
 package app.simt.echo.model
 
 import app.simt.echo.Fixtures
+import app.simt.echo.V1RouteView
 import kotlinx.serialization.encodeToString
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlin.test.assertFailsWith
 
 /** Contract-freeze gate: the §5.2 model must survive EchoJson unchanged. */
 class ModelJsonTest {
@@ -96,5 +100,92 @@ class ModelJsonTest {
             listOf(TurnDir.RIGHT, TurnDir.LEFT),
             route.nodes.filter { it.type == NodeType.TURN }.map { it.turn },
         )
+    }
+
+    // ---- W10-05 bundle v2 contract freeze ----
+
+    @Test
+    fun v1JsonWithoutPerceptionReadsWithNullPerception() {
+        // Frozen v1 shape: no "perception" key at all (explicitNulls=false).
+        val v1 = """{"schemaVersion":1,"routeId":"v1","name":"V1","createdAtEpochMs":1,"creatorLabel":"c","motionSource":"m","totalLengthM":10.0,"start":{"description":"s","alignmentHint":"h"},"nodes":[],"legs":[],"path":[]}"""
+        val decoded = EchoJson.decodeFromString<EchoRoute>(v1)
+        assertEquals(1, decoded.schemaVersion)
+        assertNull(decoded.perception)
+        assertFalse(EchoSchemaVersion.needsUpdate(decoded))
+    }
+
+    @Test
+    fun v2RouteRoundTrips() {
+        val route = Fixtures.V2_ROUTE
+        assertEquals(EchoSchemaVersion.V2, route.schemaVersion)
+        val decoded = EchoJson.decodeFromString<EchoRoute>(EchoJson.encodeToString(route))
+        assertEquals(route, decoded)
+        assertNotNull(decoded.perception)
+        assertEquals(2, decoded.perception!!.fingerprints.size)
+        assertEquals(10, decoded.perception!!.waypointPrints.size)
+        assertEquals(90, decoded.perception!!.magProfile!!.magnitude.size)
+    }
+
+    @Test
+    fun v1ReaderIgnoresV2Perception() {
+        // The decided v2→v1 behaviour: a v1 reader drops `perception` and
+        // still gets the geometry — ignore, never a crash.
+        val v2json = EchoJson.encodeToString(Fixtures.V2_ROUTE)
+        assertTrue(v2json.contains("\"perception\""), v2json)
+        val viewed = EchoJson.decodeFromString<V1RouteView>(v2json)
+        assertEquals(Fixtures.V2_ROUTE.routeId, viewed.routeId)
+        assertEquals(Fixtures.V2_ROUTE.name, viewed.name)
+        assertEquals(Fixtures.V2_ROUTE.totalLengthM, viewed.totalLengthM)
+        assertEquals(Fixtures.V2_ROUTE.nodes, viewed.nodes)
+    }
+
+    @Test
+    fun futureSchemaVersionNeedsUpdate() {
+        assertFalse(EchoSchemaVersion.needsUpdate(Fixtures.L_ROUTE))
+        assertFalse(EchoSchemaVersion.needsUpdate(Fixtures.V2_ROUTE))
+        assertTrue(EchoSchemaVersion.needsUpdate(Fixtures.V2_ROUTE.copy(schemaVersion = 99)))
+    }
+
+    @Test
+    fun perceptionValidationRejectsBadShapes() {
+        val good = Fixtures.V2_ROUTE.perception!!
+        // Four prints on one node (cap is three).
+        val four = NodeFingerprint(
+            nodeId = "n1",
+            prints = List(4) {
+                EmbeddedPrint("echo-embed-01", 1, Fixtures.printB64(it))
+            },
+        )
+        assertFailsWith<IllegalArgumentException> {
+            good.copy(fingerprints = listOf(four)).validate()
+        }
+        // Truncated vector (not int8[256]).
+        val short = EmbeddedPrint("echo-embed-01", 1, Fixtures.printB64(0).dropLast(4))
+        assertFailsWith<IllegalArgumentException> {
+            good.copy(fingerprints = listOf(NodeFingerprint("n1", listOf(short)))).validate()
+        }
+        // Magnitude/vertical arrays must pair up.
+        assertFailsWith<IllegalArgumentException> {
+            good.copy(magProfile = MagProfile(magnitude = listOf(1), vertical = emptyList())).validate()
+        }
+        // Health score is 0..1.
+        assertFailsWith<IllegalArgumentException> {
+            good.copy(health = RouteHealth(score01 = 1.5, checkedAtEpochMs = 1L)).validate()
+        }
+    }
+
+    @Test
+    fun oversizePerceptionFailsValidation() {
+        // 250 waypoint prints ≈ 100 KB of base64: over the 64 KB cap.
+        val big = Fixtures.V2_ROUTE.perception!!.copy(
+            waypointPrints = List(250) { i ->
+                WaypointPrint(
+                    atDistanceM = i.toDouble(),
+                    print = EmbeddedPrint("echo-embed-01", 1, Fixtures.printB64(i)),
+                )
+            },
+        )
+        val e = assertFailsWith<IllegalArgumentException> { big.validate() }
+        assertTrue(e.message!!.contains("65536"), e.message)
     }
 }

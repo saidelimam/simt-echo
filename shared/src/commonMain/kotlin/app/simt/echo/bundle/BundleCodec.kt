@@ -32,6 +32,10 @@ class BundleCodecException(val error: BundleError, message: String) :
  *
  * Expiry is only enforced when the caller passes `nowMs` to [open]:
  * the codec stays clock-free so tests and receivers decide what "now" is.
+ *
+ * W10-05: [encode] runs the perception producer gate
+ * (`RoutePerception.validate`), so oversize or malformed perception never
+ * ships. Decode stays lenient by design — see [RoutePerception].
  */
 object BundleCodec {
 
@@ -42,6 +46,8 @@ object BundleCodec {
     private const val HEADER_BYTES = 4 + 1 + HASH_BYTES
 
     suspend fun encode(route: EchoRoute, assets: List<Asset>): ByteArray {
+        // W10-05 producer gate: oversize/malformed perception never ships.
+        route.perception?.validate()
         val body = EchoJson.encodeToString(
             BundleBody(route = route, assets = assets.sortedBy { it.id }),
         ).encodeToByteArray()

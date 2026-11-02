@@ -39,6 +39,15 @@ fun expiryAtEpochMs(option: ExpiryOption, nowMs: Long): Long? = when (option) {
 const val LANDMARK_TEXT_DISCLOSURE =
     "Landmark details (title, cue and sign text) are always included, even when a landmark photo is turned off."
 
+/**
+ * Disclosure (W10-05): on-device perception fingerprints travel inside the
+ * bundle whenever the route carries them, under the bundle's own encryption
+ * and expiry. There is no toggle: a route that needs them private must not
+ * be shared.
+ */
+const val PERCEPTION_DISCLOSURE =
+    "On-device perception fingerprints (if recorded) travel inside this bundle under the same encryption and expiry."
+
 /** One toggle row in the export preview sheet. */
 data class ExportItem(
     /** Asset id (`start` sentinel for the start photo, else crop asset id). */
@@ -153,6 +162,8 @@ data class ExportSummary(
     val landmarks: List<ExportLandmarkSummary>,
     val ai: AiProvenance?,
     val expiresAtEpochMs: Long?,
+    /** True when the exported route carries v2 perception fingerprints. */
+    val hasPerception: Boolean,
 )
 
 /**
@@ -186,6 +197,7 @@ fun exportSummary(route: EchoRoute, selection: ExportSelection, nowMs: Long): Ex
         },
         ai = filtered.ai,
         expiresAtEpochMs = filtered.privacy.expiresAtEpochMs,
+        hasPerception = filtered.perception != null,
     )
 }
 
