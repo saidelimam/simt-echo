@@ -7,5 +7,7 @@ import kotlin.concurrent.withLock
 internal actual class PoolLock actual constructor() {
     private val lock = ReentrantLock()
 
+    actual fun lock() = lock.lock()
+    actual fun unlock() = lock.unlock()
     actual fun <T> withLock(block: () -> T): T = lock.withLock(block)
 }

@@ -6,6 +6,8 @@ import platform.Foundation.NSRecursiveLock
 internal actual class PoolLock actual constructor() {
     private val lock = NSRecursiveLock()
 
+    actual fun lock() = lock.lock()
+    actual fun unlock() = lock.unlock()
     actual fun <T> withLock(block: () -> T): T {
         lock.lock()
         try {

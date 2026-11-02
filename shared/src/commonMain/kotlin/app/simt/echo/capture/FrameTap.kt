@@ -1,5 +1,7 @@
 package app.simt.echo.capture
 
+import kotlin.concurrent.Volatile
+
 /**
  * Frame Tap seam (plan W10-03): the phone watches its own camera cheaply.
  *
@@ -29,10 +31,19 @@ interface FrameTap {
      * with null. Takes effect for the next frame; thread-safe.
      */
     fun setConsumer(consumer: FrameConsumer?)
+
+    /** Guests never replace the recording sink. False when unsupported or full. */
+    fun addConsumer(consumer: FrameConsumer): Boolean = false
+    fun removeConsumer(consumer: FrameConsumer): Boolean = false
+
+    /** 0 pauses analysis. A Record source retains its ledger's minimum rate. */
+    fun setBaseInterval(intervalNs: Long) = Unit
 }
 
 /** Sink for [FrameTap] frames; runs on the analysis thread and must not block long. */
 fun interface FrameConsumer {
+    /** Asked before any luma copy; must be cheap and side-effect-free. */
+    fun wantsFrame(tNs: Long): Boolean = true
     /**
      * Handles [sample] synchronously. The sample, its [FrameSample.luma] and
      * its [FrameSample.jpeg] are valid only until this call returns: copy
@@ -62,6 +73,10 @@ class FrameSample(
      * null when the source cannot encode (tests, ledger-ignored frames).
      */
     val jpeg: (() -> ByteArray?)? = null,
+    /** Intrinsics in this decimated plane's coordinates, with honest provenance. */
+    val intrinsics: CameraIntrinsics? = null,
+    /** False forbids visual rotation compensation, regardless of timestamp offset. */
+    val visualClockAligned: Boolean = false,
 ) {
     override fun equals(other: Any?): Boolean =
         other is FrameSample &&
@@ -69,7 +84,9 @@ class FrameSample(
             width == other.width &&
             height == other.height &&
             decimation == other.decimation &&
-            luma.contentEquals(other.luma)
+            luma.contentEquals(other.luma) &&
+            intrinsics == other.intrinsics &&
+            visualClockAligned == other.visualClockAligned
 
     override fun hashCode(): Int {
         var result = tNs.hashCode()
@@ -77,6 +94,8 @@ class FrameSample(
         result = 31 * result + height
         result = 31 * result + decimation
         result = 31 * result + luma.contentHashCode()
+        result = 31 * result + (intrinsics?.hashCode() ?: 0)
+        result = 31 * result + visualClockAligned.hashCode()
         return result
     }
 }
@@ -105,21 +124,36 @@ enum class ThermalState {
  * exactly; the analyzer thread calls this before touching any buffer, so
  * rejected frames cost one comparison and zero allocation.
  */
-class FrameRateGovernor(val baseIntervalNs: Long) {
-    private var lastEmitNs: Long? = null
+class FrameRateGovernor(baseIntervalNs: Long) {
+    @Volatile
+    var baseIntervalNs: Long = baseIntervalNs
+        private set
+    private var lastEmitNs = 0L
+    private var hasEmitted = false
+
+    init {
+        require(baseIntervalNs >= 0L)
+    }
+
+    /** Atomically changes duty; 0 means off, without forgetting the last emit. */
+    fun setBaseInterval(intervalNs: Long) {
+        require(intervalNs >= 0L)
+        baseIntervalNs = intervalNs
+    }
 
     fun shouldEmit(nowNs: Long, thermal: ThermalState = ThermalState.NORMAL): Boolean {
-        if (thermal == ThermalState.SEVERE) return false
-        val interval = if (thermal == ThermalState.MODERATE) baseIntervalNs * 2 else baseIntervalNs
-        val last = lastEmitNs
-        if (last != null && nowNs - last < interval) return false
+        val base = baseIntervalNs
+        if (base == 0L || thermal == ThermalState.SEVERE) return false
+        val interval = if (thermal == ThermalState.MODERATE) base.coerceAtMost(Long.MAX_VALUE / 2) * 2 else base
+        if (hasEmitted && (nowNs < lastEmitNs || nowNs - lastEmitNs < interval)) return false
         lastEmitNs = nowNs
+        hasEmitted = true
         return true
     }
 
     /** Forgets emission history; tests only. */
     fun reset() {
-        lastEmitNs = null
+        hasEmitted = false
     }
 
     companion object {
@@ -221,5 +255,7 @@ fun alignTimestamp(rawNs: Long, alignment: TimestampAlignment): Long = rawNs + a
  * iOS an `NSRecursiveLock` — same contract, platform lock.
  */
 internal expect class PoolLock() {
+    fun lock()
+    fun unlock()
     fun <T> withLock(block: () -> T): T
 }
