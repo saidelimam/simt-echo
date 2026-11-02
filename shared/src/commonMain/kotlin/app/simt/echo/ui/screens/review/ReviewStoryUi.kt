@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.PathMeasure
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
@@ -213,20 +214,26 @@ fun SuggestionArtwork(
     val accent = MaterialTheme.colorScheme.primary
     val accentFill = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
     val strokePx = with(LocalDensity.current) { 2.dp.toPx() }
-    val mask = remember(candidate.maskSvgPath) {
-        candidate.maskSvgPath
-            ?.takeIf { candidate.maskW != null && candidate.maskH != null }
-            ?.let { MaskPath.parseSvgPath(it) }
+    val outline = remember(candidate.maskSvgPath, candidate.maskW, candidate.maskH) {
+        val maskW = candidate.maskW
+        val maskH = candidate.maskH
+        if (maskW != null && maskH != null && maskW > 0 && maskH > 0) {
+            candidate.maskSvgPath?.let(MaskPath::parseSvgPath)?.let { MaskOutline(it, maskW, maskH) }
+        } else {
+            null
+        }
     }
     val box = CandidateMerger.candidateCropBox(candidate)
-    // PathMeasure is draw-phase scratch: trimming never recomposes.
+    // Draw-phase scratch: measuring and trimming never recompose or allocate per frame.
     val measure = remember { PathMeasure() }
-    val progress = trace.value.coerceIn(0f, 1f)
+    val traced = remember { Path() }
     Canvas(
         modifier = modifier.fillMaxWidth().height(160.dp).semantics {
             contentDescription = "AI suggestion: ${candidate.title}"
         },
     ) {
+        // Read here, not in composition: the 600 ms trace redraws, never recomposes.
+        val progress = trace.value.coerceIn(0f, 1f)
         if (bitmap != null) {
             drawImage(
                 image = bitmap,
@@ -243,27 +250,16 @@ fun SuggestionArtwork(
             ),
             style = Stroke(width = strokePx),
         )
-        val maskW = candidate.maskW
-        val maskH = candidate.maskH
-        if (mask != null && maskW != null && maskH != null && maskW > 0 && maskH > 0) {
-            for (subpath in mask) {
-                val path = Path()
-                subpath.points.forEachIndexed { i, point ->
-                    val x = point.x * (size.width / maskW.toFloat())
-                    val y = point.y * (size.height / maskH.toFloat())
-                    if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
-                }
-                if (subpath.closed) path.close()
-                if (progress >= 1f) {
-                    drawPath(path = path, color = accentFill, style = Fill)
-                    drawPath(path = path, color = accent, style = Stroke(width = strokePx))
-                } else if (progress > 0f) {
-                    measure.setPath(path, false)
-                    val traced = Path()
-                    measure.getSegment(0f, measure.length * progress, traced, true)
-                    drawPath(path = traced, color = accent, style = Stroke(width = strokePx))
-                    drawPath(path = path, color = accentFill.copy(alpha = 0.35f * progress), style = Fill)
-                }
+        outline?.pathsFor(size)?.forEach { path ->
+            if (progress >= 1f) {
+                drawPath(path = path, color = accentFill, style = Fill)
+                drawPath(path = path, color = accent, style = Stroke(width = strokePx))
+            } else if (progress > 0f) {
+                measure.setPath(path, false)
+                traced.rewind()
+                measure.getSegment(0f, measure.length * progress, traced, true)
+                drawPath(path = traced, color = accent, style = Stroke(width = strokePx))
+                drawPath(path = path, color = accentFill.copy(alpha = 0.35f * progress), style = Fill)
             }
         }
     }
@@ -284,9 +280,15 @@ fun KeyframeInspector(
 ) {
     var scale by remember { mutableStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
+    var viewport by remember { mutableStateOf(Size.Zero) }
+    val bitmap = remember(heroBytes) { heroBytes?.let(::decodeImage) }
+    // The fitted image, not the canvas, bounds the pan: letterbox bars never scroll into view.
+    val content = bitmap
+        ?.let { fitContain(Size(it.width.toFloat(), it.height.toFloat()), viewport).size }
+        ?: Size.Zero
     val zoom = rememberTransformableState { zoomChange, panChange, _ ->
         scale = (scale * zoomChange).coerceIn(1f, 5f)
-        offset += panChange
+        offset = clampPan(offset + panChange, scale, content, viewport)
     }
     Column(
         modifier = modifier
@@ -301,9 +303,9 @@ fun KeyframeInspector(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
+                .onSizeChanged { viewport = Size(it.width.toFloat(), it.height.toFloat()) }
                 .transformable(zoom),
         ) {
-            val bitmap = remember(heroBytes) { heroBytes?.let(::decodeImage) }
             if (bitmap != null) {
                 Canvas(
                     modifier = Modifier
@@ -316,11 +318,7 @@ fun KeyframeInspector(
                         }
                         .echoSharedElement(reviewKeyframeKey(nodeId)),
                 ) {
-                    drawImage(
-                        image = bitmap,
-                        dstOffset = IntOffset.Zero,
-                        dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt()),
-                    )
+                    drawFitted(bitmap)
                 }
             } else {
                 Text(text = "No keyframe yet.", style = MaterialTheme.typography.bodyLarge)
