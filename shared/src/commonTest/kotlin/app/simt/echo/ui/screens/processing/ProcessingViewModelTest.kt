@@ -1140,6 +1140,37 @@ class ProcessingViewModelTest {
     }
 
     @Test
+    fun resumedJobReplaysTheStreamSoStarsAndMeterAreNotLeftAtQueuedAndZero() = runTest(dispatcher) {
+        val h = harness()
+        // The persisted record points past the grounded checkpoint and the
+        // usage event: a resume from there would never re-deliver them.
+        h.drafts.saveJobRecord("draft-1", JobRecord("job-9", "running", 0L, lastEventId = "evt-2"))
+        val api = FakeCloudApi().apply {
+            flows = ArrayDeque(
+                listOf(
+                    flowOf(
+                        JobEvent.Checkpoint(
+                            "evt-1", "n1", "grounded",
+                            "[${candidateJson("n1_0", "Red pillar")}]",
+                        ),
+                        JobEvent.Usage("evt-2", samFramesBilled = 38),
+                        JobEvent.Complete("evt-3", null),
+                    ),
+                ),
+            )
+        }
+        val vm = h.vm(api)
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
+        // The stream was re-read from its head, not from Last-Event-ID evt-2.
+        assertEquals(listOf<String?>(null), api.watchIds)
+        val stars = vm.constellation.value.stars.associateBy { it.nodeId }
+        assertEquals(StarState.GROUNDED, stars.getValue("n1").state)
+        assertEquals(38, vm.constellation.value.framesUsed)
+    }
+
+    @Test
     fun retryResetsStarsAndMeterBeforeTheNextSend() = runTest(dispatcher) {
         val h = harness()
         val api = FakeCloudApi().apply {

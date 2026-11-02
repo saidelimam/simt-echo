@@ -248,7 +248,14 @@ class ProcessingViewModel(
                 _ui.update { it.copy(phase = ProcessingPhase.Working(JobStage.QUEUED), jobId = job.jobId) }
                 lastRoute = route
                 restorePartials()
-                watchOrPoll(job.jobId, job.lastEventId)
+                // Replay the stream from its head, not from the persisted
+                // Last-Event-ID: the stars and the frame meter are rebuilt
+                // only from `checkpoint` / `usage` events (W13-06), and the
+                // skeleton above starts empty, so resuming mid-stream would
+                // show already-grounded nodes as Queued and the meter at 0.
+                // Replays are idempotent (partials merge per node; the meter
+                // keeps its high-water mark).
+                watchOrPoll(job.jobId, lastEventId = null)
             } else if (job != null && job.status == "complete") {
                 _ui.update { it.copy(phase = ProcessingPhase.Ready, jobId = job.jobId) }
             } else if (job != null) {
