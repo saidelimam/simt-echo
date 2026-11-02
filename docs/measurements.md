@@ -184,3 +184,29 @@ Procedure to fill the table (keyed environment only, stop at $1):
 2. `META_API_KEY=… npm run canary:sam` — record latency, output chars, any usage; append row 3.
 3. Send the two-phrase image call and the 12-frame clip call (rows 1–2) with `curl` or a scratch script mirroring `scripts/canary-sam.mjs`; save each raw SSE body and note the request/job ids.
 4. Append measured numbers + ids to the table above; total spend must stay ≤ $1.
+
+## Face pre-filter on device (W11-04, 2026-11-02)
+
+Real bundled ML Kit (`face-detection` 16.1.7) on a Pixel 8a (SDK 37),
+debug build, `MlKitFaceScanner` as shipped (accurate mode, minimum face 5%).
+Gate: `./gradlew :androidApp:connectedDebugAndroidTest` (7/7 in
+`MlKitFaceScannerDeviceTest`), a named manual gate, never pre-commit.
+Fixtures are public-domain NASA/ESA images at ledger scale (960 px class,
+`androidApp/src/androidTest/assets/faces/`).
+
+| Fixture | Head width / frame | Faces found | Per scan (mean of 10, warm) |
+|---|---|---|---|
+| `face_large.jpg` | ~30% (512 px portrait) | 1 | 180 ms |
+| `face_small.jpg` | ~6% | 1 | 333 ms |
+| `face_tiny.jpg` | ~2.5% | 1 | 300 ms |
+| `no_face.jpg` | none (Hubble field, 960x720) | 0 | 333 ms |
+
+- First scan after process start (model load): 231 ms.
+- Scanning on the main thread fails closed to UNKNOWN (`Tasks.await` refuses the
+  main thread) rather than blocking it; garbage bytes throw.
+- Reading: the 5% minimum is not the limiting factor here (a 2.5% face was
+  found), so it is a recall-safe setting, not a tight one. Cost is the accurate
+  mode: about 0.3 s per frame, so a 20-frame upload spends about 6 s scanning,
+  once, off the main thread, before bytes leave the phone.
+- Not measured: a face on a printed page or screen in a live camera frame,
+  turned or covered faces, a second phone, APK size delta.

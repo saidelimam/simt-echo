@@ -28,6 +28,7 @@ profileinstaller = "1.4.0"
 metrics-performance = "1.0.0"
 uiautomator = "2.3.0"
 test-ext-junit = "1.2.1"
+test-runner = "1.6.2"
 junit4 = "4.13.2"
 # W6-03 headless UI gate: Robolectric runs androidMain composables on the
 # host JVM. SDK pin lags compileSdk per review 0006 NR-2 (no SDK-37
@@ -90,6 +91,7 @@ benchmark-macro-junit4 = { group = "androidx.benchmark", name = "benchmark-macro
 profileinstaller = { group = "androidx.profileinstaller", name = "profileinstaller", version.ref = "profileinstaller" }
 metrics-performance = { group = "androidx.metrics", name = "metrics-performance", version.ref = "metrics-performance" }
 test-ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "test-ext-junit" }
+test-runner = { group = "androidx.test", name = "runner", version.ref = "test-runner" }
 uiautomator = { group = "androidx.test.uiautomator", name = "uiautomator", version.ref = "uiautomator" }
 
 # Unit tests

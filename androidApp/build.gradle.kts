@@ -24,6 +24,8 @@ android {
         buildConfigField("String", "ECHO_APP_TOKEN", "\"" + (localProperties.getProperty("ECHO_APP_TOKEN", "") ?: "") + "\"")
         buildConfigField("String", "WORKERS_API_BASE", "\"" + (localProperties.getProperty("WORKERS_API_BASE", "") ?: "") + "\"")
         applicationId = "app.simt.echo"
+        // W11-04: on-device evidence for the ML Kit face scanner.
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
         // W9-10 version discipline: versionName is MAJOR.MINOR.PATCH;
@@ -115,4 +117,7 @@ dependencies {
     debugImplementation(libs.metrics.performance)
     // W9-11: plain-JVM assertions over the launcher icon + splash XML.
     testImplementation(libs.junit.junit)
+    // Device-only evidence (run on a phone, never a pre-commit gate; docs/perf.md).
+    androidTestImplementation(libs.test.ext.junit)
+    androidTestImplementation(libs.test.runner)
 }

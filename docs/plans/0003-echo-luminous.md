@@ -922,7 +922,7 @@ remainder is owed:
 | Row | Still owed |
 |---|---|
 | W10-02/03/04, W11-03 | StrictMode, Frame Tap ≤ 6 ms, jank and 2 MB upload device evidence; `:benchmark` not compiled on the build machine; Navigate-Simulate benchmark needs a seeded fixture route |
-| W11-04 | Android scans ledger frames with bundled ML Kit (`MlKitFaceScanner`, wired through `AppGraph.faceDetectorFor`). Owed: an iOS Vision `FaceScanner` (iOS runs unfiltered, and its consent copy says nothing of a filter), face scans of cut video clips, device evidence on a printed face, and a measured minimum-face size, scan time and APK cost (the values are guesses) |
+| W11-04 | Android scans ledger frames with bundled ML Kit (`MlKitFaceScanner`, wired through `AppGraph.faceDetectorFor`). Device evidence (Pixel 8a, `docs/measurements.md`): 7/7, a 2.5% face found, about 0.3 s per scan. Owed: an iOS Vision `FaceScanner` (iOS runs unfiltered, and its consent copy says nothing of a filter), face scans of cut video clips, a live-camera printed-face check, and the APK size delta |
 | W11-07 | Live probe table (no `META_API_KEY`) |
 | W11-09 | `ReadyUploader` has no caller, and wiring one is deliberately held: it fails closed without a `FaceDetector`. Android now has one (W11-04), so the gate can be met there; iOS cannot until its scanner lands. Owed in order: a production `NetworkGate`, the Record consent sheet and window trigger, Finish-manifest coordination, then device evidence (ready ≤ 15 s after Finish on a 60 m walk) |
 | W12-01 | `HeadingQuality.correctedYaw` is not applied to `PdrEngine` yaw: a ±2°/min estimator error compounds to ~20° over 10 min, so it waits for W14-03 field evidence |
