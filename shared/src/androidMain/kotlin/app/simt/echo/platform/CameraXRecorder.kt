@@ -86,6 +86,7 @@ class CameraXRecorder(
         ),
         thermalNow = { context.currentThermalState() },
         alignmentNow = { timestampAlignment },
+        recordingIntervalNs = if (graph.hasVideo) FrameRateGovernor.RECORD_INTERVAL_NS else 0L,
     )
 
     override val frameTap: FrameTap
@@ -137,9 +138,13 @@ class CameraXRecorder(
         if (provider != null) return
         val cameraProvider = awaitProvider()
         provider = cameraProvider
+        val cameraId = runCatching {
+            androidx.camera.camera2.interop.Camera2CameraInfo.from(cameraProvider.getCameraInfo(DEFAULT_BACK_CAMERA)).cameraId
+        }.getOrNull()
+        tapSource.setOptics(cameraId?.let { queryCameraOptics(context, it) })
         // Frames that cannot be placed on the motion clock are worse than
         // none: the ledger would score them against the wrong odometer.
-        val alignment = queryTimestampAlignment(context)
+        val alignment = cameraId?.let { queryTimestampAlignment(context, it) }
         if (alignment != null) timestampAlignment = alignment
         val preview = if (graph.hasPreview) Preview.Builder().build() else null
         boundPreview = preview
