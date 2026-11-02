@@ -17,7 +17,7 @@ import {
   sparkBoxToPixels,
 } from "./selection";
 import { parseSam } from "./samParse";
-import type { Checkpoint } from "./types";
+import { ManifestSchema, type Checkpoint } from "./types";
 
 const TWO_OBJECT =
   `<0f>1<|box;x1=412;y1=230;x2=590;y2=900;w=720;h=1280;c=0.86|><|mask;onebit;AAAA|>2<|box;x1=10;y1=20;x2=60;y2=80;w=720;h=1280;c=0.41|>\n` +
@@ -551,13 +551,14 @@ function lensSetup(
     ...(clip ? { clip: STRIP_CLIP } : {}),
     approach: [{ tMs: 37250, d: 18.9 }],
   };
-  const manifest = {
+  // Parsed like job intake does, so a schema that strips a field fails here.
+  const manifest = ManifestSchema.parse({
     schema: 1,
     draftId: "d1",
     consent: { sendFramesToCloudAi: true, atEpochMs: 1 },
     routeContext: "ctx",
     checkpoints: [cp],
-  } as never;
+  });
   // No GROUND_MODE: the lens is the default path under test here.
   const env = { MEDIA: r2, GROUND_ORDER: "sam31,none", META_API_KEY: "k" } as never;
   return { r2, manifest, env };
@@ -868,9 +869,8 @@ describe("runGround SAM lens (W11-06)", () => {
   });
 
   it("drops candidates on failing face flags at zero spend", async () => {
-    // Flags ride the keyframe ref; intake parsing strips unknown fields
-    // until W11-04 lands the flag shape, so this proves the ladder logic on
-    // an unparsed fixture (residual risk recorded in the slice report).
+    // The fixture goes through ManifestSchema.parse, so this also proves the
+    // flags survive intake instead of being stripped.
     const { manifest, env } = lensSetup({ type: "CHECKPOINT", keyframeFlags: { faceFree: false } });
     const calls = stubMeta(STRIP_VIDEO, imgLine(0.9));
     const result = await runGround(env, "job1", manifest, lensScout());

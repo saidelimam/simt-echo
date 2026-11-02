@@ -270,15 +270,11 @@ function videoBody(phrase: string, b64: string): object {
 }
 
 /**
- * W11-04 per-frame flags, read defensively: the frozen W10-06 manifest
- * schema does not carry them yet, so intake parsing may strip them until
- * W11-04 lands the flag shape. Present-and-failing flags drop the
- * candidate; absent flags keep it (today's manifests).
+ * W11-04 per-frame flags (carried by `KeyframeRefSchema`). Present-and-failing
+ * flags drop the candidate; absent flags keep it (today's manifests).
  */
 function frameFailsFlags(cp: Checkpoint, imageId: string): boolean {
-  const ref = cp.keyframes.find((k) => k.id === imageId) as
-    | { faceFree?: unknown; quality?: unknown; exposureOk?: unknown }
-    | undefined;
+  const ref = cp.keyframes.find((k) => k.id === imageId);
   if (!ref) return false;
   if (ref.faceFree === false) return true;
   if (ref.quality === "bad") return true;

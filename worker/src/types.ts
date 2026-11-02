@@ -29,9 +29,15 @@ export const ConsentSchema = z.object({
 });
 export type Consent = z.infer<typeof ConsentSchema>;
 
+/** W11-04 per-frame flags the client emits. Optional: absent flags keep the
+ * frame (video fallbacks, v1 clients); the SAM lens drops a candidate whose
+ * hero frame has `faceFree: false`, `quality: "bad"` or `exposureOk: false`. */
 export const KeyframeRefSchema = z.object({
   id: JobIdSchema,
   tMs: z.number().int().nonnegative(),
+  faceFree: z.boolean().optional(),
+  quality: z.string().optional(),
+  exposureOk: z.boolean().optional(),
 });
 
 export const ClipRefSchema = z.object({
