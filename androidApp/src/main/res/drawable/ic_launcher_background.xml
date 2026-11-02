@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- W10-07: Echo Step field — violet glow (upper left) into hull and void
-     (luminous-freeze §2; same stops as #fieldGlow in docs/design/echo-step.svg). -->
+     (luminous-freeze §2; same stops as #fieldGlow in res/design/echo-step.svg). -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"

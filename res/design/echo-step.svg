@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 108 108" width="432" height="432">
   <!-- ECHO brand mark "Echo Step" (luminous-freeze §2). Source of record.
        Layers: #field (adaptive background), #mark (adaptive foreground).
-       Render recipe: docs/design/README.md. -->
+       Render recipe: res/design/README.md. -->
   <defs>
     <g id="foot">
       <ellipse cx="0" cy="-9" rx="8.6" ry="12.5"/>

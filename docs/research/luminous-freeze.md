@@ -50,8 +50,8 @@ outer echo may fade into the mask edge, never the foot. Monochrome (themed
 icon) keeps foot + echoes as one alpha channel. Below 24 dp only Echo 1 is
 drawn; the top-chrome wordmark is a 28 dp miniature of the launcher icon
 (void disc + three echoes). The mark never sits on Daylight without its
-own void disc. The source of record is `docs/design/echo-step.svg`; launcher PNGs
-are rendered from it (`docs/design/README.md`).
+own void disc. The source of record is `res/design/echo-step.svg`; launcher PNGs
+are rendered from it (`res/design/README.md`).
 
 **Animated forms.** *Splash*: the foot is present from the first frame; three outline echoes
 expand from it and fade (one breath, ≤ 1000 ms). *Idle echo* (Home hero,

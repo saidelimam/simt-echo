@@ -34,7 +34,7 @@ import app.simt.echo.ui.atmosphere.cosmosMotionTier
 // "Echo Step" brand mark (docs/research/luminous-freeze.md §2): one
 // footprint whose outline ripples outward in up to three contour echoes.
 // Geometry is the freeze's 108-unit grid, identical to the launcher source
-// docs/design/echo-step.svg, so the in-app mark and the icon never drift.
+// res/design/echo-step.svg, so the in-app mark and the icon never drift.
 //
 // The contour echoes are bands cut out of thick strokes on an offscreen
 // layer (stroke, then clear a thinner stroke), which follows the union of
@@ -55,7 +55,7 @@ private const val GRID = 108f
 private val SoleTop = Color(0xFFFFF8F2)
 private val SoleBottom = Color(0xFFFFC766)
 
-/** Field glow stops, same as `#fieldGlow` in docs/design/echo-step.svg. */
+/** Field glow stops, same as `#fieldGlow` in res/design/echo-step.svg. */
 private val FieldStops = arrayOf(
     0f to Color(0xFF3B1A47),
     0.55f to Color(0xFF1D1220),

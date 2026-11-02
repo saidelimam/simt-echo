@@ -18,6 +18,7 @@
         android:theme="@style/Theme.Echo"
         android:enableOnBackInvokedCallback="true"
         android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:supportsRtl="true">
 
         <activity
