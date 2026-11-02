@@ -46,6 +46,10 @@ kotlin {
             implementation(compose.material3)
             implementation(compose.ui)
             implementation(compose.components.uiToolingPreview)
+            // W8-02 Cosmos freeze §6: bundled Space Grotesk + El Messiri.
+            // Resource-backed Font() is @Composable, so the families below
+            // are built in composition (see EchoFonts.kt).
+            implementation(compose.components.resources)
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.okio)
