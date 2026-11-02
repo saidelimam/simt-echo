@@ -1,5 +1,8 @@
 package app.simt.echo.ui.screens.processing
 
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.viewmodel.viewModelFactory
 import app.simt.echo.capture.FaceDetector
 import app.simt.echo.capture.FaceVerdict
 import app.simt.echo.capture.GlimpseEntry
@@ -25,6 +28,10 @@ import app.simt.echo.model.RouteLeg
 import app.simt.echo.model.RouteNode
 import app.simt.echo.model.StartAnchor
 import app.simt.echo.model.TurnDir
+import app.simt.echo.platform.LiveUpdateDirector
+import app.simt.echo.platform.PROCESSING_LIVE_UPDATE_ID
+import app.simt.echo.platform.RecordingLiveUpdateSink
+import app.simt.echo.platform.processingCopy
 import app.simt.echo.transfer.EchoApiError
 import app.simt.echo.transfer.JobEvent
 import app.simt.echo.transfer.JobPoll
@@ -49,6 +56,7 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import okio.FileSystem
@@ -220,6 +228,7 @@ class ProcessingViewModelTest {
             faceDetector: FaceDetector? = null,
             media: MediaTools = this.media,
             nowMs: () -> Long = { 1_762_000_100_000L },
+            liveUpdates: LiveUpdateDirector? = null,
         ) = ProcessingViewModel(
             draftId = draftId,
             drafts = drafts,
@@ -231,6 +240,7 @@ class ProcessingViewModelTest {
             aiConfigured = aiConfigured,
             faceDetector = faceDetector,
             ioDispatcher = io,
+            liveUpdates = liveUpdates,
         )
     }
 
@@ -581,6 +591,80 @@ class ProcessingViewModelTest {
         // Output frame i is no longer strip entry i, so no exact map is claimed.
         assertEquals("video-transcode", sidecar.source)
         assertTrue(sidecar.frames.isEmpty())
+    }
+
+    @Test
+    fun liveUpdateTracksTheJobAndSettlesWhenItIsReady() = runTest(dispatcher) {
+        val h = harness()
+        val sink = RecordingLiveUpdateSink()
+        val api = FakeCloudApi(polls = ArrayDeque(listOf(running(JobStage.GROUNDING), complete())))
+        val vm = h.vm(api, pollIntervalMs = 1_000L, liveUpdates = LiveUpdateDirector(sink, 34))
+        advanceUntilIdle()
+        // Consent is not work in flight: nothing ongoing yet.
+        assertTrue(sink.shown.isEmpty())
+
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
+        assertTrue(sink.shown.all { it.first == PROCESSING_LIVE_UPDATE_ID })
+        val texts = sink.shown.map { it.second.content.text }
+        assertTrue("Uploading…" in texts, "upload was not announced: $texts")
+        assertTrue(processingCopy(JobStage.GROUNDING) in texts, "stage was not announced: $texts")
+        // Ready settles the phase: the ongoing notification goes away.
+        assertEquals(PROCESSING_LIVE_UPDATE_ID, sink.dismissed.last())
+    }
+
+    @Test
+    fun liveUpdateIsDismissedWhenTheJobFails() = runTest(dispatcher) {
+        val h = harness()
+        val sink = RecordingLiveUpdateSink()
+        val api = FakeCloudApi(polls = ArrayDeque(listOf(running(), errored("boom"))))
+        val vm = h.vm(api, pollIntervalMs = 1_000L, liveUpdates = LiveUpdateDirector(sink, 34))
+        advanceUntilIdle()
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Failed>(vm.ui.value.phase)
+        assertTrue(sink.shown.isNotEmpty())
+        assertEquals(PROCESSING_LIVE_UPDATE_ID, sink.dismissed.last())
+    }
+
+    @Test
+    fun liveUpdateIsDismissedWhenTheScreenGoesMidJob() = runTest(dispatcher) {
+        val h = harness()
+        val sink = RecordingLiveUpdateSink()
+        val store = ViewModelStore()
+        val vm = ViewModelProvider.create(
+            store,
+            viewModelFactory {
+                addInitializer(ProcessingViewModel::class) {
+                    h.vm(FakeCloudApi(), pollIntervalMs = 1_000L, liveUpdates = LiveUpdateDirector(sink, 34))
+                }
+            },
+        )[ProcessingViewModel::class]
+        advanceUntilIdle()
+        vm.send()
+        runCurrent()
+        assertIs<ProcessingPhase.Working>(vm.ui.value.phase)
+        assertTrue(sink.shown.isNotEmpty())
+        val dismissedBefore = sink.dismissed.size
+
+        store.clear()
+
+        assertEquals(dismissedBefore + 1, sink.dismissed.size)
+        assertEquals(PROCESSING_LIVE_UPDATE_ID, sink.dismissed.last())
+    }
+
+    @Test
+    fun withoutLiveUpdatesTheJobStillRuns() = runTest(dispatcher) {
+        val h = harness()
+        val vm = h.vm(FakeCloudApi(polls = ArrayDeque(listOf(complete()))))
+        advanceUntilIdle()
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
     }
 
     @Test

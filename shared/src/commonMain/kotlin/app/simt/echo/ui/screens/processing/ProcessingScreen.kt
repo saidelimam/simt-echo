@@ -21,6 +21,7 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import app.simt.echo.platform.rememberNotificationPermissionRequest
 import app.simt.echo.transfer.JobStage
 import app.simt.echo.ui.atmosphere.CanopyPanel
 import app.simt.echo.ui.atmosphere.CanopyVariant
@@ -58,8 +59,11 @@ fun ProcessingScreen(
     viewModel: ProcessingViewModel,
     onDone: () -> Unit,
     modifier: Modifier = Modifier,
+    /** True when the view model posts a Live Update (W13-10): Send primes the permission. */
+    liveUpdatesEnabled: Boolean = false,
 ) {
     val ui by viewModel.ui.collectAsState()
+    val requestNotifications = rememberNotificationPermissionRequest()
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -72,7 +76,12 @@ fun ProcessingScreen(
             is ProcessingPhase.Consent -> ConsentSheet(
                 info = phase.info,
                 hasJob = phase.hasJob,
-                onSend = viewModel::send,
+                onSend = {
+                    // Primed in context, from the user's own Send: asked at
+                    // most once, and a refusal only means no notification.
+                    if (liveUpdatesEnabled) requestNotifications()
+                    viewModel.send()
+                },
                 onNotNow = { viewModel.decline(onDone) },
                 onDeleteNow = viewModel::deleteNow,
             )

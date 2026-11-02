@@ -35,17 +35,6 @@ class LiveUpdateTest {
         progress01 = progress01,
     )
 
-    private class FakeSink : LiveUpdateSink {
-        val shown = mutableListOf<Pair<Int, LiveUpdatePlan>>()
-        val dismissed = mutableListOf<Int>()
-        override fun show(notificationId: Int, plan: LiveUpdatePlan) {
-            shown += notificationId to plan
-        }
-        override fun dismiss(notificationId: Int) {
-            dismissed += notificationId
-        }
-    }
-
     @Test
     fun navSegmentsMarkLegsDoneAndCurrent() {
         val content = liveUpdateForNav(
@@ -149,7 +138,7 @@ class LiveUpdateTest {
 
     @Test
     fun directorDismissesWhenProcessingSettles() {
-        val sink = FakeSink()
+        val sink = RecordingLiveUpdateSink()
         LiveUpdateDirector(sink, 36).updateProcessing(phase = ProcessingPhase.Ready)
         assertEquals(listOf(PROCESSING_LIVE_UPDATE_ID), sink.dismissed)
         assertTrue(sink.shown.isEmpty())
@@ -165,14 +154,14 @@ class LiveUpdateTest {
 
     @Test
     fun directorBranchesStyleByFakedSdkInt() {
-        val newSink = FakeSink()
+        val newSink = RecordingLiveUpdateSink()
         LiveUpdateDirector(newSink, 36).updateNav(
             ui = walkUi(),
             legLengthsM = listOf(10.0, 20.0),
             landmarks = emptyList(),
             routeName = "Evening loop",
         )
-        val oldSink = FakeSink()
+        val oldSink = RecordingLiveUpdateSink()
         LiveUpdateDirector(oldSink, 34).updateNav(
             ui = walkUi(),
             legLengthsM = listOf(10.0, 20.0),
@@ -226,7 +215,7 @@ class LiveUpdateTest {
 
     @Test
     fun directorPostsAChangeOnceNotEveryFrame() {
-        val sink = FakeSink()
+        val sink = RecordingLiveUpdateSink()
         val director = LiveUpdateDirector(sink, 36)
         fun post(ui: NavUi) = director.updateNav(
             ui = ui, legLengthsM = listOf(10.0, 20.0), landmarks = emptyList(), routeName = "Loop",
@@ -239,7 +228,7 @@ class LiveUpdateTest {
 
     @Test
     fun arrivalDismissesTheOngoingNotification() {
-        val sink = FakeSink()
+        val sink = RecordingLiveUpdateSink()
         val director = LiveUpdateDirector(sink, 36)
         director.updateNav(ui = walkUi(), legLengthsM = listOf(10.0), landmarks = emptyList(), routeName = "Loop")
         director.updateNav(

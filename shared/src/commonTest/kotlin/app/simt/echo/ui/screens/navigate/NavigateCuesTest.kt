@@ -16,11 +16,10 @@ import app.simt.echo.platform.CueOutput
 import app.simt.echo.platform.HapticPattern
 import app.simt.echo.platform.Haptics
 import app.simt.echo.platform.LiveUpdateDirector
-import app.simt.echo.platform.LiveUpdatePlan
-import app.simt.echo.platform.LiveUpdateSink
 import app.simt.echo.platform.NAV_LIVE_UPDATE_ID
 import app.simt.echo.platform.MotionSource
 import app.simt.echo.platform.MotionUpdate
+import app.simt.echo.platform.RecordingLiveUpdateSink
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -219,16 +218,9 @@ class NavigateCuesTest {
 
     @Test
     fun liveUpdatesFollowTheWalkAndAreDismissedWhenTheScreenGoes() = runTest(dispatcher) {
-        val posted = mutableListOf<Pair<Int, LiveUpdatePlan>>()
-        val dismissed = mutableListOf<Int>()
-        val sink = object : LiveUpdateSink {
-            override fun show(notificationId: Int, plan: LiveUpdatePlan) {
-                posted += notificationId to plan
-            }
-            override fun dismiss(notificationId: Int) {
-                dismissed += notificationId
-            }
-        }
+        val sink = RecordingLiveUpdateSink()
+        val posted = sink.shown
+        val dismissed = sink.dismissed
         val motion = ManualMotion()
         val store = ViewModelStore()
         val vm = ViewModelProvider.create(

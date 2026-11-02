@@ -170,6 +170,7 @@ fun EchoNavHost(
                             api = graph.apiClient,
                             nowMs = ::currentEpochMs,
                             aiConfigured = graph.cloudAiConfigured,
+                            liveUpdates = graph.liveUpdates,
                         )
                     }
                 },
@@ -177,6 +178,7 @@ fun EchoNavHost(
             ProcessingScreen(
                 viewModel = viewModel,
                 onDone = { navController.popBackStack() },
+                liveUpdatesEnabled = graph.liveUpdates != null,
             )
         }
         echoDestination<EchoRoute.RouteDetail> { entry ->

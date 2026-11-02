@@ -37,6 +37,8 @@ import app.simt.echo.media.stripFallbackWindow
 import app.simt.echo.model.EchoJson
 import app.simt.echo.model.EchoRoute
 import app.simt.echo.model.NodeType
+import app.simt.echo.platform.LiveUpdateDirector
+import app.simt.echo.platform.PROCESSING_LIVE_UPDATE_ID
 import app.simt.echo.platform.platformIoDispatcher
 import app.simt.echo.transfer.CloudApi
 import app.simt.echo.transfer.EchoApiError
@@ -156,6 +158,12 @@ class ProcessingViewModel(
      * the screen's scope is Main.
      */
     private val ioDispatcher: CoroutineDispatcher = platformIoDispatcher,
+    /**
+     * Lock-screen progress (plan W13-10). Null posts nothing. Otherwise
+     * every phase change is mirrored by [LiveUpdateDirector.updateProcessing]:
+     * ongoing while uploading or working, dismissed once the phase settles.
+     */
+    private val liveUpdates: LiveUpdateDirector? = null,
 ) : ViewModel() {
 
     private val _ui = MutableStateFlow(ProcessingUiState())
@@ -201,7 +209,21 @@ class ProcessingViewModel(
     private val clipCache = mutableMapOf<String, ClipInfo>()
 
     init {
+        if (liveUpdates != null) {
+            viewModelScope.launch {
+                ui.collect { runCatching { liveUpdates.updateProcessing(phase = it.phase) } }
+            }
+        }
         refresh()
+    }
+
+    /**
+     * Polling stops with the screen, so an ongoing notification would
+     * keep claiming progress nobody is watching: dismiss it. The job
+     * itself is untouched; re-entering resumes it.
+     */
+    override fun onCleared() {
+        runCatching { liveUpdates?.dismiss(PROCESSING_LIVE_UPDATE_ID) }
     }
 
     /** (Re)loads the draft; resumes polling when a live job is persisted. */
