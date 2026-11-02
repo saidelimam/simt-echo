@@ -33,6 +33,7 @@ import app.simt.echo.model.shouldShowLandmarkCards
 import app.simt.echo.nav.NavPhase
 import app.simt.echo.nav.NavUi
 import app.simt.echo.platform.KeepScreenOn
+import app.simt.echo.platform.MotionSource
 import app.simt.echo.platform.rememberCameraRecorder
 import app.simt.echo.platform.rememberHaptics
 import app.simt.echo.platform.rememberMotionSource
@@ -53,8 +54,9 @@ import app.simt.echo.ui.components.overlayScrimAlpha
  * Navigate screen (plan §8.3 / W2-06): arrow, instruction + distance,
  * landmark card, progress, contextual actions. Renders [NavUi] directly —
  * the 1:1 phase mapping (especially UNCERTAIN) is structural, not asserted
- * per branch. Always drives the live motion source; replay coverage lives
- * in the engine tests (W2-05) and the ViewModel gate below.
+ * per branch. Drives [motionSource] when injected (W7-04 Simulate replay),
+ * else the live motion source; replay coverage lives in the engine tests
+ * (W2-05) and the ViewModel gate below.
  */
 @Composable
 fun NavigateScreen(
@@ -67,8 +69,10 @@ fun NavigateScreen(
     trials: TrialRepository? = null,
     device: String = "unknown",
     baselineMode: Boolean = config.baselineMode,
+    /** Injected source (W7-04 Simulate); null selects the live source. */
+    motionSource: MotionSource? = null,
 ) {
-    val motion = rememberMotionSource()
+    val motion = motionSource ?: rememberMotionSource()
     val haptics = rememberHaptics()
     val online = rememberOnline()
     KeepScreenOn()
