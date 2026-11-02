@@ -45,15 +45,17 @@ class AppGraphReadyConsentTest {
     }
 
     @Test
-    fun consentIsWifiOnlyUntilTheSettingIsOn() = withGraph { graph ->
+    fun consentAllowsMobileDataUntilTheSettingIsOff() = withGraph { graph ->
         assertTrue(graph.readyUploadConsent().enabled)
-        assertTrue(graph.readyUploadConsent().wifiOnly)
-
-        graph.configRepository.update { it.copy(readyUploadMobileData = true) }
-        assertFalse("a Settings change applies to the next consent", graph.readyUploadConsent().wifiOnly)
+        assertFalse("a fresh install may use mobile data", graph.readyUploadConsent().wifiOnly)
+        assertTrue(graph.readyUploadConsent().allows(NetworkKind.METERED))
+        assertFalse("never while roaming", graph.readyUploadConsent().allows(NetworkKind.ROAMING))
 
         graph.configRepository.update { it.copy(readyUploadMobileData = false) }
-        assertTrue(graph.readyUploadConsent().wifiOnly)
+        assertTrue("a Settings change applies to the next consent", graph.readyUploadConsent().wifiOnly)
+
+        graph.configRepository.update { it.copy(readyUploadMobileData = true) }
+        assertFalse(graph.readyUploadConsent().wifiOnly)
     }
 
     @Test

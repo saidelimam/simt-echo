@@ -32,7 +32,7 @@ data class SettingsUi(
     /** Opt-in earcons at turns (W13-09), persisted. */
     val earcons: Boolean = false,
     /** Walk-time upload may use mobile data, not just Wi-Fi (W11-09), persisted. */
-    val readyUploadMobileData: Boolean = false,
+    val readyUploadMobileData: Boolean = true,
     /** LAN local-model base URL (W5-01), persisted. Empty = none. */
     val localModelBaseUrl: String = "",
     /** LAN local-model id (W5-01), persisted. Empty = none. */

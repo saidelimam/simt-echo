@@ -104,8 +104,8 @@ class AppGraph(
         }
 
     /**
-     * Consent the Record sheet grants for a walk: Wi-Fi only unless the
-     * "mobile data" Settings switch is on (W11-09). Read at grant time, so a
+     * Consent the Record sheet grants for a walk: Wi-Fi or mobile data unless
+     * the "mobile data" Settings switch is off (W11-09). Read at grant time, so a
      * Settings change applies to the next walk.
      */
     fun readyUploadConsent(): ReadyUploadConsent =

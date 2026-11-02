@@ -121,13 +121,13 @@ class SettingsViewModelTest {
     }
 
     @Test
-    fun mobileDataForWalkUploadIsOptInAndPersists() {
+    fun mobileDataForWalkUploadIsOnByDefaultAndSwitchingItOffPersists() {
         val vm = vm()
-        assertFalse(vm.ui.value.readyUploadMobileData, "walk upload must be Wi-Fi only by default")
-        assertFalse(configs.get().readyUploadMobileData)
-        vm.setReadyUploadMobileData(true)
-        assertTrue(vm.ui.value.readyUploadMobileData)
+        assertTrue(vm.ui.value.readyUploadMobileData, "walk upload may use mobile data unless the user says no")
         assertTrue(configs.get().readyUploadMobileData)
+        vm.setReadyUploadMobileData(false)
+        assertFalse(vm.ui.value.readyUploadMobileData)
+        assertFalse(configs.get().readyUploadMobileData)
     }
 
     @Test
