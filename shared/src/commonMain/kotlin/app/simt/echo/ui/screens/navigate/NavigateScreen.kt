@@ -49,6 +49,7 @@ import app.simt.echo.ui.components.PillButton
 import app.simt.echo.ui.components.StatusChip
 import app.simt.echo.ui.components.oneDecimal
 import app.simt.echo.ui.components.overlayScrimAlpha
+import app.simt.echo.ui.copy.MISSING_ROUTE_ERROR
 
 /**
  * Navigate screen (plan §8.3 / W2-06): arrow, instruction + distance,
@@ -96,10 +97,11 @@ fun NavigateScreen(
     val nav = ui
     if (nav == null) {
         EmptyState(
-            title = "No saved route $routeId",
+            title = MISSING_ROUTE_ERROR.whatHappened,
             actionLabel = "Back",
             onAction = onBack,
             modifier = modifier.fillMaxSize(),
+            body = "${MISSING_ROUTE_ERROR.whatsSafe} ${MISSING_ROUTE_ERROR.nextAction}",
         )
         return
     }

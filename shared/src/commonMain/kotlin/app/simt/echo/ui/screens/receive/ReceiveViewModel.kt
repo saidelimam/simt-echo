@@ -6,6 +6,8 @@ import app.simt.echo.model.BundleBody
 import app.simt.echo.model.NodeType
 import app.simt.echo.platform.FileSharing
 import app.simt.echo.transfer.TransferService
+import app.simt.echo.ui.copy.receiveFileErrorCopy
+import app.simt.echo.ui.copy.receiveSaveErrorCopy
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -69,7 +71,7 @@ class ReceiveViewModel(
                 _ui.update { it.copy(savedRouteId = body.route.routeId) }
                 onSaved(body.route.routeId)
             } catch (e: Exception) {
-                _ui.update { it.copy(error = e.message ?: "Could not save the route") }
+                _ui.update { it.copy(error = receiveSaveErrorCopy()) }
             }
         }
     }
@@ -93,7 +95,7 @@ class ReceiveViewModel(
                 previewBody = body
                 _ui.update { it.copy(fetching = false, preview = summarize(body)) }
             } catch (e: Exception) {
-                _ui.update { it.copy(fetching = false, error = e.message ?: "Could not read the file") }
+                _ui.update { it.copy(fetching = false, error = receiveFileErrorCopy()) }
             }
         }
     }

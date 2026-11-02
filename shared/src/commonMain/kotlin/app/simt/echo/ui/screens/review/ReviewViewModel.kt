@@ -24,6 +24,12 @@ import app.simt.echo.model.PathPoint
 import app.simt.echo.model.RouteNode
 import app.simt.echo.platform.decodeImage
 import app.simt.echo.transfer.CloudApi
+import app.simt.echo.ui.copy.reviewLoadErrorCopy
+import app.simt.echo.ui.copy.reviewLocalErrorCopy
+import app.simt.echo.ui.copy.reviewSaveErrorCopy
+import app.simt.echo.ui.copy.reviewSaveLandmarkErrorCopy
+import app.simt.echo.ui.copy.reviewSuggestionsErrorCopy
+import app.simt.echo.ui.copy.reviewUseSuggestionErrorCopy
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -123,7 +129,7 @@ class ReviewViewModel(
                 publish(loaded)
                 loadSuggestions()
             } catch (e: Exception) {
-                _ui.update { it.copy(loading = false, error = e.message) }
+                _ui.update { it.copy(loading = false, error = reviewLoadErrorCopy()) }
             }
         }
     }
@@ -171,7 +177,7 @@ class ReviewViewModel(
             publishSuggestions(parsed)
             true
         } catch (e: Exception) {
-            _ui.update { it.copy(error = e.message ?: "Could not load AI suggestions.") }
+            _ui.update { it.copy(error = reviewSuggestionsErrorCopy()) }
             false
         }
     }
@@ -209,10 +215,10 @@ class ReviewViewModel(
             publishSuggestions(result)
             true
         } catch (e: app.simt.echo.ai.LocalModelException) {
-            _ui.update { it.copy(error = e.message ?: "Local model unavailable.") }
+            _ui.update { it.copy(error = reviewLocalErrorCopy()) }
             false
         } catch (e: Exception) {
-            _ui.update { it.copy(error = e.message ?: "Could not load local suggestions.") }
+            _ui.update { it.copy(error = reviewSuggestionsErrorCopy()) }
             false
         }
     }
@@ -345,7 +351,7 @@ class ReviewViewModel(
                     )
                 }
             } catch (e: Exception) {
-                _ui.update { it.copy(error = e.message ?: "Could not use the AI suggestion.") }
+                _ui.update { it.copy(error = reviewUseSuggestionErrorCopy()) }
             }
         }
     }
@@ -447,7 +453,7 @@ class ReviewViewModel(
                 }
                 closeDraw()
             } catch (e: Exception) {
-                _ui.update { it.copy(error = e.message ?: "Could not save the landmark.") }
+                _ui.update { it.copy(error = reviewSaveLandmarkErrorCopy()) }
             }
         }
     }
@@ -484,7 +490,7 @@ class ReviewViewModel(
         viewModelScope.launch {
             _ui.update { it.copy(saving = true, error = null) }
             try {
-                val src = checkNotNull(route) { "No draft route for $draftId." }
+                val src = checkNotNull(route) { "No draft route." }
                 val wanted = buildList {
                     src.start.photoAssetId?.let { add(it) }
                     src.landmarks.mapNotNullTo(this) { it.cropAssetId }
@@ -514,7 +520,7 @@ class ReviewViewModel(
                 _ui.update { it.copy(saving = false, savedRouteId = export.routeId, savedJobId = jobId) }
                 onSaved(export.routeId)
             } catch (e: Exception) {
-                _ui.update { it.copy(saving = false, error = e.message ?: "Could not save the route.") }
+                _ui.update { it.copy(saving = false, error = reviewSaveErrorCopy()) }
             }
         }
     }

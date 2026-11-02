@@ -20,6 +20,8 @@ import app.simt.echo.transfer.JobPoll
 import app.simt.echo.transfer.JobRecord
 import app.simt.echo.transfer.JobStage
 import app.simt.echo.transfer.UploadFile
+import app.simt.echo.ui.copy.processingErrorCopy
+import app.simt.echo.ui.copy.processingJobErrorCopy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -34,6 +36,7 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -279,7 +282,10 @@ class ProcessingViewModelTest {
         advanceUntilIdle()
 
         val failed = assertIs<ProcessingPhase.Failed>(vm.ui.value.phase)
-        assertEquals("scout down", failed.message)
+        // W7-06: the server's own error text never reaches the screen; the
+        // typed copy names what happened, what is safe, and the next action.
+        assertEquals(processingJobErrorCopy(), failed.message)
+        assertFalse(failed.message.contains("scout down"))
 
         // Retry deletes the dead job but must not re-upload: the user has
         // to see the consent copy and press Send again.
@@ -373,7 +379,8 @@ class ProcessingViewModelTest {
         advanceUntilIdle()
 
         val failed = assertIs<ProcessingPhase.Failed>(vm.ui.value.phase)
-        assertTrue(failed.message.contains("Not authorized", ignoreCase = true), failed.message)
+        // W7-06: the 401 detail stays in code; the screen gets typed copy.
+        assertEquals(processingErrorCopy(), failed.message)
         assertNull(h.drafts.loadJobRecord("draft-1"))
     }
 

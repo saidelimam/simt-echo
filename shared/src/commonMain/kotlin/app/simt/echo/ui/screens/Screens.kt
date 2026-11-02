@@ -18,6 +18,7 @@ import app.simt.echo.model.EchoRoute as SavedRoute
 import app.simt.echo.ui.EchoRoute
 import app.simt.echo.ui.components.EchoButton
 import app.simt.echo.ui.components.StatusChip
+import app.simt.echo.ui.copy.UNTITLED_WALK
 import kotlin.math.roundToInt
 
 /**
@@ -66,7 +67,7 @@ fun HomeScreen(
         savedRoutes.forEach { route ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 EchoButton(
-                    text = "${route.name.ifEmpty { route.routeId }} · " +
+                    text = "${route.name.ifEmpty { UNTITLED_WALK }} · " +
                         "${route.totalLengthM.roundToInt()} m · ${route.landmarks.size} landmarks",
                     onClick = { onOpenRoute(route.routeId) },
                     modifier = Modifier.weight(1f),

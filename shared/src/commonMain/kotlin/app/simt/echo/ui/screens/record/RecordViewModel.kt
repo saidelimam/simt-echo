@@ -5,6 +5,11 @@ import androidx.lifecycle.viewModelScope
 import app.simt.echo.capture.CaptureHud
 import app.simt.echo.capture.CaptureSession
 import app.simt.echo.capture.CaptureState
+import app.simt.echo.ui.copy.recordCameraErrorCopy
+import app.simt.echo.ui.copy.recordResumeErrorCopy
+import app.simt.echo.ui.copy.recordSaveErrorCopy
+import app.simt.echo.ui.copy.recordStartErrorCopy
+import app.simt.echo.ui.copy.recordStopErrorCopy
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -36,20 +41,20 @@ class RecordViewModel(private val session: CaptureSession) : ViewModel() {
      */
     fun prepare(resumeDraftId: String?) {
         if (resumeDraftId != null && !session.resume(resumeDraftId)) {
-            error.value = "That interrupted recording could not be reopened."
+            error.value = recordResumeErrorCopy()
         }
         session.ready()
     }
 
     /** Camera bind/preview failure, surfaced instead of crashing (W4-03). */
     fun onCameraError(message: String) {
-        error.value = message
+        error.value = recordCameraErrorCopy()
     }
 
     fun start() {
         viewModelScope.launch {
             runCatching { session.start() }
-                .onFailure { error.value = "Could not start recording: ${it.message ?: "camera unavailable"}" }
+                .onFailure { error.value = recordStartErrorCopy() }
         }
     }
 
@@ -59,7 +64,7 @@ class RecordViewModel(private val session: CaptureSession) : ViewModel() {
     fun beginFinish() {
         viewModelScope.launch {
             runCatching { session.beginFinish() }
-                .onFailure { error.value = "Could not stop recording cleanly: ${it.message ?: "unknown"}" }
+                .onFailure { error.value = recordStopErrorCopy() }
         }
     }
 
@@ -67,7 +72,7 @@ class RecordViewModel(private val session: CaptureSession) : ViewModel() {
         viewModelScope.launch {
             runCatching { session.save(routeName, destinationLabel) }
                 .onSuccess { onSaved(it.draftId) }
-                .onFailure { error.value = "Could not save the draft: ${it.message ?: "unknown"}" }
+                .onFailure { error.value = recordSaveErrorCopy() }
         }
     }
 }

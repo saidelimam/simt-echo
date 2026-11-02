@@ -49,6 +49,8 @@ import app.simt.echo.ui.components.EchoButton
 import app.simt.echo.ui.components.CropImage
 import app.simt.echo.ui.components.Minimap
 import app.simt.echo.ui.components.PillButton
+import app.simt.echo.ui.copy.MISSING_DRAFT_ERROR
+import app.simt.echo.ui.copy.UNTITLED_WALK
 import kotlin.math.roundToInt
 
 /** Semantics tag for the draw canvas (headless UI gate target). */
@@ -72,7 +74,7 @@ fun ReviewScreen(
     val drawNode = ui.nodes.firstOrNull { it.node.id == ui.drawNodeId }
     if (drawNode != null) {
         DrawOverlay(
-            nodeLabel = drawNode.node.label.ifEmpty { drawNode.node.id },
+            nodeLabel = drawNode.node.label.ifEmpty { "this point" },
             heroBytes = drawNode.heroBytes,
             title = ui.drawTitle,
             onTitle = viewModel::editDrawTitle,
@@ -96,11 +98,15 @@ fun ReviewScreen(
             return@Column
         }
         if (ui.missing) {
-            Text(text = "No draft route found.", style = MaterialTheme.typography.titleLarge)
+            Text(text = MISSING_DRAFT_ERROR.whatHappened, style = MaterialTheme.typography.titleLarge)
+            Text(
+                text = "${MISSING_DRAFT_ERROR.whatsSafe} ${MISSING_DRAFT_ERROR.nextAction}",
+                style = MaterialTheme.typography.bodyLarge,
+            )
             EchoButton(text = "Back home", onClick = onBack, modifier = Modifier.fillMaxWidth())
             return@Column
         }
-        Text(text = ui.routeName.ifEmpty { "Untitled walk" }, style = MaterialTheme.typography.titleLarge)
+        Text(text = ui.routeName.ifEmpty { UNTITLED_WALK }, style = MaterialTheme.typography.titleLarge)
         // Walk-forward is drawn up: path y grows forward, screen y grows down.
         Minimap(
             points = ui.path.map { Offset(it.x.toFloat(), -it.y.toFloat()) },

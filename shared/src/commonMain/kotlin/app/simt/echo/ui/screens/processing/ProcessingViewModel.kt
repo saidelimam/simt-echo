@@ -23,6 +23,11 @@ import app.simt.echo.transfer.EchoApiError
 import app.simt.echo.transfer.JobRecord
 import app.simt.echo.transfer.JobStage
 import app.simt.echo.transfer.UploadFile
+import app.simt.echo.ui.copy.processingErrorCopy
+import app.simt.echo.ui.copy.processingJobErrorCopy
+import app.simt.echo.ui.copy.processingJobGoneCopy
+import app.simt.echo.ui.copy.processingJobTimeoutCopy
+import app.simt.echo.ui.copy.processingNoDraftCopy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -99,7 +104,7 @@ class ProcessingViewModel(
         viewModelScope.launch {
             val route = drafts.loadDraftRoute(draftId)
             if (route == null) {
-                _ui.update { it.copy(phase = ProcessingPhase.Failed("No draft route for this upload.")) }
+                _ui.update { it.copy(phase = ProcessingPhase.Failed(processingNoDraftCopy())) }
                 return@launch
             }
             runCatching { ensureKeyframes(drafts, media, draftId, route) }
@@ -163,7 +168,7 @@ class ProcessingViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _ui.update { it.copy(phase = ProcessingPhase.Failed(friendly(e))) }
+                _ui.update { it.copy(phase = ProcessingPhase.Failed(processingErrorCopy())) }
             }
         }
     }
@@ -235,7 +240,7 @@ class ProcessingViewModel(
                 throw e
             } catch (e: EchoApiError.JobNotFound) {
                 drafts.clearJobRecord(draftId)
-                _ui.update { it.copy(phase = ProcessingPhase.Failed("The job is gone from the server.")) }
+                _ui.update { it.copy(phase = ProcessingPhase.Failed(processingJobGoneCopy())) }
                 return
             } catch (e: Exception) {
                 // A transient blip must not kill a minutes-long job or push
@@ -243,7 +248,7 @@ class ProcessingViewModel(
                 // a row before declaring failure (review 0001 R3).
                 consecutiveFailures++
                 if (consecutiveFailures > maxTransientPollFailures) {
-                    _ui.update { it.copy(phase = ProcessingPhase.Failed(friendly(e))) }
+                    _ui.update { it.copy(phase = ProcessingPhase.Failed(processingErrorCopy())) }
                     return
                 }
                 return@repeat
@@ -256,13 +261,13 @@ class ProcessingViewModel(
                     return
                 }
                 "errored" -> {
-                    _ui.update { it.copy(phase = ProcessingPhase.Failed(poll.error ?: "The cloud job failed.")) }
+                    _ui.update { it.copy(phase = ProcessingPhase.Failed(processingJobErrorCopy())) }
                     return
                 }
                 else -> _ui.update { it.copy(phase = ProcessingPhase.Working(poll.stage)) }
             }
         }
-        _ui.update { it.copy(phase = ProcessingPhase.Failed("Timed out waiting for the cloud job.")) }
+        _ui.update { it.copy(phase = ProcessingPhase.Failed(processingJobTimeoutCopy())) }
     }
 
     /** Cuts one ≤10 fps silent clip per checkpoint when SAM is enabled. */
@@ -301,10 +306,5 @@ class ProcessingViewModel(
             files += UploadFile(clipId(node), "video/mp4", bytes)
         }
         return files
-    }
-
-    private fun friendly(e: Exception): String = when (e) {
-        is EchoApiError -> e.message ?: "Cloud upload failed."
-        else -> e.message ?: "Cloud upload failed."
     }
 }

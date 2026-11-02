@@ -32,6 +32,9 @@ import app.simt.echo.ui.components.EchoButton
 import app.simt.echo.ui.components.PillButton
 import app.simt.echo.ui.components.QrCard
 import app.simt.echo.ui.components.StatusChip
+import app.simt.echo.ui.copy.UNTITLED_WALK
+import app.simt.echo.ui.copy.createdCopy
+import app.simt.echo.ui.copy.expiryCopy
 import io.github.alexzhirkevich.qrose.rememberQrCodePainter
 
 /**
@@ -168,7 +171,8 @@ private fun ExportPreview(
         Text(text = "What others receive", style = MaterialTheme.typography.titleMedium)
         if (summary != null) {
             Text(
-                text = "${summary.routeName} · by ${summary.creatorLabel} · created ${summary.createdAtEpochMs}",
+                text = "${summary.routeName.ifEmpty { UNTITLED_WALK }} · by ${summary.creatorLabel} · " +
+                    createdCopy(summary.createdAtEpochMs),
                 style = MaterialTheme.typography.bodyLarge,
             )
             Text(
@@ -199,12 +203,12 @@ private fun ExportPreview(
             Text(text = LANDMARK_TEXT_DISCLOSURE, style = MaterialTheme.typography.bodyMedium)
             summary.ai?.let { ai ->
                 Text(
-                    text = "AI: ${ai.scoutModel} / ${ai.groundModel} · job ${ai.jobId}",
+                    text = "AI suggestions included (${ai.scoutModel} / ${ai.groundModel})",
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
             Text(
-                text = summary.expiresAtEpochMs?.let { "Expires at $it" } ?: "No expiry",
+                text = expiryCopy(summary.expiresAtEpochMs),
                 style = MaterialTheme.typography.bodyMedium,
             )
         }

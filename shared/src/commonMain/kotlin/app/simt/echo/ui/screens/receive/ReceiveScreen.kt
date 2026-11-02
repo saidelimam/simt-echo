@@ -28,6 +28,8 @@ import app.simt.echo.ui.components.EchoButton
 import app.simt.echo.ui.components.ErrorState
 import app.simt.echo.ui.components.PillButton
 import app.simt.echo.ui.components.oneDecimal
+import app.simt.echo.ui.copy.UNTITLED_WALK
+import app.simt.echo.ui.copy.expiryCopy
 
 /**
  * Receive screen (plan §8.3 / W2-04): scanner with a rounded cutout, fetch
@@ -90,7 +92,7 @@ fun ReceiveScreen(
                         }
                     }
                     Text(
-                        text = "Scan the QR on the other phone",
+                        text = "Scan the other phone's QR",
                         style = MaterialTheme.typography.bodyLarge,
                     )
                     PillButton(
@@ -127,7 +129,7 @@ private fun ImportSheet(
         verticalArrangement = Arrangement.spacedBy(8.dp),
         modifier = modifier.fillMaxWidth(),
     ) {
-        Text(text = preview.name, style = MaterialTheme.typography.titleLarge)
+        Text(text = preview.name.ifEmpty { UNTITLED_WALK }, style = MaterialTheme.typography.titleLarge)
         Text(
             text = "${oneDecimal(preview.lengthM)} m · ${preview.turns} turns · " +
                 "${preview.landmarkCount} landmarks",
@@ -140,7 +142,7 @@ private fun ImportSheet(
         val expiresAt = preview.expiresAtEpochMs
         if (expiresAt != null) {
             Text(
-                text = "Expires $expiresAt",
+                text = expiryCopy(expiresAt),
                 style = MaterialTheme.typography.bodyLarge,
             )
         }
