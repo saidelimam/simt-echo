@@ -1,10 +1,16 @@
 package app.simt.echo.ui.screens.processing
 
+import app.simt.echo.capture.GlimpseEntry
 import app.simt.echo.data.DraftRepository
 import app.simt.echo.data.FileStore
+import app.simt.echo.media.CLIP_FORGE_FPS
 import app.simt.echo.media.ClipInfo
 import app.simt.echo.media.CropBox
 import app.simt.echo.media.MediaTools
+import app.simt.echo.media.clipSidecarFileName
+import app.simt.echo.media.clipSidecarId
+import app.simt.echo.media.decodeFrameMap
+import app.simt.echo.media.sha256Hex
 import app.simt.echo.model.CaptureLog
 import app.simt.echo.model.CaptureSample
 import app.simt.echo.model.EchoRoute
@@ -321,15 +327,14 @@ class ProcessingViewModelTest {
         val windows = mutableListOf<Pair<Long, Long>>()
         val durationAware: MediaTools = object : MediaTools by h.media {
             override suspend fun videoDurationMs(video: Path): Long? = 30_000L
-            override suspend fun cutClip(
+            override suspend fun transcodeStripClip(
                 video: Path,
                 startMs: Long,
                 endMs: Long,
-                maxFps: Int,
                 out: Path,
             ): ClipInfo {
                 windows += startMs to endMs
-                return h.media.cutClip(video, startMs, endMs, maxFps, out)
+                return h.media.cutClip(video, startMs, endMs, CLIP_FORGE_FPS, out)
             }
         }
         val api = FakeCloudApi(polls = ArrayDeque(listOf(errored("scout down"), complete())))
@@ -360,12 +365,13 @@ class ProcessingViewModelTest {
         assertEquals(2, windows.size, "expected one cut per node, cache reused: $windows")
         assertEquals(2, h.media.cut.size)
         // Clip ends clamp to the video duration (30 s here): n1 at t=40 s
-        // opens [36_000, 41_000] → [36_000, 36_000], n2 at t=60 s opens
-        // [56_000, 61_000] → [56_000, 56_000] (the end pulls back to the
-        // duration, then up to the start — the pre-existing clipWindow
-        // never-invert rule). Both ends sit below their raw t+1_000.
+        // opens the 3 s fallback window [37_750, 40_750] → [37_750, 37_750],
+        // n2 at t=60 s opens [57_750, 60_750] → [57_750, 57_750] (the end
+        // pulls back to the duration, then up to the start — the
+        // stripFallbackWindow never-invert rule, W11-03). Both ends sit below
+        // their raw t+750.
         assertEquals(
-            listOf(36_000L to 36_000L, 56_000L to 56_000L),
+            listOf(37_750L to 37_750L, 57_750L to 57_750L),
             windows,
             "clip windows not clamped to duration: $windows",
         )
@@ -373,6 +379,68 @@ class ProcessingViewModelTest {
         val ids = api.submits[1].second.map { it.id }.toSet()
         assertTrue(ids.contains("clip_n1"), ids.toString())
         assertTrue(ids.contains("clip_n2"), ids.toString())
+    }
+
+    @Test
+    fun sendWithLedgerStripsForgesClipsAndUploadsSidecars() = runTest(dispatcher) {
+        val h = harness()
+        // Ledger strips inside each node's [d − 8, d + 1] window (W11-02).
+        h.drafts.saveGlimpseEntries(
+            "draft-1",
+            listOf(
+                GlimpseEntry(0, 10_000_000_000L, 18.0, 0.9, 0.9, 1L, "glimpse/a.jpg"),
+                GlimpseEntry(1, 11_000_000_000L, 19.0, 0.8, 0.8, 2L, "glimpse/b.jpg"),
+                GlimpseEntry(2, 20_000_000_000L, 44.0, 0.9, 0.9, 3L, "glimpse/c.jpg"),
+                GlimpseEntry(3, 21_000_000_000L, 44.6, 0.7, 0.7, 4L, "glimpse/d.jpg"),
+            ),
+        )
+        val draftDir = "/data/drafts/draft-1".toPath()
+        h.fileSystem.createDirectories(draftDir / "glimpse")
+        for (name in listOf("a.jpg", "b.jpg", "c.jpg", "d.jpg")) {
+            h.fileSystem.write(draftDir / "glimpse/$name") { write("jpeg".encodeToByteArray()) }
+        }
+        val forged = mutableListOf<String>()
+        val media: MediaTools = object : MediaTools by h.media {
+            override val supportsStripForge: Boolean = true
+
+            override suspend fun forgeStripClip(frames: List<Path>, out: Path): ClipInfo {
+                forged += "${out.name}:${frames.size}"
+                out.parent?.let { h.fileSystem.createDirectories(it) }
+                h.fileSystem.write(out) { write("forged".encodeToByteArray()) }
+                return ClipInfo(out, frameCount = frames.size, durationMs = frames.size * 250L)
+            }
+        }
+        val api = FakeCloudApi(polls = ArrayDeque(listOf(complete())))
+        val vm = ProcessingViewModel(
+            draftId = "draft-1",
+            drafts = h.drafts,
+            media = media,
+            api = api,
+            nowMs = { 1_762_000_100_000L },
+            pollIntervalMs = 1L,
+            maxPolls = 10,
+        )
+        advanceUntilIdle()
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
+        // Both nodes forged from their strips — never the video transcode.
+        assertEquals(listOf("clip_n1.mp4:2", "clip_n2.mp4:2"), forged.sorted())
+        assertTrue(h.media.cut.isEmpty())
+        val ids = api.submits.single().second.map { it.id }.toSet()
+        assertTrue(ids.contains("clip_n1"), ids.toString())
+        assertTrue(ids.contains("clip_n2"), ids.toString())
+        assertTrue(ids.contains(clipSidecarId("n1")), ids.toString())
+        assertTrue(ids.contains(clipSidecarId("n2")), ids.toString())
+        // The sidecar maps output frame index → (tNs, odometer m) exactly.
+        val raw = checkNotNull(h.drafts.readDraftFile("draft-1", clipSidecarFileName("n1")))
+        val sidecar = decodeFrameMap(raw.decodeToString())
+        assertEquals("image-strip", sidecar.source)
+        assertEquals(2, sidecar.frames.size)
+        assertEquals(10_000_000_000L, sidecar.frames[0].tNs)
+        assertEquals(18.0, sidecar.frames[0].odometerM, 1e-9)
+        assertEquals(sha256Hex("forged".encodeToByteArray()), sidecar.clipSha256)
     }
 
     @Test

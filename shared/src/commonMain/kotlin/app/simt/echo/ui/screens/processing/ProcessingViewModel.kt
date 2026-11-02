@@ -3,19 +3,28 @@ package app.simt.echo.ui.screens.processing
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.simt.echo.capture.CaptureSession
+import app.simt.echo.capture.approachStrip
 import app.simt.echo.data.DraftRepository
+import app.simt.echo.media.ClipFrame
 import app.simt.echo.media.ClipInfo
-import app.simt.echo.media.ClipWindow
+import app.simt.echo.media.ForgeSource
 import app.simt.echo.media.KeyframeSpec
 import app.simt.echo.media.ManifestBuilder
 import app.simt.echo.media.ManifestConsent
 import app.simt.echo.media.MediaTools
+import app.simt.echo.media.buildFrameMap
 import app.simt.echo.media.clipFileName
 import app.simt.echo.media.clipId
-import app.simt.echo.media.clipWindow
+import app.simt.echo.media.clipSidecarFileName
+import app.simt.echo.media.clipSidecarId
+import app.simt.echo.media.encodeFrameMap
 import app.simt.echo.media.ensureKeyframes
 import app.simt.echo.media.keyframeFiles
 import app.simt.echo.media.keyframeSpecs
+import app.simt.echo.media.ledgerJpegName
+import app.simt.echo.media.selectForgeSource
+import app.simt.echo.media.sha256Hex
+import app.simt.echo.media.stripFallbackWindow
 import app.simt.echo.model.EchoJson
 import app.simt.echo.model.EchoRoute
 import app.simt.echo.model.NodeType
@@ -68,7 +77,7 @@ data class ProcessingUiState(
 
 /** Plan consent copy (W3-02 verbatim): files, retention, training tier, shape. */
 fun consentCopy(info: ConsentInfo): String {
-    val clips = if (info.samEnabled) " (and ${info.clips} five-second silent clips if SAM is enabled)" else ""
+    val clips = if (info.samEnabled) " (and ${info.clips} short silent clips if SAM is enabled)" else ""
     return "Send ${info.photos} photos$clips to cloud AI on Cloudflare " +
         "(Meta's Llama 4 Scout on Workers AI; Meta Model API if enabled) via SIMT ECHO's server " +
         "to suggest landmarks. Files are deleted within 24 h (or now, from this screen). " +
@@ -109,8 +118,8 @@ class ProcessingViewModel(
 
     private var counts: ConsentInfo = ConsentInfo(0, 0, false)
 
-    /** Cut clips keyed by (draftId, nodeId, window) (W10-02 G5). */
-    private val clipCache = mutableMapOf<Triple<String, String, ClipWindow>, ClipInfo>()
+    /** Cut clips keyed by forge path: `clip:<node>` + window or `strip:<node>` + strip span (W11-03). */
+    private val clipCache = mutableMapOf<String, ClipInfo>()
 
     init {
         refresh()
@@ -295,40 +304,84 @@ class ProcessingViewModel(
         _ui.update { it.copy(phase = ProcessingPhase.Failed(processingJobTimeoutCopy())) }
     }
 
-    /** Cuts one ≤10 fps silent clip per checkpoint when SAM is enabled.
+    /** Forges one ≤12-frame 480p clip per checkpoint when SAM is enabled (plan W11-03).
      *
-     * Clip ends clamp to the video duration (W10-02 G5), and cuts are cached
-     * per (draftId, nodeId, window): a second Send reuses the file on disk
-     * instead of re-encoding it. The cache entry is only trusted while its
-     * output file still exists.
+     * Primary path: the node's approach strip (W11-02 ledger frames) through
+     * the image-sequence forge, with a `frames.json` sidecar mapping output
+     * frame index → (tNs, odometer m) so `visibleFromM` is exact. Fallback:
+     * a 3 s video transcode with an empty-frames sidecar — honest about the
+     * unknown map. Every sidecar carries the clip's SHA-256.
+     *
+     * Clip ends clamp to the video duration (W10-02 G5), and forges are
+     * cached per forge path: a second Send reuses the file on disk instead
+     * of re-encoding it. A cache entry is only trusted while its output file
+     * still exists.
      */
     private suspend fun cutClips(route: EchoRoute): Map<String, ClipInfo> {
         if (!counts.samEnabled) return emptyMap()
         val videoFile = CaptureSession.VIDEO_FILE
         val video = drafts.draftFilePath(draftId, videoFile)
-        if (!drafts.draftFileExists(draftId, videoFile)) return emptyMap()
-        val durationMs = runCatching { media.videoDurationMs(video) }.getOrNull()
+        val hasVideo = drafts.draftFileExists(draftId, videoFile)
+        if (!hasVideo && !media.supportsStripForge) return emptyMap()
+        val ledger = drafts.loadGlimpseEntries(draftId) ?: emptyList()
+        val durationMs = if (hasVideo) runCatching { media.videoDurationMs(video) }.getOrNull() else null
         val out = mutableMapOf<String, ClipInfo>()
         for (node in route.nodes) {
             val t = node.captureTMs ?: continue
             if (node.type == NodeType.START) continue
-            val window = clipWindow(t, durationMs)
             val file = clipFileName(node.id)
-            val key = Triple(draftId, node.id, window)
-            val cached = clipCache[key]
-            if (cached != null && drafts.draftFileExists(draftId, file)) {
-                out[node.id] = cached
-                continue
-            }
             try {
-                val info = media.cutClip(video, window.startMs, window.endMs, 10, drafts.draftFilePath(draftId, file))
-                clipCache[key] = info
-                out[node.id] = info
+                val strip = approachStrip(ledger, node.atDistanceM)
+                val kept = strip.filter { entry ->
+                    val name = ledgerJpegName(draftId, entry)
+                    name != null && drafts.draftFileExists(draftId, name)
+                }
+                if (selectForgeSource(kept.size, media.supportsStripForge) == ForgeSource.IMAGE_STRIP) {
+                    val key = "strip:$draftId:${node.id}:${kept.first().tNs}-${kept.last().tNs}-${kept.size}"
+                    val info = cachedOrForge(key, file) {
+                        media.forgeStripClip(
+                            kept.map { entry ->
+                                drafts.draftFilePath(draftId, checkNotNull(ledgerJpegName(draftId, entry)))
+                            },
+                            drafts.draftFilePath(draftId, file),
+                        )
+                    }
+                    writeSidecar(node.id, file, source = "image-strip", map = buildFrameMap(kept))
+                    out[node.id] = info
+                } else {
+                    if (!hasVideo) continue
+                    val window = stripFallbackWindow(t, durationMs)
+                    val key = "clip:$draftId:${node.id}:${window.startMs}-${window.endMs}"
+                    val info = cachedOrForge(key, file) {
+                        media.transcodeStripClip(
+                            video,
+                            window.startMs,
+                            window.endMs,
+                            drafts.draftFilePath(draftId, file),
+                        )
+                    }
+                    writeSidecar(node.id, file, source = "video-transcode", map = emptyList())
+                    out[node.id] = info
+                }
             } catch (e: Exception) {
                 // One bad clip omits that node; the manifest stays valid.
             }
         }
         return out
+    }
+
+    /** Reuses a cached forge while its output file still exists (W10-02 G5). */
+    private suspend fun cachedOrForge(key: String, file: String, forge: suspend () -> ClipInfo): ClipInfo {
+        val cached = clipCache[key]
+        if (cached != null && drafts.draftFileExists(draftId, file)) return cached
+        return forge().also { clipCache[key] = it }
+    }
+
+    /** Writes one node's `frames.json` sidecar with the clip's SHA-256. */
+    private fun writeSidecar(nodeId: String, clipFile: String, source: String, map: List<ClipFrame>) {
+        val sha = drafts.readDraftFile(draftId, clipFile)?.let(::sha256Hex)
+        val json = encodeFrameMap(map, source = source, clipSha256 = sha)
+        drafts.writeDraftFile(draftId, clipSidecarFileName(nodeId), json.encodeToByteArray())
     }
 
     private fun collectFiles(
@@ -343,6 +396,11 @@ class ProcessingViewModel(
         for (node in clips.keys) {
             val bytes = drafts.readDraftFile(draftId, clipFileName(node)) ?: continue
             files += UploadFile(clipId(node), "video/mp4", bytes)
+            // The exact frame map rides beside its clip (W11-03); the worker
+            // derives the sidecar id from the clip id by convention.
+            drafts.readDraftFile(draftId, clipSidecarFileName(node))?.let { sidecar ->
+                files += UploadFile(clipSidecarId(node), "application/json", sidecar)
+            }
         }
         return files
     }

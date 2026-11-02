@@ -74,6 +74,35 @@ interface MediaTools {
      * export is final.
      */
     suspend fun cutClip(video: Path, startMs: Long, endMs: Long, maxFps: Int, out: Path): ClipInfo
+
+    /**
+     * Whether the image-sequence strip forge (plan W11-03) is available.
+     * False on platforms without Media3 Transformer — callers fall back to
+     * [transcodeStripClip] via [selectForgeSource].
+     */
+    val supportsStripForge: Boolean
+        get() = false
+
+    /**
+     * Forges one clip from ordered strip JPEGs ([CLIP_FORGE_FPS] fps,
+     * 480 px short side, ~600 kbps) into [out]. Output frame `i` is
+     * `frames[i]`, so [buildFrameMap] over the same entries is the exact
+     * sidecar. Only called when [supportsStripForge] is true; the default
+     * fails loudly so a platform gap surfaces instead of a silent empty clip.
+     */
+    suspend fun forgeStripClip(frames: List<Path>, out: Path): ClipInfo =
+        error("Strip forge is Android-only in v1")
+
+    /**
+     * Fallback forge (plan W11-03): transcodes `[startMs, endMs]` from
+     * [video] at [CLIP_FORGE_FPS] fps, 480 px short side, into [out].
+     * The default delegates to [cutClip] at the forge frame rate, so every
+     * platform with clip cutting gets a working (if not 480p-downscaled)
+     * fallback; Android overrides it with the Presentation + FrameDropEffect
+     * path.
+     */
+    suspend fun transcodeStripClip(video: Path, startMs: Long, endMs: Long, out: Path): ClipInfo =
+        cutClip(video, startMs, endMs, CLIP_FORGE_FPS, out)
 }
 
 /** One frame extraction inside an [MediaTools.extractFrames] batch. */

@@ -7,19 +7,11 @@ import android.graphics.Matrix
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import androidx.media3.common.MediaItem
-import androidx.media3.common.MimeTypes
-import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
-import androidx.media3.transformer.ExportException
-import androidx.media3.transformer.ExportResult
-import androidx.media3.transformer.Transformer
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import okio.Path
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 
 /**
  * Android [MediaTools] (plan W1-05, W3-01): [MediaMetadataRetriever] for
@@ -128,47 +120,27 @@ class AndroidMediaTools(
             .build()
 
         // The Transformer must run on the main looper (plan W3-01); the
-        // listener delivers completion or an [ExportException].
-        val transformer = Transformer.Builder(context)
-            .setVideoMimeType(MimeTypes.VIDEO_H264)
-            .build()
-
-        suspendCancellableCoroutine<Unit> { cont ->
-            val listener = object : Transformer.Listener {
-                override fun onCompleted(composition: Composition, result: ExportResult) {
-                    cont.resume(Unit)
-                }
-
-                override fun onError(
-                    composition: Composition,
-                    result: ExportResult,
-                    error: ExportException,
-                ) {
-                    cont.resumeWithException(error)
-                }
-            }
-            transformer.addListener(listener)
+        // listener delivers completion or an [ExportException]. The default
+        // bitrate is kept here deliberately: this is the legacy W3-01 cut,
+        // not the W11-03 forge (see the G5 verdict in AndroidClipForge.kt).
+        export(context, out, useForgeBitrate = false) { transformer ->
             transformer.start(edited, out.toString())
-            cont.invokeOnCancellation { transformer.cancel() }
         }
-        transformer.removeAllListeners()
+        return describeExport(out, safeEnd - startMs, ioDispatcher)
+    }
 
-        // Read back the exported clip's metadata on IO (plan W3-01 → ClipInfo, W10-02 G1).
-        return withContext(ioDispatcher) {
-            val retriever = MediaMetadataRetriever()
-            try {
-                retriever.setDataSource(out.toString())
-                val frameCount = retriever.extractMetadata(
-                    MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT,
-                )?.toIntOrNull() ?: 0
-                val durationMs = retriever.extractMetadata(
-                    MediaMetadataRetriever.METADATA_KEY_DURATION,
-                )?.toLongOrNull() ?: (safeEnd - startMs)
-                ClipInfo(out, frameCount, durationMs)
-            } finally {
-                retriever.release()
-            }
-        }
+    /**
+     * Strip forge available: Media3 Transformer image-sequence input
+     * ([forgeStripFromJpegs]). See the G5 verdict in AndroidClipForge.kt.
+     */
+    override val supportsStripForge: Boolean = true
+
+    override suspend fun forgeStripClip(frames: List<Path>, out: Path): ClipInfo =
+        forgeStripFromJpegs(context, frames, out)
+
+    override suspend fun transcodeStripClip(video: Path, startMs: Long, endMs: Long, out: Path): ClipInfo {
+        val durationMs = videoDurationMs(video)
+        return transcodeStripFromVideo(context, video, startMs, endMs, durationMs, out)
     }
 
     // ── internals ──────────────────────────────────────────────────────────

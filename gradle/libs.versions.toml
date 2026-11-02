@@ -76,6 +76,7 @@ camerax-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", vers
 camerax-video = { group = "androidx.camera", name = "camera-video", version.ref = "camerax" }
 camerax-compose = { group = "androidx.camera", name = "camera-compose", version.ref = "camerax" }
 media3-transformer = { group = "androidx.media3", name = "media3-transformer", version.ref = "media3" }
+media3-effect = { group = "androidx.media3", name = "media3-effect", version.ref = "media3" }
 media3-extractor = { group = "androidx.media3", name = "media3-extractor", version.ref = "media3" }
 
 # Wear OS (W5-04 haptic mirror: MessageClient + CapabilityClient only)

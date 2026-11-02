@@ -92,6 +92,8 @@ kotlin {
             implementation(libs.mlkit.barcode.scanning)
             // W3-01 Clips: Media3 Transformer cuts silent H.264 clips.
             implementation(libs.media3.transformer)
+            // W11-03 forge: Presentation + FrameDropEffect live here.
+            implementation(libs.media3.effect)
             implementation(libs.media3.extractor)
             // W5-04 Wear haptic mirror (MessageClient + CapabilityClient).
             implementation(libs.play.services.wearable)
