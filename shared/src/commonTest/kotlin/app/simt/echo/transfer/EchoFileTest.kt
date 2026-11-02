@@ -3,6 +3,8 @@ package app.simt.echo.transfer
 import app.simt.echo.Fixtures
 import app.simt.echo.data.FileStore
 import app.simt.echo.data.RouteRepository
+import app.simt.echo.model.EchoRoute
+import app.simt.echo.model.EchoSchemaVersion
 import app.simt.echo.platform.Endpoint
 import app.simt.echo.platform.PeerTransport
 import kotlinx.coroutines.test.runTest
@@ -10,6 +12,8 @@ import okio.Path.Companion.toPath
 import okio.fakefilesystem.FakeFileSystem
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /** W2-07 gate: plain `.echo` export/import round-trip; filename is safe. */
@@ -25,11 +29,11 @@ class EchoFileTest {
         override fun stopOffer() = Unit
     }
 
-    private fun setup(): Pair<FileStore, TransferService> {
+    private fun setup(route: EchoRoute = Fixtures.L_ROUTE): Pair<FileStore, TransferService> {
         val fileSystem = FakeFileSystem()
         val store = FileStore(fileSystem, "/data".toPath())
         val routes = RouteRepository(store)
-        routes.save(Fixtures.L_ROUTE)
+        routes.save(route)
         val service = TransferService(
             transport = FakeTransport(),
             routes = routes,
@@ -153,5 +157,28 @@ class EchoFileTest {
         assertEquals("my_route.echo", service.echoFileName("my route"))
         assertEquals("a_b_c_d_e_f_g_h_i_j.echo", service.echoFileName("a/b\\c:d*e?f\"g<h>i|j"))
         assertEquals("route.echo", service.echoFileName("   "))
+    }
+
+    @Test
+    fun plainFileLeavesPerceptionOutByDefault() = runTest {
+        val (store, service) = setup(Fixtures.V2_ROUTE)
+        assertNotNull(Fixtures.V2_ROUTE.perception, "fixture must carry perception")
+
+        val default = service.importFile(store.readBytes(service.exportFile(Fixtures.V2_ROUTE.routeId).toString())!!)
+        assertNull(default.route.perception, "an unencrypted file must not carry perception unasked")
+        assertEquals(EchoSchemaVersion.V1, default.route.schemaVersion)
+
+        // The same default holds when a selection is supplied.
+        val selected = service.exportFile(Fixtures.V2_ROUTE.routeId, selection = ExportSelection())
+        assertNull(service.importFile(store.readBytes(selected.toString())!!).route.perception)
+    }
+
+    @Test
+    fun plainFileCarriesPerceptionOnlyOnOptIn() = runTest {
+        val (store, service) = setup(Fixtures.V2_ROUTE)
+        val path = service.exportFile(Fixtures.V2_ROUTE.routeId, includePerception = true)
+        val body = service.importFile(store.readBytes(path.toString())!!)
+        assertEquals(Fixtures.V2_ROUTE.perception, body.route.perception)
+        assertEquals(EchoSchemaVersion.V2, body.route.schemaVersion)
     }
 }

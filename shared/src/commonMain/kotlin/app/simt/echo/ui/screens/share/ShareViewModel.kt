@@ -36,6 +36,11 @@ data class ShareUiState(
     /** Privacy warning up (W2-07); no plain file exists until it is confirmed. */
     val fileWarning: Boolean = false,
     val fileShared: Boolean = false,
+    /**
+     * Opt-in to put perception data into the plain file. Off by default
+     * and re-armed after every share: the file is unencrypted.
+     */
+    val filePerception: Boolean = false,
     /** Export preview rows (W3-08); empty until the route loads. */
     val exportItems: List<ExportItem> = emptyList(),
     /** Current preview-sheet choice; the offer always encodes this. */
@@ -178,7 +183,7 @@ class ShareViewModel(
 
     /** Raises the privacy warning; nothing is written until [confirmFileShare]. */
     fun requestFileShare() {
-        _ui.update { it.copy(fileWarning = true, error = null) }
+        _ui.update { it.copy(fileWarning = true, filePerception = false, error = null) }
     }
 
     /**
@@ -192,24 +197,34 @@ class ShareViewModel(
                 // Plaintext exports live only until the next share:
                 // purge any stale unencrypted copy before writing anew.
                 service.purgePlainExports()
-                val path = service.exportFile(routeId, selection = _ui.value.selection)
+                val path = service.exportFile(
+                    routeId,
+                    selection = _ui.value.selection,
+                    includePerception = _ui.value.filePerception,
+                )
                 val shared = sharing.shareFile(path, "ECHO route", ECHO_MIME)
                 _ui.update {
                     it.copy(
                         fileWarning = false,
+                        filePerception = false,
                         fileShared = shared,
                         error = if (shared) null else "Could not open the share sheet",
                     )
                 }
             } catch (e: Exception) {
-                _ui.update { it.copy(fileWarning = false, error = shareExportErrorCopy()) }
+                _ui.update { it.copy(fileWarning = false, filePerception = false, error = shareExportErrorCopy()) }
             }
         }
     }
 
+    /** Opt in or out of perception data in the plain file (default out). */
+    fun setFilePerception(include: Boolean) {
+        _ui.update { it.copy(filePerception = include) }
+    }
+
     /** Dismisses the warning without writing anything. */
     fun dismissFileShare() {
-        _ui.update { it.copy(fileWarning = false, error = null) }
+        _ui.update { it.copy(fileWarning = false, filePerception = false, error = null) }
     }
 
     /**

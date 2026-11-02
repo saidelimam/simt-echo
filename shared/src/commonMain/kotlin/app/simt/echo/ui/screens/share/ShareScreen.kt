@@ -5,7 +5,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
@@ -22,15 +24,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.dp
 import app.simt.echo.platform.FileSharing
 import app.simt.echo.platform.Haptics
 import app.simt.echo.transfer.ExpiryOption
 import app.simt.echo.transfer.ExportItem
 import app.simt.echo.transfer.ExportSelection
 import app.simt.echo.transfer.ExportSummary
+import app.simt.echo.transfer.FILE_PERCEPTION_OPT_IN_LABEL
 import app.simt.echo.transfer.LANDMARK_TEXT_DISCLOSURE
+import app.simt.echo.transfer.PERCEPTION_DISCLOSURE
 import app.simt.echo.transfer.START_PHOTO_ITEM_ID
 import app.simt.echo.transfer.TransferService
 import app.simt.echo.ui.atmosphere.CanopyPanel
@@ -53,6 +59,8 @@ const val ShareQrTag = "ShareQr"
 const val ShareQrImageTag = "ShareQrImage"
 const val ShareExportSectionTag = "ShareExportSection"
 const val ShareExportToggleTag = "ShareExportToggle"
+const val SharePerceptionDisclosureTag = "SharePerceptionDisclosure"
+const val ShareFilePerceptionTag = "ShareFilePerception"
 
 /**
  * Share screen in Cosmos (plan §8.3 / W2-04, slice W8-09): the QR is the
@@ -174,6 +182,12 @@ fun ShareScreen(
                         text = FILE_WARNING_COPY,
                         style = MaterialTheme.typography.bodyLarge,
                     )
+                    if (ui.summary?.hasPerception == true) {
+                        FilePerceptionOptIn(
+                            include = ui.filePerception,
+                            onChange = viewModel::setFilePerception,
+                        )
+                    }
                     CosmosPrimaryButton(
                         label = "Share anyway",
                         onClick = viewModel::confirmFileShare,
@@ -197,6 +211,35 @@ fun ShareScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
+    }
+}
+
+/**
+ * Opt-in row inside the plain-file warning: perception data stays out of
+ * an unencrypted file unless the user turns this on. The whole row toggles
+ * (switch role, 48 dp minimum) so the label is the control's name.
+ */
+@Composable
+private fun FilePerceptionOptIn(
+    include: Boolean,
+    onChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .toggleable(value = include, role = Role.Switch, onValueChange = onChange)
+            .testTag(ShareFilePerceptionTag),
+        horizontalArrangement = Arrangement.spacedBy(EchoSpace8),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = FILE_PERCEPTION_OPT_IN_LABEL,
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.weight(1f),
+        )
+        Switch(checked = include, onCheckedChange = null)
     }
 }
 
@@ -323,6 +366,13 @@ private fun ExportPreview(
                 )
             }
             Text(text = LANDMARK_TEXT_DISCLOSURE, style = MaterialTheme.typography.bodyMedium)
+            if (summary.hasPerception) {
+                Text(
+                    text = PERCEPTION_DISCLOSURE,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.testTag(SharePerceptionDisclosureTag),
+                )
+            }
             summary.ai?.let { ai ->
                 Text(
                     text = "AI suggestions included (${ai.scoutModel} / ${ai.groundModel})",

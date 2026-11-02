@@ -6,6 +6,7 @@ import app.simt.echo.data.RouteRepository
 import app.simt.echo.model.AiProvenance
 import app.simt.echo.model.Confirmation
 import app.simt.echo.model.Landmark
+import app.simt.echo.model.EchoSchemaVersion
 import app.simt.echo.model.LandmarkSource
 import app.simt.echo.model.PrivacyInfo
 import app.simt.echo.platform.Endpoint
@@ -288,5 +289,30 @@ class ExportSelectionTest {
         assertNull(routes.get("old"))
         assertNotNull(routes.get("fresh"))
         assertNotNull(routes.get("forever"))
+    }
+
+    @Test
+    fun summaryReportsPerceptionOnlyWhenTheRouteCarriesIt() {
+        assertTrue(exportSummary(Fixtures.V2_ROUTE, ExportSelection(), nowMs = 0L).hasPerception)
+        assertFalse(exportSummary(Fixtures.L_ROUTE, ExportSelection(), nowMs = 0L).hasPerception)
+    }
+
+    @Test
+    fun perceptionDisclosureIsTruthfulAboutFilesVersusSealedTransfers() {
+        // Encryption is promised only for the sealed paths; the plain file is
+        // described as leaving perception out unless the user opts in.
+        assertTrue("QR and relay" in PERCEPTION_DISCLOSURE, PERCEPTION_DISCLOSURE)
+        assertTrue("encrypted" in PERCEPTION_DISCLOSURE, PERCEPTION_DISCLOSURE)
+        assertTrue("file leaves it out" in PERCEPTION_DISCLOSURE, PERCEPTION_DISCLOSURE)
+        assertFalse("same encryption" in PERCEPTION_DISCLOSURE, PERCEPTION_DISCLOSURE)
+    }
+
+    @Test
+    fun withoutPerceptionDropsItAndRestampsV1() {
+        val stripped = Fixtures.V2_ROUTE.withoutPerception()
+        assertNull(stripped.perception)
+        assertEquals(EchoSchemaVersion.V1, stripped.schemaVersion)
+        assertEquals(Fixtures.L_ROUTE, stripped)
+        assertEquals(Fixtures.L_ROUTE, Fixtures.L_ROUTE.withoutPerception())
     }
 }

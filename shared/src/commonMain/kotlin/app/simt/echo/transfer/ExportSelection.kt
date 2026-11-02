@@ -3,6 +3,7 @@ package app.simt.echo.transfer
 import app.simt.echo.model.AiProvenance
 import app.simt.echo.model.Confirmation
 import app.simt.echo.model.EchoRoute
+import app.simt.echo.model.EchoSchemaVersion
 
 /**
  * Export preview + filter unit (plan W3-08). The single place that decides
@@ -40,13 +41,20 @@ const val LANDMARK_TEXT_DISCLOSURE =
     "Landmark details (title, cue and sign text) are always included, even when a landmark photo is turned off."
 
 /**
- * Disclosure (W10-05): on-device perception fingerprints travel inside the
- * bundle whenever the route carries them, under the bundle's own encryption
- * and expiry. There is no toggle: a route that needs them private must not
- * be shared.
+ * Disclosure (W10-05): on-device perception data (image fingerprints and
+ * the magnetic profile) travels inside QR and relay transfers, which are
+ * sealed and expire with the route. The plain `.echo` file is readable
+ * without a key, so file export leaves perception out unless the user
+ * opts in ([TransferService.exportFile]). A route that needs it private
+ * must not be shared by QR or relay.
  */
 const val PERCEPTION_DISCLOSURE =
-    "On-device perception fingerprints (if recorded) travel inside this bundle under the same encryption and expiry."
+    "On-device perception data (route fingerprints, including the magnetic profile) travels inside QR and " +
+        "relay transfers, which are encrypted and expire with the route. A shared file leaves it out unless " +
+        "you choose to include it."
+
+/** Label of the opt-in that puts perception data into a plain, unencrypted file. */
+const val FILE_PERCEPTION_OPT_IN_LABEL = "Include on-device perception data in the file"
 
 /**
  * Disclosure (W11-04): the on-device privacy pre-filter. Frames showing
@@ -209,6 +217,14 @@ fun exportSummary(route: EchoRoute, selection: ExportSelection, nowMs: Long): Ex
         hasPerception = filtered.perception != null,
     )
 }
+
+/**
+ * The route as a pre-perception writer saved it: no perception, v1 stamp.
+ * What a plain file export carries by default, so image-derived tracking
+ * data never lands in an unencrypted file the user did not opt into.
+ */
+fun EchoRoute.withoutPerception(): EchoRoute =
+    if (perception == null) this else copy(perception = null, schemaVersion = EchoSchemaVersion.V1)
 
 /** Asset ids the export path may encode for this selection. */
 fun selectedAssetIds(route: EchoRoute, selection: ExportSelection): List<String> {

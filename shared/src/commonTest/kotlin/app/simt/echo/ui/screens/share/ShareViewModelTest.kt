@@ -3,6 +3,7 @@ package app.simt.echo.ui.screens.share
 import app.simt.echo.Fixtures
 import app.simt.echo.data.FileStore
 import app.simt.echo.data.RouteRepository
+import app.simt.echo.model.EchoRoute
 import app.simt.echo.platform.ECHO_MIME
 import app.simt.echo.platform.Endpoint
 import app.simt.echo.platform.FileSharing
@@ -97,11 +98,11 @@ class ShareViewModelTest {
         override suspend fun pickDocument(): ByteArray? = null
     }
 
-    private fun serviceWithRoute(): Triple<TransferService, FakeTransport, FileStore> {
+    private fun serviceWithRoute(route: EchoRoute = Fixtures.L_ROUTE): Triple<TransferService, FakeTransport, FileStore> {
         val fileSystem = FakeFileSystem()
         val store = FileStore(fileSystem, "/data".toPath())
         val routes = RouteRepository(store)
-        routes.save(Fixtures.L_ROUTE)
+        routes.save(route)
         val transport = FakeTransport(MutableSharedFlow())
         val service = TransferService(
             transport = transport,
@@ -520,5 +521,44 @@ class ShareViewModelTest {
         advanceTimeBy(TRANSFER_STALL_MS * 5)
         runCurrent()
         assertEquals(50.0, vm.ui.value.bytesPerSecond, "a completed transfer is not a stall")
+    }
+
+    @Test
+    fun sharedFileLeavesPerceptionOutUnlessOptedIn() = runTest(dispatcher) {
+        val (service, _, store) = serviceWithRoute(Fixtures.V2_ROUTE)
+        val sharing = FakeFileSharing()
+        val vm = ShareViewModel(Fixtures.V2_ROUTE.routeId, service, FakeHaptics(), sharing)
+        advanceUntilIdle()
+        assertTrue(vm.ui.value.summary?.hasPerception == true, "the preview must know the route has perception")
+
+        // Default: the warning is up, the opt-in is off, the file has none.
+        vm.requestFileShare()
+        assertFalse(vm.ui.value.filePerception)
+        vm.confirmFileShare()
+        advanceUntilIdle()
+        val plain = service.importFile(store.readBytes(sharing.sharedPath.toString())!!)
+        assertNull(plain.route.perception)
+        assertFalse(vm.ui.value.filePerception)
+
+        // Opt in: the file carries it; the choice does not outlive the share.
+        vm.requestFileShare()
+        vm.setFilePerception(true)
+        assertTrue(vm.ui.value.filePerception)
+        vm.confirmFileShare()
+        advanceUntilIdle()
+        val opted = service.importFile(store.readBytes(sharing.sharedPath.toString())!!)
+        assertEquals(Fixtures.V2_ROUTE.perception, opted.route.perception)
+        assertFalse(vm.ui.value.filePerception, "opt-in must re-arm to off after each share")
+    }
+
+    @Test
+    fun dismissingTheFileWarningForgetsThePerceptionOptIn() = runTest(dispatcher) {
+        val (service, _, _) = serviceWithRoute(Fixtures.V2_ROUTE)
+        val vm = ShareViewModel(Fixtures.V2_ROUTE.routeId, service, FakeHaptics(), FakeFileSharing())
+        advanceUntilIdle()
+        vm.requestFileShare()
+        vm.setFilePerception(true)
+        vm.dismissFileShare()
+        assertFalse(vm.ui.value.filePerception)
     }
 }

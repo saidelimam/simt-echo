@@ -187,13 +187,20 @@ class TransferService(
      * (unsealed — no key) to `exports/<name>.echo` under app storage and
      * returns its path. The caller must have shown the privacy warning
      * before invoking this; the bytes are readable without the QR key.
-     * With [selection] the same W3-08 filter as [offer] applies.
+     * With [selection] the same W3-08 filter as [offer] applies. Unlike
+     * the sealed [offer], a plain file carries no encryption, so on-device
+     * perception data (W10-05) is left out unless [includePerception].
      */
-    suspend fun exportFile(routeId: String, selection: ExportSelection? = null): Path {
+    suspend fun exportFile(
+        routeId: String,
+        selection: ExportSelection? = null,
+        includePerception: Boolean = false,
+    ): Path {
         val route = routes.get(routeId)
             ?: error("exportFile: no route $routeId")
         checkNotExpired(route)
-        val exportRoute = selection?.let { applySelection(route, it, nowMs()) } ?: route
+        val filtered = selection?.let { applySelection(route, it, nowMs()) } ?: route
+        val exportRoute = if (includePerception) filtered else filtered.withoutPerception()
         val assets = collectAssets(routeId, exportRoute)
         val container = BundleCodec.encode(exportRoute, assets)
         // Route id in the filename: two same-named routes must not
