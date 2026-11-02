@@ -24,7 +24,9 @@ fun keyframeFileName(route: EchoRoute, node: RouteNode): String? {
 /**
  * Extracts any keyframe file missing from the draft (idempotent). Skips
  * extraction when the draft has no video — Review still edits, uploads
- * just carry fewer files.
+ * just carry fewer files. Existence checks are metadata-only, never whole
+ * file reads (W10-02 G3); missing frames go out as one [MediaTools]
+ * batch, so the Android actual opens a single retriever (W10-02 G1).
  */
 suspend fun ensureKeyframes(
     drafts: DraftRepository,
@@ -33,20 +35,20 @@ suspend fun ensureKeyframes(
     route: EchoRoute,
     maxSide: Int = KEYFRAME_MAX_SIDE,
 ) {
-    val videoMissing = drafts.readDraftFile(draftId, CaptureSession.VIDEO_FILE) == null
-    for (node in route.nodes) {
-        if (node.type == NodeType.START) continue
-        val spec = keyframeSpecs(listOf(node)).firstOrNull() ?: continue
-        spec.timesMs.forEachIndexed { index, atMs ->
-            val name = spec.fileName(index)
-            if (drafts.readDraftFile(draftId, name) != null) return@forEachIndexed
-            if (videoMissing) return@forEachIndexed
-            media.extractFrame(
-                drafts.draftFilePath(draftId, CaptureSession.VIDEO_FILE),
-                atMs,
-                maxSide,
-                drafts.draftFilePath(draftId, name),
-            )
+    val videoMissing = !drafts.draftFileExists(draftId, CaptureSession.VIDEO_FILE)
+    if (videoMissing) return
+    val video = drafts.draftFilePath(draftId, CaptureSession.VIDEO_FILE)
+    val missing = buildList {
+        for (node in route.nodes) {
+            if (node.type == NodeType.START) continue
+            val spec = keyframeSpecs(listOf(node)).firstOrNull() ?: continue
+            spec.timesMs.forEachIndexed { index, atMs ->
+                val name = spec.fileName(index)
+                if (!drafts.draftFileExists(draftId, name)) {
+                    add(FrameRequest(atMs, maxSide, drafts.draftFilePath(draftId, name)))
+                }
+            }
         }
     }
+    if (missing.isNotEmpty()) media.extractFrames(video, missing)
 }

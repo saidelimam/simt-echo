@@ -48,6 +48,16 @@ class FileStore(
         }.getOrNull()
     }
 
+    /**
+     * Size in bytes, or null when absent/unreadable. Metadata only — it
+     * never opens the file, so answering "does it exist / how big" for a
+     * video must use this (or [exists]), never [readBytes] (W10-02 G3).
+     */
+    fun size(path: String): Long? {
+        val target = resolve(path)
+        return runCatching { fileSystem.metadataOrNull(target)?.size }.getOrNull()
+    }
+
     fun writeText(path: String, text: String) {
         val target = resolve(path)
         target.parent?.let { fileSystem.createDirectories(it) }

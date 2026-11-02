@@ -316,6 +316,66 @@ class ProcessingViewModelTest {
     }
 
     @Test
+    fun resendAfterRetryReusesCachedClipsAndClampsEndsToDuration() = runTest(dispatcher) {
+        val h = harness()
+        val windows = mutableListOf<Pair<Long, Long>>()
+        val durationAware: MediaTools = object : MediaTools by h.media {
+            override suspend fun videoDurationMs(video: Path): Long? = 30_000L
+            override suspend fun cutClip(
+                video: Path,
+                startMs: Long,
+                endMs: Long,
+                maxFps: Int,
+                out: Path,
+            ): ClipInfo {
+                windows += startMs to endMs
+                return h.media.cutClip(video, startMs, endMs, maxFps, out)
+            }
+        }
+        val api = FakeCloudApi(polls = ArrayDeque(listOf(errored("scout down"), complete())))
+        val vm = ProcessingViewModel(
+            draftId = "draft-1",
+            drafts = h.drafts,
+            media = durationAware,
+            api = api,
+            nowMs = { 1_762_000_100_000L },
+            pollIntervalMs = 1L,
+            maxPolls = 10,
+        )
+        advanceUntilIdle()
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Failed>(vm.ui.value.phase)
+
+        vm.retry()
+        advanceUntilIdle()
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
+        assertEquals(2, api.submits.size)
+        // W10-02 G5: the resend reused the cached cuts — one cut per node
+        // across both sends, never re-encoded.
+        assertEquals(2, windows.size, "expected one cut per node, cache reused: $windows")
+        assertEquals(2, h.media.cut.size)
+        // Clip ends clamp to the video duration (30 s here): n1 at t=40 s
+        // opens [36_000, 41_000] → [36_000, 36_000], n2 at t=60 s opens
+        // [56_000, 61_000] → [56_000, 56_000] (the end pulls back to the
+        // duration, then up to the start — the pre-existing clipWindow
+        // never-invert rule). Both ends sit below their raw t+1_000.
+        assertEquals(
+            listOf(36_000L to 36_000L, 56_000L to 56_000L),
+            windows,
+            "clip windows not clamped to duration: $windows",
+        )
+        // The cached clips still ride the resubmit's manifest.
+        val ids = api.submits[1].second.map { it.id }.toSet()
+        assertTrue(ids.contains("clip_n1"), ids.toString())
+        assertTrue(ids.contains("clip_n2"), ids.toString())
+    }
+
+    @Test
     fun sendBeforeConsentAndDoubleSendNeverSubmit() = runTest(dispatcher) {
         val h = harness()
         val api = FakeCloudApi(polls = ArrayDeque(listOf(complete())))
