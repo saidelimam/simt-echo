@@ -98,4 +98,6 @@ android {
 dependencies {
     implementation(project(":shared"))
     implementation(libs.androidx.activity.compose)
+    // W9-11: plain-JVM assertions over the launcher icon + splash XML.
+    testImplementation(libs.junit.junit)
 }
