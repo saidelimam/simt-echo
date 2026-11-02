@@ -15,22 +15,22 @@ package app.simt.echo.capture
  * are excluded" discipline. Recorded here so a future blur slice knows
  * what it is overturning.
  *
- * Detector status: ML Kit face detection (`com.google.mlkit:face-detection`)
- * is **not** in the version catalog — only `barcode-scanning` (17.3.0) is —
- * so no ML Kit dependency is added here. The seam is [FaceDetector]; the
- * only shippable implementation is [NoOpFaceDetector], which reports
- * [FaceVerdict.UNKNOWN] for every frame. UNKNOWN maps exclude-safe
- * ([FaceVerdict.isFaceFree] is false), so wiring the NoOp anywhere would
- * drop every frame — production call sites therefore pass `null` (no
- * filtering, today's behavior) until a later slice lands the real
- * platform detector. That slice's binding point is documented on
- * `androidFaceDetector` (androidMain); iOS is owed alongside it.
+ * Detector status: the seam is [FaceDetector]. [ScanningFaceDetector] is the
+ * shippable implementation: it reads a ledger frame and asks a platform
+ * [FaceScanner]. Android scans with ML Kit (`MlKitFaceScanner`, bundled
+ * model, offline) and `AppGraph.faceDetectorFor` hands each Processing
+ * screen one bound to its draft. A platform with no scanner (iOS until a
+ * Vision scanner lands) passes `null`: no filtering, and the consent copy
+ * stays silent about a filter that is not there. [NoOpFaceDetector]
+ * reports [FaceVerdict.UNKNOWN] for every frame, which maps exclude-safe
+ * ([FaceVerdict.isFaceFree] is false), so it would drop every frame and is
+ * never wired into a filtering path.
  *
- * Owed (not this slice, no ML Kit dep yet):
- * 1. `MlKitFaceDetector` (androidMain) scanning ledger JPEG bytes.
- * 2. Wiring the platform detector into the upload path (`ProcessingViewModel.send`).
- * 3. Per-frame scans of cut video clips (Media3 cut path has no frame seam).
- * 4. Device evidence on a frame with a printed face.
+ * Owed:
+ * 1. A Vision-backed [FaceScanner] for iOS.
+ * 2. Per-frame scans of cut video clips (Media3 cut path has no frame seam).
+ * 3. Device evidence on a frame with a printed face, and a measured
+ *    minimum-face size and scan time (`MlKitFaceScanner` values are guesses).
  *
  * Pure and deterministic: no coroutines, no platform imports, no RNG.
  * [FaceDetector] implementations must return the same verdict for the
@@ -59,7 +59,7 @@ fun FaceVerdict.isFaceFree(): Boolean = this == FaceVerdict.FACE_FREE
 /**
  * Face-detection seam. The verdict is keyed on the ledger entry; platform
  * implementations resolve the JPEG bytes via [GlimpseEntry.jpegPath]
- * (draft-relative, see [LedgerStore]) and scan them with ML Kit.
+ * (draft-relative, see [LedgerStore]) and scan them (see [ScanningFaceDetector]).
  */
 interface FaceDetector {
     fun verdictFor(entry: GlimpseEntry): FaceVerdict
@@ -68,8 +68,8 @@ interface FaceDetector {
 /**
  * No detector available: every frame reports [FaceVerdict.UNKNOWN], which
  * is exclude-safe. Never wire this into a filtering path as if it were a
- * real scan — it would drop every frame. Production passes `null`
- * (unfiltered) until the ML Kit implementation lands.
+ * real scan — it would drop every frame. A real scan is
+ * [ScanningFaceDetector]; a platform without one passes `null`.
  */
 object NoOpFaceDetector : FaceDetector {
     override fun verdictFor(entry: GlimpseEntry): FaceVerdict = FaceVerdict.UNKNOWN

@@ -2,6 +2,7 @@ package app.simt.echo
 
 import android.app.Application
 import android.os.Build
+import app.simt.echo.capture.MlKitFaceScanner
 import app.simt.echo.platform.AndroidLiveUpdateSink
 import app.simt.echo.platform.AndroidPlatform
 import app.simt.echo.BuildConfig
@@ -25,6 +26,8 @@ class EchoApplication : Application() {
             // W13-10: navigation Live Updates draw through this sink.
             liveUpdateSink = AndroidLiveUpdateSink(this, smallIcon = R.drawable.ic_stat_echo),
             sdkInt = Build.VERSION.SDK_INT,
+            // W11-04: strip frames are scanned on-device before upload.
+            faceScanner = MlKitFaceScanner(),
         )
     }
 

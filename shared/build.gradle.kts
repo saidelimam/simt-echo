@@ -90,6 +90,8 @@ kotlin {
             implementation(libs.ktor.server.cio)
             // W2-04 Receive: ML Kit barcode scanner over a CameraX use case.
             implementation(libs.mlkit.barcode.scanning)
+            // W11-04 face pre-filter: bundled ML Kit model, scans ledger JPEGs offline.
+            implementation(libs.mlkit.face.detection)
             // W3-01 Clips: Media3 Transformer cuts silent H.264 clips.
             implementation(libs.media3.transformer)
             // W11-03 forge: Presentation + FrameDropEffect live here.

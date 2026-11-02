@@ -171,6 +171,7 @@ fun EchoNavHost(
                             nowMs = ::currentEpochMs,
                             aiConfigured = graph.cloudAiConfigured,
                             liveUpdates = graph.liveUpdates,
+                            faceDetector = graph.faceDetectorFor(route.draftId),
                         )
                     }
                 },

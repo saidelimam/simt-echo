@@ -1,9 +1,13 @@
 package app.simt.echo
 
+import app.simt.echo.capture.FaceDetector
+import app.simt.echo.capture.FaceScanner
+import app.simt.echo.capture.ScanningFaceDetector
 import app.simt.echo.data.ConfigRepository
 import app.simt.echo.data.DraftRepository
 import app.simt.echo.data.FileStore
 import app.simt.echo.data.RouteRepository
+import app.simt.echo.media.readLedgerJpeg
 import app.simt.echo.data.TrialRepository
 import app.simt.echo.platform.LiveUpdateDirector
 import app.simt.echo.platform.LiveUpdateSink
@@ -47,6 +51,13 @@ class AppGraph(
      */
     private val liveUpdateSink: LiveUpdateSink? = null,
     private val sdkInt: Int = 0,
+    /**
+     * Platform face scan behind the privacy pre-filter (W11-04). Null
+     * (previews, tests, iOS until Vision lands) means no pre-filter, which
+     * is today's unfiltered behaviour — the consent copy stays honest
+     * because it only mentions the filter when one is active.
+     */
+    private val faceScanner: FaceScanner? = null,
 ) {
     /** Root of all on-disk state (plan §5.3). Empty only in previews/tests. */
     val fileStore: FileStore by lazy {
@@ -65,6 +76,16 @@ class AppGraph(
      * @return how many routes were purged.
      */
     fun purgeExpiredRoutes(nowMs: Long): Int = routeRepository.purgeExpired(nowMs)
+
+    /**
+     * Face pre-filter for one draft's ledger frames (W11-04), or null when
+     * the platform has no scanner. Bound to [draftId]; one per draft so
+     * its verdict cache never outlives the frames it describes.
+     */
+    fun faceDetectorFor(draftId: String): FaceDetector? =
+        faceScanner?.let { scanner ->
+            ScanningFaceDetector(scanner) { entry -> draftRepository.readLedgerJpeg(draftId, entry) }
+        }
 
     /** Live Updates director (W13-10), or null when no sink was provided. */
     val liveUpdates: LiveUpdateDirector? by lazy {

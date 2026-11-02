@@ -922,9 +922,9 @@ remainder is owed:
 | Row | Still owed |
 |---|---|
 | W10-02/03/04, W11-03 | StrictMode, Frame Tap ≤ 6 ms, jank and 2 MB upload device evidence; `:benchmark` not compiled on the build machine; Navigate-Simulate benchmark needs a seeded fixture route |
-| W11-04 | A shippable face detector (ML Kit); production uses `NoOpFaceDetector`, so no frame is filtered yet |
+| W11-04 | Android scans ledger frames with bundled ML Kit (`MlKitFaceScanner`, wired through `AppGraph.faceDetectorFor`). Owed: an iOS Vision `FaceScanner` (iOS runs unfiltered, and its consent copy says nothing of a filter), face scans of cut video clips, device evidence on a printed face, and a measured minimum-face size, scan time and APK cost (the values are guesses) |
 | W11-07 | Live probe table (no `META_API_KEY`) |
-| W11-09 | `ReadyUploader` has no caller, and wiring one is deliberately held: it fails closed without a `FaceDetector` (W11-04, still `NoOpFaceDetector`), so a walk-time trigger would stage nothing, or upload unfiltered faces if that gate were loosened. Owed in order: a real detector (W11-04), a production `NetworkGate`, the Record consent sheet and window trigger, Finish-manifest coordination, then device evidence (ready ≤ 15 s after Finish on a 60 m walk) |
+| W11-09 | `ReadyUploader` has no caller, and wiring one is deliberately held: it fails closed without a `FaceDetector`. Android now has one (W11-04), so the gate can be met there; iOS cannot until its scanner lands. Owed in order: a production `NetworkGate`, the Record consent sheet and window trigger, Finish-manifest coordination, then device evidence (ready ≤ 15 s after Finish on a 60 m walk) |
 | W12-01 | `HeadingQuality.correctedYaw` is not applied to `PdrEngine` yaw: a ±2°/min estimator error compounds to ~20° over 10 min, so it waits for W14-03 field evidence |
 | W12-04/05 | Device magnetic trace; fingerprint embedder and capture are not wired to the camera; precision table and τ unmeasured |
 | W13-05 | The shared-element flight is unasserted. Partials reach Review by replaying the ones Processing persisted (`onCheckpointEvent` stays the live-event seam; Review is not on screen while a job streams) |
