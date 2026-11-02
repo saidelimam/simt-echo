@@ -58,6 +58,15 @@ class AppGraph(
     }
 
     /**
+     * Cloud AI config status (plan W7-07): false on every fresh install
+     * until W9-01 config exists. Processing and Settings read this —
+     * never a network probe — so the unconfigured state stays honest
+     * and no fake "cloud" progress ever renders.
+     */
+    val cloudAiConfigured: Boolean
+        get() = apiBaseUrl.isNotBlank() && appToken.isNotBlank()
+
+    /**
      * The configured local vision provider (W5-01), or null: a LAN
      * OpenAI-compatible server when URL + model are set in Settings,
      * else the on-phone engine when a model file was pushed. Read live

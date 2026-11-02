@@ -52,6 +52,12 @@ sealed interface ProcessingPhase {
     data class Working(val stage: JobStage) : ProcessingPhase
     data object Ready : ProcessingPhase
     data class Failed(val message: String) : ProcessingPhase
+    /**
+     * Cloud AI not configured on this build (plan W7-07): the honest
+     * state — no consent copy, no stages, no progress. "Continue
+     * without AI" is the primary (only) path.
+     */
+    data object AiUnavailable : ProcessingPhase
 }
 
 data class ProcessingUiState(
@@ -88,6 +94,13 @@ class ProcessingViewModel(
     private val pollIntervalMs: Long = 2_000L,
     private val maxPolls: Int = 150,
     private val maxTransientPollFailures: Int = 3,
+    /**
+     * False when the build has no cloud credentials (plan W7-07:
+     * `AppGraph.cloudAiConfigured`). The ViewModel then presents the
+     * honest [ProcessingPhase.AiUnavailable] state and never touches
+     * the network — not even the SAM probe.
+     */
+    private val aiConfigured: Boolean = true,
 ) : ViewModel() {
 
     private val _ui = MutableStateFlow(ProcessingUiState())
@@ -105,6 +118,14 @@ class ProcessingViewModel(
             val route = drafts.loadDraftRoute(draftId)
             if (route == null) {
                 _ui.update { it.copy(phase = ProcessingPhase.Failed(processingNoDraftCopy())) }
+                return@launch
+            }
+            if (!aiConfigured) {
+                // Unconfigured build (plan W7-07): honest state first.
+                // No keyframe extraction, no SAM probe, no poll resume —
+                // a persisted job from another build must not render
+                // fake "cloud" progress here.
+                _ui.update { it.copy(phase = ProcessingPhase.AiUnavailable, jobId = null) }
                 return@launch
             }
             runCatching { ensureKeyframes(drafts, media, draftId, route) }

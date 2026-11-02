@@ -32,6 +32,8 @@ data class SettingsUi(
     val preferLocalModel: Boolean = false,
     /** On-phone model file name when one was pushed, else null (W5-01). */
     val onPhoneModel: String? = null,
+    /** Cloud AI configured on this build (plan W7-07: AppGraph status). */
+    val cloudAiConfigured: Boolean = true,
     /** Last calibration walk's measured distance, metres (input). */
     val measuredM: String = "",
     /** Result line after calibrating, or null before the first run. */
@@ -56,6 +58,8 @@ class SettingsViewModel(
     private val sharing: FileSharing,
     /** On-phone model file name when the platform found one (W5-01). */
     private val onPhoneModelName: String? = null,
+    /** Cloud AI configured on this build (plan W7-07: AppGraph status). */
+    private val cloudAiConfigured: Boolean = true,
 ) : ViewModel() {
 
     private val _ui = MutableStateFlow(
@@ -68,6 +72,7 @@ class SettingsViewModel(
                 localModelName = it.localModelName,
                 preferLocalModel = it.preferLocalModel,
                 onPhoneModel = onPhoneModelName,
+                cloudAiConfigured = cloudAiConfigured,
             )
         },
     )

@@ -20,6 +20,7 @@ import app.simt.echo.transfer.JobPoll
 import app.simt.echo.transfer.JobRecord
 import app.simt.echo.transfer.JobStage
 import app.simt.echo.transfer.UploadFile
+import app.simt.echo.ui.copy.aiUnavailableCopy
 import app.simt.echo.ui.copy.processingErrorCopy
 import app.simt.echo.ui.copy.processingJobErrorCopy
 import kotlinx.coroutines.Dispatchers
@@ -93,6 +94,8 @@ class ProcessingViewModelTest {
     ) : CloudApi {
         val submits = mutableListOf<Pair<String, List<UploadFile>>>()
         val deletes = mutableListOf<String>()
+        var samCalls = 0
+        var getCalls = 0
 
         override suspend fun submit(manifestJson: String, files: List<UploadFile>): String {
             submitError?.let { throw it }
@@ -100,15 +103,20 @@ class ProcessingViewModelTest {
             return "job-1"
         }
 
-        override suspend fun get(jobId: String): JobPoll =
-            polls.removeFirstOrNull()?.getOrThrow() ?: JobPoll("running", JobStage.SCOUTING)
+        override suspend fun get(jobId: String): JobPoll {
+            getCalls++
+            return polls.removeFirstOrNull()?.getOrThrow() ?: JobPoll("running", JobStage.SCOUTING)
+        }
 
         override suspend fun delete(jobId: String) {
             deletes += jobId
             deleteError?.let { throw it }
         }
 
-        override suspend fun samEnabled(): Boolean = samEnabled
+        override suspend fun samEnabled(): Boolean {
+            samCalls++
+            return samEnabled
+        }
     }
 
     private data class Harness(
@@ -122,6 +130,7 @@ class ProcessingViewModelTest {
             api: FakeCloudApi,
             pollIntervalMs: Long = 1L,
             maxPolls: Int = 10,
+            aiConfigured: Boolean = true,
         ) = ProcessingViewModel(
             draftId = draftId,
             drafts = drafts,
@@ -130,6 +139,7 @@ class ProcessingViewModelTest {
             nowMs = { 1_762_000_100_000L },
             pollIntervalMs = pollIntervalMs,
             maxPolls = maxPolls,
+            aiConfigured = aiConfigured,
         )
     }
 
@@ -414,5 +424,52 @@ class ProcessingViewModelTest {
 
         val failed = assertIs<ProcessingPhase.Failed>(vm.ui.value.phase)
         assertTrue(failed.message.contains("Timed out", ignoreCase = true), failed.message)
+    }
+
+    @Test
+    fun unconfiguredShowsHonestStateWithoutTouchingHttp() = runTest(dispatcher) {
+        val h = harness()
+        // A persisted live job from another build must not render fake
+        // "cloud" progress on this unconfigured one.
+        h.drafts.saveJobRecord("draft-1", JobRecord("job-9", "running", 0L))
+        val api = FakeCloudApi()
+        val vm = h.vm(api, aiConfigured = false)
+        advanceUntilIdle()
+
+        // W7-07: the honest state, never a network error.
+        assertIs<ProcessingPhase.AiUnavailable>(vm.ui.value.phase)
+        assertNull(vm.ui.value.jobId)
+        assertEquals(
+            "Landmark AI isn't set up on this build. Your draft is safe on this phone. Continue without AI.",
+            aiUnavailableCopy(),
+        )
+        // No HTTP attempt: not even the SAM probe, no poll resume.
+        assertEquals(0, api.samCalls, "SAM probe must not run unconfigured")
+        assertEquals(0, api.getCalls, "poll resume must not run unconfigured")
+        assertTrue(api.submits.isEmpty())
+
+        // Send is a no-op there: still no submit, still honest.
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.AiUnavailable>(vm.ui.value.phase)
+        assertTrue(api.submits.isEmpty())
+        assertEquals(0, api.samCalls)
+        assertEquals(0, api.getCalls)
+    }
+
+    @Test
+    fun unconfiguredStillReportsAGoneDraft() = runTest(dispatcher) {
+        val h = harness()
+        val api = FakeCloudApi()
+        val missing = h.copy(draftId = "draft-gone")
+        val vm = missing.vm(api, aiConfigured = false)
+        advanceUntilIdle()
+
+        // The draft check is local disk, not HTTP: a gone draft still
+        // says so instead of blaming the missing AI setup.
+        assertIs<ProcessingPhase.Failed>(vm.ui.value.phase)
+        assertEquals(0, api.samCalls)
+        assertTrue(api.submits.isEmpty())
     }
 }

@@ -20,6 +20,7 @@ import app.simt.echo.ui.components.EchoButton
 import app.simt.echo.ui.components.ErrorState
 import app.simt.echo.ui.components.PillButton
 import app.simt.echo.ui.components.StatusChip
+import app.simt.echo.ui.copy.aiUnavailableCopy
 
 /**
  * Consent + cloud processing (plan §8.3 / W3-02): the plan-mandated
@@ -75,6 +76,11 @@ fun ProcessingScreen(
                     onSecondary = { viewModel.decline(onDone) },
                 )
             }
+            // Unconfigured build (plan W7-07): the honest state, not an
+            // error — body copy, one primary path, no cloud progress.
+            ProcessingPhase.AiUnavailable -> AiUnavailableBody(
+                onContinue = { viewModel.decline(onDone) },
+            )
         }
     }
 }
@@ -104,6 +110,17 @@ private fun ConsentBody(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
+    }
+}
+
+@Composable
+private fun AiUnavailableBody(
+    onContinue: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(text = aiUnavailableCopy(), style = MaterialTheme.typography.bodyLarge)
+        EchoButton(text = "Continue without AI", onClick = onContinue, modifier = Modifier.fillMaxWidth())
     }
 }
 

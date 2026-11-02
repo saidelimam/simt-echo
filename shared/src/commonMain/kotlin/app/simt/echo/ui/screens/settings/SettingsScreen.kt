@@ -23,6 +23,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.simt.echo.ui.components.EchoButton
 import app.simt.echo.ui.components.PillButton
 import app.simt.echo.ui.components.threeDecimals
+import app.simt.echo.ui.copy.cloudAiStatusCopy
 
 /**
  * Settings: step-K calibration + baseline default (plan §8.3, W4-02).
@@ -109,6 +110,12 @@ fun SettingsScreen(
         }
         Text(
             text = "Live camera behind the navigation HUD, with the landmark crop and mask.",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+
+        Text(text = "Landmark AI", style = MaterialTheme.typography.titleMedium)
+        Text(
+            text = cloudAiStatusCopy(ui.cloudAiConfigured),
             style = MaterialTheme.typography.bodyMedium,
         )
 
