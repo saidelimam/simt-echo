@@ -100,17 +100,15 @@ class AndroidMediaTools(
         }
 
     override suspend fun cutClip(video: Path, startMs: Long, endMs: Long, maxFps: Int, out: Path): ClipInfo {
-        // Clamp the end to the video duration (W10-02 G5): capture-relative
-        // windows can overshoot short videos. Unknown duration keeps the
-        // caller's window, as before.
-        val durationMs = videoDurationMs(video)
-        val safeEnd = if (durationMs != null && durationMs > 0L) endMs.coerceAtMost(durationMs) else endMs
+        // The caller clamped the window to the video duration (W10-02 G5);
+        // no second probe per clip, only the empty-window check.
+        val window = checkedClipWindow(startMs, endMs)
         val item = MediaItem.Builder()
             .setUri(Uri.fromFile(video.toFile()))
             .setClippingConfiguration(
                 MediaItem.ClippingConfiguration.Builder()
-                    .setStartPositionMs(startMs)
-                    .setEndPositionMs(safeEnd)
+                    .setStartPositionMs(window.startMs)
+                    .setEndPositionMs(window.endMs)
                     .build(),
             )
             .build()
@@ -126,7 +124,7 @@ class AndroidMediaTools(
         export(context, out, useForgeBitrate = false) { transformer ->
             transformer.start(edited, out.toString())
         }
-        return describeExport(out, safeEnd - startMs, ioDispatcher)
+        return describeExport(out, window.endMs - window.startMs, ioDispatcher)
     }
 
     /**
@@ -138,10 +136,8 @@ class AndroidMediaTools(
     override suspend fun forgeStripClip(frames: List<Path>, out: Path): ClipInfo =
         forgeStripFromJpegs(context, frames, out)
 
-    override suspend fun transcodeStripClip(video: Path, startMs: Long, endMs: Long, out: Path): ClipInfo {
-        val durationMs = videoDurationMs(video)
-        return transcodeStripFromVideo(context, video, startMs, endMs, durationMs, out)
-    }
+    override suspend fun transcodeStripClip(video: Path, startMs: Long, endMs: Long, out: Path): ClipInfo =
+        transcodeStripFromVideo(context, video, checkedClipWindow(startMs, endMs), out)
 
     // ── internals ──────────────────────────────────────────────────────────
 

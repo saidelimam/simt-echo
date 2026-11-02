@@ -66,7 +66,9 @@ internal fun forgeEncoderFactory(context: Context): DefaultEncoderFactory =
 /**
  * Runs one export: builds the Transformer (H.264, optional forge bitrate),
  * delivers completion or [ExportException] through the listener, and removes
- * the listeners afterwards. Must be called on the main looper (plan W3-01).
+ * the listeners on every exit path; cancellation propagates as the
+ * [kotlinx.coroutines.CancellationException] it is. Must be called on the
+ * main looper (plan W3-01).
  */
 internal suspend fun export(
     context: Context,
@@ -78,25 +80,31 @@ internal suspend fun export(
         .setVideoMimeType(MimeTypes.VIDEO_H264)
     if (useForgeBitrate) builder.setEncoderFactory(forgeEncoderFactory(context))
     val transformer = builder.build()
-    suspendCancellableCoroutine<Unit> { cont ->
-        val listener = object : Transformer.Listener {
-            override fun onCompleted(composition: Composition, result: ExportResult) {
-                cont.resume(Unit)
-            }
+    try {
+        suspendCancellableCoroutine<Unit> { cont ->
+            val listener = object : Transformer.Listener {
+                override fun onCompleted(composition: Composition, result: ExportResult) {
+                    cont.resume(Unit)
+                }
 
-            override fun onError(
-                composition: Composition,
-                result: ExportResult,
-                error: ExportException,
-            ) {
-                cont.resumeWithException(error)
+                override fun onError(
+                    composition: Composition,
+                    result: ExportResult,
+                    error: ExportException,
+                ) {
+                    cont.resumeWithException(error)
+                }
             }
+            transformer.addListener(listener)
+            // Before start: a cancel that lands during start still stops the export.
+            cont.invokeOnCancellation { transformer.cancel() }
+            start(transformer)
         }
-        transformer.addListener(listener)
-        start(transformer)
-        cont.invokeOnCancellation { transformer.cancel() }
+    } finally {
+        // Completion, export error and cancellation alike: a Transformer
+        // must not keep a listener (and through it the continuation).
+        transformer.removeAllListeners()
     }
-    transformer.removeAllListeners()
 }
 
 /** Reads back one exported clip's metadata on IO (plan W3-01 → ClipInfo). */
@@ -155,24 +163,22 @@ internal suspend fun forgeStripFromJpegs(
 }
 
 /**
- * Fallback forge: transcodes `[startMs, endMs]` from [video] at the forge
- * fps / 480p / ~600 kbps. The end clamps to [durationMs] (W10-02 G5).
+ * Fallback forge: transcodes [window] of [video] at the forge fps / 480p /
+ * ~600 kbps. The window arrives clamped to the duration by the caller
+ * (`stripFallbackWindow`, W10-02 G5) and validated non-empty.
  */
 internal suspend fun transcodeStripFromVideo(
     context: Context,
     video: Path,
-    startMs: Long,
-    endMs: Long,
-    durationMs: Long?,
+    window: ClipWindow,
     out: Path,
 ): ClipInfo {
-    val safeEnd = if (durationMs != null && durationMs > 0L) endMs.coerceAtMost(durationMs) else endMs
     val item = MediaItem.Builder()
         .setUri(Uri.fromFile(video.toFile()))
         .setClippingConfiguration(
             MediaItem.ClippingConfiguration.Builder()
-                .setStartPositionMs(startMs)
-                .setEndPositionMs(safeEnd)
+                .setStartPositionMs(window.startMs)
+                .setEndPositionMs(window.endMs)
                 .build(),
         )
         .build()
@@ -184,5 +190,5 @@ internal suspend fun transcodeStripFromVideo(
     export(context, out, useForgeBitrate = true) { transformer ->
         transformer.start(edited, out.toString())
     }
-    return describeExport(out, safeEnd - startMs)
+    return describeExport(out, window.endMs - window.startMs)
 }

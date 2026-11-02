@@ -147,6 +147,25 @@ fun stripFallbackWindow(tMs: Long, durationMs: Long? = null): ClipWindow {
     return ClipWindow(start, end)
 }
 
+/** Raised for a clip window with nothing to cut (`end <= start`). */
+class EmptyClipWindowException(val startMs: Long, val endMs: Long) :
+    IllegalArgumentException("Empty clip window [$startMs, $endMs] ms")
+
+/**
+ * The window a platform clip export honours. Callers clamp the window to
+ * the video duration ([clipWindow], [stripFallbackWindow]), so exporters
+ * neither probe the duration again nor second-guess the end; they only
+ * make the start non-negative and refuse a window with nothing in it, as
+ * a typed failure the caller can omit the clip on.
+ *
+ * @throws EmptyClipWindowException when `endMs <= startMs` after clamping.
+ */
+fun checkedClipWindow(startMs: Long, endMs: Long): ClipWindow {
+    val start = startMs.coerceAtLeast(0L)
+    if (endMs <= start) throw EmptyClipWindowException(start, endMs)
+    return ClipWindow(start, endMs)
+}
+
 /**
  * Draft-relative JPEG name for a ledger [entry], tolerating the
  * store-absolute `drafts/<draftId>/…` form the same way keyframe filling

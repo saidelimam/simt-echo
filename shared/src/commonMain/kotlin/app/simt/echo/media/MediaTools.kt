@@ -72,6 +72,11 @@ interface MediaTools {
      * Cut the silent H.264 clip `[startMs, endMs]` from [video] at ≤ [maxFps]
      * fps into [out] (plan W3-01). Returns the clip's metadata once the
      * export is final.
+     *
+     * The window must already be clamped to the video duration by the caller
+     * ([clipWindow]); implementations do not probe the duration again.
+     * @throws EmptyClipWindowException when the window holds nothing to cut
+     * (`endMs <= startMs`, see [checkedClipWindow]).
      */
     suspend fun cutClip(video: Path, startMs: Long, endMs: Long, maxFps: Int, out: Path): ClipInfo
 
@@ -99,7 +104,8 @@ interface MediaTools {
      * The default delegates to [cutClip] at the forge frame rate, so every
      * platform with clip cutting gets a working (if not 480p-downscaled)
      * fallback; Android overrides it with the Presentation + FrameDropEffect
-     * path.
+     * path. Same window contract as [cutClip]: pre-clamped by the caller
+     * ([stripFallbackWindow]), [EmptyClipWindowException] when empty.
      */
     suspend fun transcodeStripClip(video: Path, startMs: Long, endMs: Long, out: Path): ClipInfo =
         cutClip(video, startMs, endMs, CLIP_FORGE_FPS, out)
