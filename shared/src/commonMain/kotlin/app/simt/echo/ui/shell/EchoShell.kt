@@ -40,6 +40,7 @@ import app.simt.echo.ui.atmosphere.CosmosMotionEasings
 import app.simt.echo.ui.atmosphere.CosmosMotionTier
 import app.simt.echo.ui.atmosphere.CosmosVariant
 import app.simt.echo.ui.atmosphere.cosmosMotionTier
+import app.simt.echo.ui.brand.EchoMark
 import app.simt.echo.ui.components.CosmosIconButton
 import app.simt.echo.ui.components.CosmosSecondaryButton
 
@@ -226,12 +227,21 @@ private fun TopChrome(
             EchoChrome.NONE -> Unit
         }
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = "ECHO",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.testTag(EchoShellWordmarkTag),
-            )
+            // Wordmark: the Echo Step mark on its void disc — a miniature
+            // of the launcher icon (luminous-freeze §2) — + the "ECHO"
+            // label that carries semantics.
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                EchoMark(markSize = 28.dp, onDisc = true)
+                Text(
+                    text = "ECHO",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.testTag(EchoShellWordmarkTag),
+                )
+            }
             Text(
                 text = config.title,
                 style = MaterialTheme.typography.headlineLarge,

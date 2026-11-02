@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- W10-07: Echo Step foot in mark space (forefoot ellipse rx 8.6 ry 12.5
+         at 0,-9; heel rx 6.2 ry 7.2 at -1.2,13.5 — luminous-freeze §2). -->
+    <string name="echo_step_foot_path" translatable="false">M-8.6,-9a8.6,12.5 0 1,0 17.2,0a8.6,12.5 0 1,0 -17.2,0zM-7.4,13.5a6.2,7.2 0 1,0 12.4,0a6.2,7.2 0 1,0 -12.4,0z</string>
+</resources>

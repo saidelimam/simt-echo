@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 108 108" width="432" height="432">
+  <!-- ECHO brand mark "Echo Step" (luminous-freeze §2). Source of record.
+       Layers: #field (adaptive background), #mark (adaptive foreground).
+       Render recipe: docs/design/README.md. -->
+  <defs>
+    <g id="foot">
+      <ellipse cx="0" cy="-9" rx="8.6" ry="12.5"/>
+      <ellipse cx="-1.2" cy="13.5" rx="6.2" ry="7.2"/>
+    </g>
+    <radialGradient id="fieldGlow" cx="38" cy="30" r="95" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3B1A47"/>
+      <stop offset="0.55" stop-color="#1D1220"/>
+      <stop offset="1" stop-color="#120A14"/>
+    </radialGradient>
+    <radialGradient id="echoFade" cx="54" cy="54" r="30" gradientUnits="userSpaceOnUse">
+      <stop offset="0.3" stop-color="#FF8C42"/>
+      <stop offset="0.75" stop-color="#FF7E8A" stop-opacity="0.75"/>
+      <stop offset="1" stop-color="#C9A0FF" stop-opacity="0.25"/>
+    </radialGradient>
+    <linearGradient id="sole" x1="0" y1="-22" x2="0" y2="21" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFF8F2"/>
+      <stop offset="1" stop-color="#FFC766"/>
+    </linearGradient>
+    <mask id="echoes" maskUnits="userSpaceOnUse" x="0" y="0" width="108" height="108">
+      <g transform="translate(54 54) scale(0.88) rotate(18)" fill="none">
+        <use href="#foot" stroke="#fff" stroke-width="30"/>
+        <use href="#foot" stroke="#000" stroke-width="25"/>
+        <use href="#foot" stroke="#fff" stroke-width="19"/>
+        <use href="#foot" stroke="#000" stroke-width="14.5"/>
+        <use href="#foot" stroke="#fff" stroke-width="9"/>
+        <use href="#foot" stroke="#000" stroke-width="5"/>
+      </g>
+    </mask>
+  </defs>
+  <g id="field"><rect width="108" height="108" fill="url(#fieldGlow)"/></g>
+  <g id="mark">
+    <rect width="108" height="108" fill="url(#echoFade)" mask="url(#echoes)"/>
+    <g transform="translate(54 54) scale(0.88) rotate(18)"><use href="#foot" fill="url(#sole)"/></g>
+  </g>
+</svg>
