@@ -23,6 +23,8 @@ import app.simt.echo.host.RobolectricActivityRule
 import app.simt.echo.ui.EchoRoute
 import app.simt.echo.ui.atmosphere.CosmosMotionTier
 import app.simt.echo.ui.theme.EchoTheme
+import app.simt.echo.ui.shell.echoPopEnterTransition
+import app.simt.echo.ui.shell.echoPopExitTransition
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -298,6 +300,17 @@ class EchoShellTest {
         assertEquals(
             androidx.compose.animation.ExitTransition.None,
             echoExitTransition(CosmosMotionTier.STATIC),
+        )
+        // W13-02: going back mirrors going forward, and settles the same way.
+        assertEquals(androidx.compose.animation.EnterTransition.None, echoPopEnterTransition(CosmosMotionTier.STATIC))
+        assertEquals(androidx.compose.animation.ExitTransition.None, echoPopExitTransition(CosmosMotionTier.STATIC))
+        for (tier in listOf(CosmosMotionTier.REDUCED, CosmosMotionTier.FULL)) {
+            assertTrue(echoPopEnterTransition(tier) != androidx.compose.animation.EnterTransition.None)
+            assertTrue(echoPopExitTransition(tier) != androidx.compose.animation.ExitTransition.None)
+        }
+        assertTrue(
+            echoPopEnterTransition(CosmosMotionTier.FULL) != echoEnterTransition(CosmosMotionTier.FULL),
+            "back must not replay the forward motion",
         )
     }
 }
