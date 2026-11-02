@@ -25,6 +25,7 @@ import app.simt.echo.model.RouteNode
 import app.simt.echo.nav.HealthResult
 import app.simt.echo.nav.routeHealth
 import app.simt.echo.platform.decodeImage
+import app.simt.echo.platform.platformIoDispatcher
 import app.simt.echo.transfer.CloudApi
 import app.simt.echo.ui.copy.reviewLoadErrorCopy
 import app.simt.echo.ui.copy.reviewLocalErrorCopy
@@ -33,7 +34,6 @@ import app.simt.echo.ui.copy.reviewSaveLandmarkErrorCopy
 import app.simt.echo.ui.copy.reviewSuggestionsErrorCopy
 import app.simt.echo.ui.copy.reviewUseSuggestionErrorCopy
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -118,7 +118,7 @@ class ReviewViewModel(
     /** "Prefer local model" from Settings (W5-01). */
     private val preferLocal: Boolean = false,
     /** Where keyframe filling does its disk work; the screen's scope is Main. */
-    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val ioDispatcher: CoroutineDispatcher = platformIoDispatcher,
 ) : ViewModel() {
 
     private val _ui = MutableStateFlow(ReviewUiState())

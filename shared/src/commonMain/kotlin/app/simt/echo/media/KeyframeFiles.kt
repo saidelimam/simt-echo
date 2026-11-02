@@ -10,8 +10,8 @@ import app.simt.echo.data.DraftRepository
 import app.simt.echo.model.EchoRoute
 import app.simt.echo.model.NodeType
 import app.simt.echo.model.RouteNode
+import app.simt.echo.platform.platformIoDispatcher
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /** Keyframes and manual crops are extracted at most this wide (plan W1-05). */
@@ -62,7 +62,7 @@ suspend fun ensureKeyframes(
     draftId: String,
     route: EchoRoute,
     maxSide: Int = KEYFRAME_MAX_SIDE,
-    ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    ioDispatcher: CoroutineDispatcher = platformIoDispatcher,
 ): Unit = withContext(ioDispatcher) {
     val ledger = drafts.loadGlimpseEntries(draftId) ?: emptyList()
     fillLedgerStartPhoto(drafts, draftId, ledger)

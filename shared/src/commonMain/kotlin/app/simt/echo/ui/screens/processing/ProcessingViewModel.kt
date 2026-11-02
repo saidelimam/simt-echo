@@ -37,6 +37,7 @@ import app.simt.echo.media.stripFallbackWindow
 import app.simt.echo.model.EchoJson
 import app.simt.echo.model.EchoRoute
 import app.simt.echo.model.NodeType
+import app.simt.echo.platform.platformIoDispatcher
 import app.simt.echo.transfer.CloudApi
 import app.simt.echo.transfer.EchoApiError
 import app.simt.echo.transfer.FACE_FILTER_DISCLOSURE
@@ -55,7 +56,6 @@ import app.simt.echo.ui.copy.processingJobTimeoutCopy
 import app.simt.echo.ui.copy.processingNoDraftCopy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -155,7 +155,7 @@ class ProcessingViewModel(
      * cutting + sidecars, and upload staging all touch draft bytes, and
      * the screen's scope is Main.
      */
-    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val ioDispatcher: CoroutineDispatcher = platformIoDispatcher,
 ) : ViewModel() {
 
     private val _ui = MutableStateFlow(ProcessingUiState())
