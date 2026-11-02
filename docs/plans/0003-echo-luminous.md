@@ -71,7 +71,7 @@ on the new navigator as an A/B against v1, so 0002's field evidence becomes
 ## 1. Review verdict and evidence (why this plan exists)
 
 Verdict on the app *as a 2.0 product*: **BLOCK** (ADR-008). As MVP v1,
-0002 stands. Findings verified by reading the tree at `3cdf61d` on
+0002 stands. Findings verified by reading the tree at `28dacf8` on
 2026-11-02 (paths: `S/` = `shared/src/commonMain/kotlin/app/simt/echo`,
 `A/` = `shared/src/androidMain/kotlin/app/simt/echo`).
 
@@ -223,7 +223,7 @@ No slice is Complete on a partial pass or on unit evidence for a device claim.
 | W10-04 | Queued | Perf harness: macrobenchmark, Baseline Profile, JankStats | F (T) | F | W10-01 | — |
 | W10-05 | Queued | Bundle v2 contract freeze (perception, sigil, compat) | S | A | — | — |
 | W10-06 | Queued | Worker API v1.1 freeze (uploads, budget, events, partials) | S | D | — | — |
-| W10-07 | Complete | Luminous design freeze (motion, motifs, haptic/sonic grammar) | S (V) | E | — | 85a2f91 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.brand.EchoMarkTest" --tests "app.simt.echo.ui.shell.EchoShellTest" |
+| W10-07 | Complete | Luminous design freeze (motion, motifs, haptic/sonic grammar) | S (V) | E | — | 88d2a75 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.brand.EchoMarkTest" --tests "app.simt.echo.ui.shell.EchoShellTest" |
 | W10-08 | Queued | Turn haptics emitted (LEFT/RIGHT/U_TURN) | T (S) | C | — | — |
 | W11-01 | Queued | Glimpse ledger: on-device frame quality per 0.5 m | L (T) | B | W10-03 | — |
 | W11-02 | Queued | Approach strips + ledger keyframes (no video seeking) | T (S) | B | W11-01 | — |
@@ -243,17 +243,17 @@ No slice is Complete on a partial pass or on unit evidence for a device claim.
 | W12-06 | Queued | Lost → Relock (global re-spread, turn-signature DTW) | T (S) | C | W12-05 | — |
 | W12-07 | Queued | Route Health score + nudges (pure) | L (T) | C | W10-05 | — |
 | W12-08 | Queued | Live level awareness (barometer, stairs vs lift) | T (S) | C | W12-02 | — |
-| W13-01 | Complete | Echo field: AGSL atmosphere, tilt parallax, ripple uniforms | T (V) | E | W10-07 | db0cf41 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.atmosphere.*" --tests "app.simt.echo.ui.shell.EchoShellTest" --tests "app.simt.echo.ui.components.*" |
-| W13-02 | Complete | Motion system: springs, shared elements, predictive back, morph kit | F (T, V) | A | W10-07 | eb380cc · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.motion.*" --tests "app.simt.echo.ui.shell.*" --tests "app.simt.echo.ui.screens.*" |
-| W13-03 | Complete | Route sigils: generative glyph from route geometry | T (V) | E | W10-05, W10-07 | 708b120 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.sigil.*" --tests "app.simt.echo.ui.screens.*" |
+| W13-01 | Complete | Echo field: AGSL atmosphere, tilt parallax, ripple uniforms | T (V) | E | W10-07 | 6c2daf8 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.atmosphere.*" --tests "app.simt.echo.ui.shell.EchoShellTest" --tests "app.simt.echo.ui.components.*" |
+| W13-02 | Complete | Motion system: springs, shared elements, predictive back, morph kit | F (T, V) | A | W10-07 | 4fc3fe3 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.motion.*" --tests "app.simt.echo.ui.shell.*" --tests "app.simt.echo.ui.screens.*" |
+| W13-03 | Complete | Route sigils: generative glyph from route geometry | T (V) | E | W10-05, W10-07 | 9178aad · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.sigil.*" --tests "app.simt.echo.ui.screens.*" |
 | W13-04 | Queued | Record "Echo walk": ripples, trail ribbon, blooms, brackets | T (V) | B | W13-01, W13-02, W11-01 | — |
 | W13-05 | Queued | Review "Route story": film strip, mask trace, health | T (S, V) | E | W13-02, W11-02, W12-07, W11-08 | — |
 | W13-06 | Queued | Processing "Constellation" from live events | F (T, V) | E | W13-02, W11-08 | — |
-| W13-07 | Complete | Share/Receive "Handshake": sigil QR, beacon, unfold (flow split to W13-14) | F (T, V) | E | W13-02, W13-03 | 07b388b · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.screens.share.*" --tests "app.simt.echo.ui.screens.receive.*" --tests "app.simt.echo.ui.sigil.*" |
+| W13-07 | Complete | Share/Receive "Handshake": sigil QR, beacon, unfold (flow split to W13-14) | F (T, V) | E | W13-02, W13-03 | e73ba91 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.screens.share.*" --tests "app.simt.echo.ui.screens.receive.*" --tests "app.simt.echo.ui.sigil.*" |
 | W13-08 | Queued | Navigate instrument 2.0: morph arrow, σ aura, periphery glow | T (S, V) | E | W13-02, W12-02, W12-05 | — |
 | W13-09 | Queued | Haptic & sonic language, eyes-free mode | T (V) | E | W10-08, W10-07 | — |
 | W13-10 | Queued | Live Updates on lock screen (navigation, processing) | F (S) | A | W13-08 | — |
-| W13-11 | Complete | Home sigil records, Arrived bloom (tour split to W13-13) | F (T, V) | E | W13-03, W13-02 | a0417de · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.motion.*" --tests "app.simt.echo.ui.screens.*" --tests "app.simt.echo.ui.components.*" |
+| W13-11 | Complete | Home sigil records, Arrived bloom (tour split to W13-13) | F (T, V) | E | W13-03, W13-02 | 263fbed · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.motion.*" --tests "app.simt.echo.ui.screens.*" --tests "app.simt.echo.ui.components.*" |
 | W13-12 | Queued | Wear guidance: ongoing activity + tile (P1) | F (T) | F | W13-08 | — |
 | W13-13 | Queued | Guided practice tour through the real Navigate instrument | T (S, V) | E | W13-08, W13-11 | — |
 | W13-14 | Queued | Transfer progress seam + real-rate particle flow | T (S, V) | C | W13-07 | — |
@@ -509,7 +509,7 @@ Object Multiplex) and how output attributes them; is a 12-frame 4 fps
 each. If multi-phrase works, W11-06 sends one video call per checkpoint
 for all surviving phrases. Harden `meta.ts`: golden SSE fixtures for
 chunk splits across `\n\n`, CRLF, `:` keep-alive comments,
-`response.incomplete`, done-only text (the 648e722 lesson). Add
+`response.incomplete`, done-only text (the 9833aef lesson). Add
 `npm run canary:sam` (one 1-frame image call) for W14-05. Acceptance:
 `npm test -- src/meta.test.ts` green on all fixtures; probe results
 recorded with job/request ids.

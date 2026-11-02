@@ -40,7 +40,7 @@ on 2026-11-01; every finding names the slice that closes it.
 | M5 | MAJOR | **Settings is a flat developer panel and is missing V2 functions.** No sections, no **Delete all**, no API/AI status (V2 §8.3 Settings lists API base + delete all), no storage/privacy management, no permissions review. Calibration, baseline mode, CSV, camera overlay and LAN-model fields are one long scroll of equal-weight rows. | W8-11 (Delete all, AI status), W7-07 |
 | M6 | MAJOR | **Whole surfaces remain device-unverified** (0001 evidence residuals): two-phone LAN/hotspot transfer + ML Kit scan (W2-04), on-device replay-to-ARRIVED + haptic feel + Align PiP (W2-06), calibrated walk (W4-02), device abuse pass (W4-03), live relay (W4-05), on-phone LiteRT (W5-01), camera overlay (W5-02), on-watch delivery (W5-04). Unit-green was repeatedly recorded as if it were product-green. This plan never repeats that claim: device slices below require named hardware evidence. | W9-04…W9-08 |
 | M7 | MAJOR | **The Wear module is absent from this build.** `settings.gradle.kts` includes only `:shared` and `:androidApp`, yet W5-04 is Complete on 0001 claiming `:wear:testDebugUnitTest`. Whatever exists on the slice branch is not in the integrated app a user installs. | W9-08 |
-| M8 | MAJOR | **Truth drift in the repo itself.** `README.md` still says "Status: scaffold complete… no feature code yet" while 0001 says 97% Complete; 0002's tracker still lists W6-02 Queued although its commit (`1c51afa`) is in history; there is no CI (`.github/workflows/` absent), no signing/release configuration (`isMinifyEnabled = false`, versionCode 1), so "release APK" (W4-06) has no pipeline to come from. | W7-11, W9-10, W9-12 |
+| M8 | MAJOR | **Truth drift in the repo itself.** `README.md` still says "Status: scaffold complete… no feature code yet" while 0001 says 97% Complete; 0002's tracker still lists W6-02 Queued although its commit (`6c402aa`) is in history; there is no CI (`.github/workflows/` absent), no signing/release configuration (`isMinifyEnabled = false`, versionCode 1), so "release APK" (W4-06) has no pipeline to come from. | W7-11, W9-10, W9-12 |
 | m1 | MINOR | Review is a 462-line screen + 553-line ViewModel; Share buries the QR below a full export-preview form; Receive's scanner is a 280 dp box rather than a full-bleed reticle surface; Align's PiP is 120 dp. Polish, not correctness — fixed inside the Cosmos screen slices, not by refactoring sprees (ADR-002). | W8-08, W8-09, W8-10 |
 | m2 | MINOR | V2 §8.1 SIMT font never landed, splash/icon are still lime-rings-on-black placeholders, and `Placeholder.kt`/`PlaceholderScreen` scaffolding still ships in commonMain. | W8-02, W9-11, W7-03 |
 
@@ -134,7 +134,7 @@ missing mandated parts; **Broken** = present and wrong for users.
 | §12 risks & cut line | Fallbacks mostly implemented; "never cut" core was cut by B2 in practice | §4 cut order restates it for this plan |
 | §13 iOS port | Out of scope (W5-03 Accepted/postponed) | — (§4) |
 | 0001 residuals (all "device-unverified"/blocked markers) | Open | Mapped per-slice in §6 (W9-01…W9-08) |
-| 0002 residuals W6-02/W6-03/W6-04 | W6-02 code landed (`1c51afa`) but tracker stale; W6-03 red (B3); W6-04 not started | W7-11, W7-02, W9-01/W9-02 |
+| 0002 residuals W6-02/W6-03/W6-04 | W6-02 code landed (`6c402aa`) but tracker stale; W6-03 red (B3); W6-04 not started | W7-11, W7-02, W9-01/W9-02 |
 
 ## 4. Scope: MVP v1, explicitly
 
@@ -210,41 +210,41 @@ with device model + build SHA. No slice is Complete on a partial pass.
 
 | ID | State | Slice | Tier | Lane | Depends on | Evidence |
 |---|---|---|---|---|---|---|
-| W7-01 | Complete | Runtime truth audit + V2 coverage matrix (docs) | T (S) | F | — | 264fb5c7281ee0cab96ba996a1358cedffdccf59 |
-| W7-02 | Complete | Fix the red host gate: Robolectric savedstate + ExportSelection | T | E | — | b48637784d1b50fe45dd1162c7b6a58894136890 · test: ./gradlew :shared:testAndroidHostTest |
-| W7-03 | Complete | Purge demo Home; real routes/drafts only, honest empty state | F (T) | E | W7-02 | 9f4756890e003642a347290bde7f758546588837 · test: ./gradlew :shared:testAndroidHostTest |
-| W7-04 | Complete | Close the loop: RouteDetail → Align → Navigate + Simulate | T (S) | E | W7-03 | 741d42ffdcaf6a2e8ce378d25ab762f7f4dbc714 |
-| W7-05 | Complete | Record → Review handoff (Finish lands in Review, named drafts) | F (T) | B | W7-03 | 841c74d20c5a1ae5e0add906137b7192a1361013 |
-| W7-06 | Complete | Human copy & error taxonomy (no ids, epochs, or exceptions) | F (T) | E | W7-01 | 74c0d428e3349edef4aec065ee1366608e93c9ac |
-| W7-07 | Complete | AI-unavailable honesty when the worker is unconfigured | F (S) | D | W7-06 | 4884127a145a59750b8465d547572b034e709de7 |
-| W7-08 | Complete | Share/Receive failure recovery & offer lifecycle | F (T) | E | W7-06 | 318f122eb4e864a9772fcbadbd92d3be117398ba |
-| W7-09 | Complete | Headless user-journey tests for the full core loop | T | F | W7-04, W7-05, W7-08 | 23d9dd636219df03a474b1e88d3ba25e344dcda6 |
-| W7-10 | Complete | Corrupt/missing storage never crashes startup or screens | F (T) | A | W7-02 | f73c967d4b4a7fbaa816a8c3697ec266ecb18683 |
-| W7-11 | Complete | Repo truth: README, tracker states, stale scaffolding removed | L (F) | F | W7-01 | 72c8c1cbde400ddbf19614a5e03e9d7b7a495fdf |
-| W7-12 | Complete | Wave 7 exit gate: offline core loop proven on one device | S | F | W7-09, W7-10, W7-11 | 8d15207ab7e29fa08ce1ddb4cfdd6f94417bd556 |
-| W8-01 | Complete | Cosmos adoption freeze (tokens, accents, non-adoptions) | S | A | W7-12 | c2f98799ff0c95aceab4c414043c202067cd785b |
-| W8-02 | Complete | Cosmos tokens & theme in code + contrast gate | F (T) | E | W8-01 | 233d5111913041e0e13437f2d2f4287b0ace70fb |
-| W8-03 | Complete | Cosmos atmosphere: background, canopy, motion tiers | T | E | W8-02 | 88628f07a8ec3d39257afb7fe96a18cae0c2ae76 |
-| W8-04 | Complete | Cosmos component library (commands, fields, dialogs, states) | F (T) | E | W8-02, W8-03 | 2047fbab37db3a3d7dc86a07ca9690d42da9ec0e |
-| W8-05 | Complete | App shell & navigation grammar (chrome, back, transitions) | T (S) | A | W8-04 | 94a591a93ad1ea849ea7d10eb6bf095cb12e004d |
-| W8-06 | Complete | Home in Cosmos (route records, first-run, recovery) | T | E | W8-05 | 7cc4b77bc3f353f1d374e70f6fcd2078665fcc97 |
-| W8-07 | Complete | Record in Cosmos (camera instrument, Finish sheet) | T | B | W8-05 | 1045f758e8ab62fd36707984a83813192cd1debd |
-| W8-08 | Complete | Review in Cosmos (minimap instrument, landmark records) | T (S) | E | W8-05 | e210df8dd4dcc8212c526aa4c4f2faa64d5c3dd4 |
-| W8-09 | Complete | Processing/Share/Receive in Cosmos (consent, QR, reticle) | F (T) | E | W8-05 | 973c5663c00877f7525e5ebd1a74da955e834ada |
-| W8-10 | Complete | Align/Navigate/Arrived in Cosmos (instrument clarity) | T (S) | E | W8-05 | 343aac6b5c4e097f862e3df03b0ce79d92c9f4ba |
-| W8-11 | Complete | Settings in Cosmos (sections, delete-all, AI status) | F (T) | E | W8-05, W7-07 | 65a981137155c2c668c73f0968a82ea54faa270c |
-| W8-12 | Complete | Accessibility & motion gate (contrast, fontScale, TalkBack) | T | F | W8-06, W8-07, W8-08, W8-09, W8-10, W8-11 | 116c0236beec9326c77656572c713748cec69890 |
-| W9-01 | Complete | Worker production deploy (R2, secrets, live health) | S | D | W7-12 | f79d2169b7c67c8e1462ca776debd66e42ce96ed |
-| W9-02 | Complete | Live AI envelope: deployed 60 m job, cost/latency measured | T (S) | D | W9-01 | fdff6e1f87b3c45351f607c30f9addf7be5599b3 |
-| W9-03 | Complete | Relay wired end-to-end (AppGraph → Share → Receive) | F (S) | D | W9-01, W7-08 | 04efbdfe7b4f833c248c027e00f3f8fa7b57d4e7 |
+| W7-01 | Complete | Runtime truth audit + V2 coverage matrix (docs) | T (S) | F | — | 4c335a553e75b4912bade93543cbe56c59a5b8cf |
+| W7-02 | Complete | Fix the red host gate: Robolectric savedstate + ExportSelection | T | E | — | 915cb2e66f28fd41a5e2b142186956e0517b7d80 · test: ./gradlew :shared:testAndroidHostTest |
+| W7-03 | Complete | Purge demo Home; real routes/drafts only, honest empty state | F (T) | E | W7-02 | c47118692eede6886da0b67430906f48dd531572 · test: ./gradlew :shared:testAndroidHostTest |
+| W7-04 | Complete | Close the loop: RouteDetail → Align → Navigate + Simulate | T (S) | E | W7-03 | 575188331a7343673b0877e204387ca0e045a81c |
+| W7-05 | Complete | Record → Review handoff (Finish lands in Review, named drafts) | F (T) | B | W7-03 | 7a263f1ed1ada72e43930b13cd417d1f5c7b6d74 |
+| W7-06 | Complete | Human copy & error taxonomy (no ids, epochs, or exceptions) | F (T) | E | W7-01 | aed42f5d37ea8931b63b6176ac934b468c9448f8 |
+| W7-07 | Complete | AI-unavailable honesty when the worker is unconfigured | F (S) | D | W7-06 | 4d94d953c9659e46c55b2084f8acc3a372b158c4 |
+| W7-08 | Complete | Share/Receive failure recovery & offer lifecycle | F (T) | E | W7-06 | a17bfb42b35100a5781a659b8b11e4fa8d8cf193 |
+| W7-09 | Complete | Headless user-journey tests for the full core loop | T | F | W7-04, W7-05, W7-08 | f1c80bc127a6f89dfc2ba84812b42314f85309bf |
+| W7-10 | Complete | Corrupt/missing storage never crashes startup or screens | F (T) | A | W7-02 | 2e761b33e41c1d971061f551b02be6f8dddfb056 |
+| W7-11 | Complete | Repo truth: README, tracker states, stale scaffolding removed | L (F) | F | W7-01 | 7359b4e4b93e98b2ae769f3b9f3c33781aaa615d |
+| W7-12 | Complete | Wave 7 exit gate: offline core loop proven on one device | S | F | W7-09, W7-10, W7-11 | 63ea76e89d48f52b11bd557bdbac44f542e77536 |
+| W8-01 | Complete | Cosmos adoption freeze (tokens, accents, non-adoptions) | S | A | W7-12 | a08d8fadf9843f59a397ef09bccd4393a3c76f8a |
+| W8-02 | Complete | Cosmos tokens & theme in code + contrast gate | F (T) | E | W8-01 | 2cd55f08f0c80ee51bdb8412f5bb0fb329bafe29 |
+| W8-03 | Complete | Cosmos atmosphere: background, canopy, motion tiers | T | E | W8-02 | 16a1376f2073a115fd3ea819dbd7751c66675802 |
+| W8-04 | Complete | Cosmos component library (commands, fields, dialogs, states) | F (T) | E | W8-02, W8-03 | 7f17db4a74e21ab7d2b353e64f5e9b290fc4bafb |
+| W8-05 | Complete | App shell & navigation grammar (chrome, back, transitions) | T (S) | A | W8-04 | ae80f09f7b401275c59804006c8853f3e8e7bad4 |
+| W8-06 | Complete | Home in Cosmos (route records, first-run, recovery) | T | E | W8-05 | 6bccb99ad2f107bad4d6fff8e4dec7e391420467 |
+| W8-07 | Complete | Record in Cosmos (camera instrument, Finish sheet) | T | B | W8-05 | 0fb7cb69d4113fd5c83894b63b6a23f332b11d3d |
+| W8-08 | Complete | Review in Cosmos (minimap instrument, landmark records) | T (S) | E | W8-05 | afc8a1f198062147ccfc75bdec784d945d81273a |
+| W8-09 | Complete | Processing/Share/Receive in Cosmos (consent, QR, reticle) | F (T) | E | W8-05 | d35f3825109303480993dfdeeff2a0c11e64a2c9 |
+| W8-10 | Complete | Align/Navigate/Arrived in Cosmos (instrument clarity) | T (S) | E | W8-05 | 3389787d8193bbc1d61302150ddf3bbd414b33c2 |
+| W8-11 | Complete | Settings in Cosmos (sections, delete-all, AI status) | F (T) | E | W8-05, W7-07 | 64e3bd655c983db3a45cc148adea7ef33f94e0dc |
+| W8-12 | Complete | Accessibility & motion gate (contrast, fontScale, TalkBack) | T | F | W8-06, W8-07, W8-08, W8-09, W8-10, W8-11 | 6fe0f76092a0c0250116e4e2adfbfcda31dc9035 |
+| W9-01 | Complete | Worker production deploy (R2, secrets, live health) | S | D | W7-12 | c34cbad5169cfa35415922633c09ef9ca0d7b473 |
+| W9-02 | Complete | Live AI envelope: deployed 60 m job, cost/latency measured | T (S) | D | W9-01 | a08c1c4c8d8a0784f0488b82af16646e4752befa |
+| W9-03 | Complete | Relay wired end-to-end (AppGraph → Share → Receive) | F (S) | D | W9-01, W7-08 | 461c7babd088fcb8bb2ec5128027e8630b301256 |
 | W9-04 | Queued | Two-phone field E2E (transfer, airplane navigate, haptics) | T | F | W7-12, W8-12 | — |
 | W9-05 | Queued | Device robustness pass (kill, deny, airplane, no-sensor) | F (T) | F | W9-04 | — |
 | W9-06 | Queued | Calibration + §11 field trials (5+5, CSV, honest report) | F (T) | F | W9-04, W9-05 | — |
-| W9-07 | Complete | Local model proven on device/LAN — or claims removed | T (S) | D | W9-02 | 0575bf22cfc278ef3dd61ce0394e1140c585db93 |
-| W9-08 | Complete | Wear module restored; paired-watch haptic proof | F (T) | F | W7-12 | 682041d39ae4d1398e6db341e7532f0a48d2789d |
-| W9-09 | Complete | Security & privacy production audit | S | D | W9-01, W9-03 | 99c3295e48315ca0d037e593686ab4da7c0e97a9 |
-| W9-10 | Complete | Release engineering: CI, signing, versioned release build | F (S) | A | W7-02 | 9a229529ca6ab1ee8499bf8b9c48fd4b861cca8d |
-| W9-11 | Complete | First-run, icon, splash, screenshots in Cosmos | L (T) | E | W8-12 | 20c4e937d6a38c9cd1041508ffaf1517bd58f482 |
+| W9-07 | Complete | Local model proven on device/LAN — or claims removed | T (S) | D | W9-02 | 4597ee2c278d092672f25186fc6daada6b0ed04d |
+| W9-08 | Complete | Wear module restored; paired-watch haptic proof | F (T) | F | W7-12 | a3e32c11cd1287fc9f04ed956bb7b62d72b4306d |
+| W9-09 | Complete | Security & privacy production audit | S | D | W9-01, W9-03 | 221ba40a0cc6c95f41560eba37a062857b7e5f73 |
+| W9-10 | Complete | Release engineering: CI, signing, versioned release build | F (S) | A | W7-02 | ee549a3a34c2490ff2f650e29e6b29a96a54061b |
+| W9-11 | Complete | First-run, icon, splash, screenshots in Cosmos | L (T) | E | W8-12 | 149f31d75d592ed172b147d834204027e548ff87 |
 | W9-12 | Queued | MVP v1 release gate (README, demo, limitations, APK) | S | F | W9-02, W9-04, W9-05, W9-06, W9-09, W9-10, W9-11 | — |
 
 Tier totals: **L 2 · F 15 · T 14 · S 5** (primary tiers; reviewers in
