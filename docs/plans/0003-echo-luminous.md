@@ -232,7 +232,7 @@ No slice is Complete on a partial pass or on unit evidence for a device claim.
 | W11-05 | Complete | Worker intake v1.1: content-addressed resumable uploads | F (S) | D | W10-06 | b74143be9eb7030b20667f25fe1e47397bdb0faa |
 | W11-06 | Complete | Worker SAM Lens: per-call steps, cache, governor, ladder | T (S) | D | W10-06, W11-07 | 539e885070fb40c75f860523d416f7d52784aa9e |
 | W11-07 | Complete | SAM live probe: multi-phrase, strip clips, SSE hardening | T (S) | D | W10-06 | d7c988df1727df6ca86f48e64ec7b92f3826e62c |
-| W11-08 | Queued | App client v1.1: resumable upload, event stream, partials | F (T) | D | W11-03, W11-05, W11-06 | — |
+| W11-08 | Complete | App client v1.1: resumable upload, event stream, partials | F (T) | D | W11-03, W11-05, W11-06 | 9f205d978ca5108c836ef0ad4941c7bd0e318896 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.transfer.EchoApiClientTest" --tests "app.simt.echo.ui.screens.processing.ProcessingViewModelTest" |
 | W11-09 | Queued | Ready-on-arrival: opt-in upload while walking (P1) | T (S) | D | W11-08, W11-04 | — |
 | W11-10 | Queued | Live SAM envelope v2 on a walked route | T (S) | F | W11-08, W11-04 | — |
 | W12-01 | Complete | Heading quality: stillness, gyro-bias, quality score | S | C | W10-02 | 44cb4fd3fb25ac23b721146a323313827852be13 |
@@ -240,7 +240,7 @@ No slice is Complete on a partial pass or on unit evidence for a device claim.
 | W12-03 | Complete | Self-calibrating stride from anchored legs | T (S) | C | W12-02 | 037139c25ebbb8b8ace828500eb950745570955f · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.nav.StrideLearnerTest" --tests "app.simt.echo.data.ConfigRepositoryTest" |
 | W12-04 | Complete | Magnetic signature capture + DTW observation (P1) | T (S) | C | W12-02 | 065bcee33eaf95f71d6bde9ad2891314d2b09d35 |
 | W12-05 | Complete | Visual fingerprints: capture, match, "That's it?" | T (S) | C | W12-02, W11-02 | 3790205bb6e17e6b530a96b61678f88d56d5d3bc |
-| W12-06 | Queued | Lost → Relock (global re-spread, turn-signature DTW) | T (S) | C | W12-05 | — |
+| W12-06 | Complete | Lost → Relock (global re-spread, turn-signature DTW) | T (S) | C | W12-05 | e3a160725f0a1eb7ae31aadd5c881d8fb4110834 |
 | W12-07 | Complete | Route Health score + nudges (pure) | L (T) | C | W10-05 | 75e44eaa179938655397ebf919ac3bbe2f7061f3 |
 | W12-08 | Complete | Live level awareness (barometer, stairs vs lift) | T (S) | C | W12-02 | 83993aea57a0880855773ad68c7bccc56df1874f · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.nav.LevelAwarenessTest" --tests "app.simt.echo.nav.NavigatorTest" |
 | W13-01 | Complete | Echo field: AGSL atmosphere, tilt parallax, ripple uniforms | T (V) | E | W10-07 | 6c2daf8 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.atmosphere.*" --tests "app.simt.echo.ui.shell.EchoShellTest" --tests "app.simt.echo.ui.components.*" |
@@ -250,7 +250,7 @@ No slice is Complete on a partial pass or on unit evidence for a device claim.
 | W13-05 | Queued | Review "Route story": film strip, mask trace, health | T (S, V) | E | W13-02, W11-02, W12-07, W11-08 | — |
 | W13-06 | Queued | Processing "Constellation" from live events | F (T, V) | E | W13-02, W11-08 | — |
 | W13-07 | Complete | Share/Receive "Handshake": sigil QR, beacon, unfold (flow split to W13-14) | F (T, V) | E | W13-02, W13-03 | e73ba91 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.screens.share.*" --tests "app.simt.echo.ui.screens.receive.*" --tests "app.simt.echo.ui.sigil.*" |
-| W13-08 | Queued | Navigate instrument 2.0: morph arrow, σ aura, periphery glow | T (S, V) | E | W13-02, W12-02, W12-05 | — |
+| W13-08 | Complete | Navigate instrument 2.0: morph arrow, σ aura, periphery glow | T (S, V) | E | W13-02, W12-02, W12-05 | 6f56d53a2ce82e2e7309a2d4f3806535be437f96 |
 | W13-09 | Complete | Haptic & sonic language, eyes-free mode | T (V) | E | W10-08, W10-07 | b9fe372be2739f3e523778fda411525d16256ef7 |
 | W13-10 | Queued | Live Updates on lock screen (navigation, processing) | F (S) | A | W13-08 | — |
 | W13-11 | Complete | Home sigil records, Arrived bloom (tour split to W13-13) | F (T, V) | E | W13-03, W13-02 | 263fbed · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.motion.*" --tests "app.simt.echo.ui.screens.*" --tests "app.simt.echo.ui.components.*" |
