@@ -7,13 +7,16 @@ import io.ktor.client.request.forms.formData
 import io.ktor.client.request.forms.submitFormWithBinaryData
 import io.ktor.client.request.get
 import io.ktor.client.request.post
+import io.ktor.client.request.prepareGet
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
+import io.ktor.utils.io.readUTF8Line
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -121,11 +124,16 @@ private data class UploadStatusResponse(
 private data class CreateJobV11Response(val ok: Boolean = false, val jobId: String = "")
 
 @Serializable
+private data class JobBudgetDto(val maxSamFrames: Int)
+
+@Serializable
 private data class CreateJobV11Request(
     val manifest: JsonElement,
     val uploadId: String? = null,
     val uploadIds: List<String>? = null,
+    val budget: JobBudgetDto,
     val idempotencyKey: String,
+    val resumeOf: String? = null,
 )
 
 private val apiJson = Json { ignoreUnknownKeys = true }
@@ -341,13 +349,24 @@ class EchoApiClient(
      * `uploadId` + `idempotencyKey`). A repeated create with the same
      * key returns the original job id without touching staging.
      */
-    override suspend fun createJob(manifestJson: String, uploadId: String, idempotencyKey: String): String {
+    override suspend fun createJob(
+        manifestJson: String,
+        uploadId: String,
+        idempotencyKey: String,
+        resumeOf: String?,
+    ): String {
         configured()
         val manifest = runCatching { apiJson.parseToJsonElement(manifestJson) }.getOrNull()
             ?: throw EchoApiError.InvalidManifest("unparseable manifest")
         val request = apiJson.encodeToString(
             CreateJobV11Request.serializer(),
-            CreateJobV11Request(manifest, uploadId = uploadId, idempotencyKey = idempotencyKey),
+            CreateJobV11Request(
+                manifest,
+                uploadId = uploadId,
+                budget = JobBudgetDto(SAM_FRAME_BUDGET),
+                idempotencyKey = idempotencyKey,
+                resumeOf = resumeOf,
+            ),
         )
         return postJobCreate(request)
     }
@@ -388,35 +407,80 @@ class EchoApiClient(
             ?: throw EchoApiError.InvalidManifest("unparseable manifest")
         val request = apiJson.encodeToString(
             CreateJobV11Request.serializer(),
-            CreateJobV11Request(manifest, uploadIds = uploadIds, idempotencyKey = idempotencyKey),
+            CreateJobV11Request(
+                manifest,
+                uploadIds = uploadIds,
+                budget = JobBudgetDto(SAM_FRAME_BUDGET),
+                idempotencyKey = idempotencyKey,
+            ),
         )
         return postJobCreate(request)
     }
 
     /**
      * One SSE read of `GET /v1/jobs/:id/events` from `lastEventId`
-     * (`Last-Event-ID` header). The server holds the connection briefly;
-     * the caller reconnects for liveness and falls back to polling when
-     * the endpoint (or the network) is down. A 404 means the job is gone.
+     * (`Last-Event-ID` header). Frames are parsed as they stream in, so a
+     * checkpoint reaches the UI when the worker emits it, not when the
+     * connection closes. The server holds the connection ~25 s; the read's
+     * deadline is [EVENT_STREAM_TIMEOUT_MS] and the caller reconnects for
+     * liveness, falling back to polling when the endpoint (or the network)
+     * is down. Only a 404 with the worker's `job_not_found` body means the
+     * job is gone; any other failure — including a bare 404 from a server
+     * without the events route — is a stream failure, not a verdict on the
+     * job.
      */
     override fun watchEvents(jobId: String, lastEventId: String?): Flow<JobEvent> = flow {
         configured()
-        val response = try {
-            http.get("$baseUrl/v1/jobs/$jobId/events") {
+        var downstream: Throwable? = null
+        suspend fun deliver(frame: String) {
+            for (event in parseSseEvents(frame)) {
+                try {
+                    emit(event)
+                } catch (t: Throwable) {
+                    downstream = t
+                    throw t
+                }
+            }
+        }
+        try {
+            http.prepareGet("$baseUrl/v1/jobs/$jobId/events") {
                 headers.append(HttpHeaders.Accept, "text/event-stream")
                 if (lastEventId != null) headers.append("Last-Event-ID", lastEventId)
                 headers.append(HttpHeaders.Authorization, "Bearer $appToken")
+                timeout { requestTimeoutMillis = EVENT_STREAM_TIMEOUT_MS }
+            }.execute { response ->
+                val status = response.status.value
+                if (status != 200) {
+                    val body = response.bodyAsText()
+                    if (status == 404 && errorCode(body) == "job_not_found") throw EchoApiError.JobNotFound(jobId)
+                    throw EchoApiError.Server(status, body)
+                }
+                val channel = response.bodyAsChannel()
+                val frame = StringBuilder()
+                while (true) {
+                    val line = channel.readUTF8Line() ?: break
+                    if (line.isNotEmpty()) {
+                        frame.append(line).append('\n')
+                    } else {
+                        deliver(frame.toString())
+                        frame.clear()
+                    }
+                }
+                // A stream that closed mid-frame still delivers what it had.
+                deliver(frame.toString())
             }
         } catch (e: CancellationException) {
             throw e
+        } catch (e: EchoApiError) {
+            throw e
         } catch (e: Exception) {
+            if (e === downstream) throw e
             throw EchoApiError.Network(e)
         }
-        val body = response.bodyAsText()
-        if (response.status.value == 404) throw EchoApiError.JobNotFound(jobId)
-        if (response.status.value != 200) throw EchoApiError.Server(response.status.value, body)
-        parseSseEvents(body).forEach { emit(it) }
     }
+
+    private fun errorCode(body: String): String? =
+        runCatching { apiJson.decodeFromString<ErrorResponse>(body).error }.getOrNull()
 
     private suspend fun postJobCreate(request: String): String {
         val response = try {

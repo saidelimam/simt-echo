@@ -272,11 +272,14 @@ class ProcessingViewModel(
      */
     fun send() {
         if (_ui.value.phase !is ProcessingPhase.Consent) return
+        // A previous job still on the server (errored, not deleted) is the
+        // one a fresh job may reuse SAM work from (`resumeOf`).
+        val previousJobId = _ui.value.jobId
         _ui.update { it.copy(phase = ProcessingPhase.Uploading) }
         viewModelScope.launch {
             try {
                 val v11 = api as? V11CloudApi
-                if (v11 != null) sendV11(v11) else sendLegacy()
+                if (v11 != null) sendV11(v11, resumeOf = previousJobId) else sendLegacy()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -341,7 +344,7 @@ class ProcessingViewModel(
      * and a lost `202` would create a second billed job. A stale session
      * (reforged bytes, expiry) restarts once from a fresh declaration.
      */
-    private suspend fun sendV11(v11: V11CloudApi, restarted: Boolean = false) {
+    private suspend fun sendV11(v11: V11CloudApi, resumeOf: String?, restarted: Boolean = false) {
         val prepared = prepareUpload()
         lastRoute = prepared.route
         if (!restarted) clearPartials()
@@ -357,7 +360,7 @@ class ProcessingViewModel(
             missing = try {
                 v11.uploadMissing(uploadId)
             } catch (e: EchoApiError.UploadStale) {
-                return restartUpload(v11, restarted)
+                return restartUpload(v11, resumeOf, restarted)
             }
         } else {
             val refs = withContext(ioDispatcher) {
@@ -374,9 +377,9 @@ class ProcessingViewModel(
             val byId = prepared.files.associateBy { it.id }
             missing.forEach { id -> byId[id]?.let { v11.putUploadFile(uploadId, it) } }
         } catch (e: EchoApiError.UploadStale) {
-            return restartUpload(v11, restarted)
+            return restartUpload(v11, resumeOf, restarted)
         }
-        val jobId = v11.createJob(manifestJson, uploadId, manifestSha)
+        val jobId = v11.createJob(manifestJson, uploadId, manifestSha, resumeOf)
         drafts.clearUploadRecord(draftId)
         persist(jobId, "queued", uploadId = uploadId)
         _ui.update { it.copy(phase = ProcessingPhase.Working(JobStage.QUEUED), jobId = jobId) }
@@ -404,10 +407,10 @@ class ProcessingViewModel(
     private fun Manifest.withoutConsentClock(): Manifest = copy(consent = consent.copy(atEpochMs = 0L))
 
     /** Clears a stale session and runs the v1.1 send once more, fresh. */
-    private suspend fun restartUpload(v11: V11CloudApi, alreadyRestarted: Boolean) {
+    private suspend fun restartUpload(v11: V11CloudApi, resumeOf: String?, alreadyRestarted: Boolean) {
         drafts.clearUploadRecord(draftId)
         if (alreadyRestarted) throw EchoApiError.Server(0, "Upload session keeps failing.")
-        sendV11(v11, restarted = true)
+        sendV11(v11, resumeOf, restarted = true)
     }
 
     /** Consent Not now / error Continue without AI: back to Review. */

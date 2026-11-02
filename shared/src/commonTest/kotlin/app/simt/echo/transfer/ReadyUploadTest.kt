@@ -53,7 +53,7 @@ class ReadyUploadTest {
             puts += file
         }
 
-        override suspend fun createJob(manifestJson: String, uploadId: String, idempotencyKey: String): String =
+        override suspend fun createJob(manifestJson: String, uploadId: String, idempotencyKey: String, resumeOf: String?): String =
             "job-x"
 
         override suspend fun deleteUpload(uploadId: String) {

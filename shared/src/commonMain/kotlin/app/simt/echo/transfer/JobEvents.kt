@@ -18,6 +18,19 @@ import kotlinx.serialization.json.jsonPrimitive
  * `idempotencyKey = sha256(manifest)`.
  */
 
+/**
+ * Billed-frame cap sent with every job create (`budget.maxSamFrames`,
+ * worker `JobBudgetSchema`; the plan's ≤ 120-frame cost gate).
+ */
+const val SAM_FRAME_BUDGET = 120
+
+/**
+ * Deadline for one event-stream read. The worker holds the connection up
+ * to ~25 s before the client reconnects with `Last-Event-ID`, so the
+ * platform client's 20 s request timeout would cut every healthy read.
+ */
+const val EVENT_STREAM_TIMEOUT_MS = 45_000L
+
 /** Fallback poll gaps once the SSE stream fails: 2 → 4 → 8 → 16 s. */
 val FALLBACK_POLL_DELAYS_MS: List<Long> = listOf(2_000L, 4_000L, 8_000L, 16_000L)
 
@@ -80,8 +93,17 @@ interface V11CloudApi : CloudApi {
      */
     suspend fun putUploadFile(uploadId: String, file: UploadFile)
 
-    /** Creates the job against staged blobs; repeats are idempotent. */
-    suspend fun createJob(manifestJson: String, uploadId: String, idempotencyKey: String): String
+    /**
+     * Creates the job against staged blobs; repeats are idempotent.
+     * [resumeOf] names a previous job whose SAM cache this one may reuse
+     * (the worker's only sanctioned cross-job reuse); null for a fresh job.
+     */
+    suspend fun createJob(
+        manifestJson: String,
+        uploadId: String,
+        idempotencyKey: String,
+        resumeOf: String? = null,
+    ): String
 
     /**
      * Deletes a walk-staged upload session (plan W11-09 discard).

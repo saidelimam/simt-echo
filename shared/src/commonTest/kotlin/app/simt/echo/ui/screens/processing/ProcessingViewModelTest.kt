@@ -123,6 +123,7 @@ class ProcessingViewModelTest {
         val deletes = mutableListOf<String>()
         val puts = mutableListOf<UploadFile>()
         val jobCreates = mutableListOf<Triple<String, String, String>>()
+        val resumeOfs = mutableListOf<String?>()
         val uploadCreates = mutableListOf<List<UploadFileRef>>()
         val watchIds = mutableListOf<String?>()
         var samCalls = 0
@@ -151,8 +152,14 @@ class ProcessingViewModelTest {
             puts += file
         }
 
-        override suspend fun createJob(manifestJson: String, uploadId: String, idempotencyKey: String): String {
+        override suspend fun createJob(
+            manifestJson: String,
+            uploadId: String,
+            idempotencyKey: String,
+            resumeOf: String?,
+        ): String {
             submitError?.let { throw it }
+            resumeOfs += resumeOf
             jobCreates += Triple(manifestJson, uploadId, idempotencyKey)
             // Legacy assertions read submits: the created job carries the
             // bytes actually PUT, exactly what the multipart path attached.
@@ -822,6 +829,30 @@ class ProcessingViewModelTest {
         assertEquals(stored.manifestJson, manifest)
         assertEquals(stored.manifestSha256, key)
         assertEquals(sha256Hex(manifest.encodeToByteArray()), key)
+    }
+
+    @Test
+    fun sendWithAnUndeletedErroredJobNamesItAsResumeOfAndAFreshSendDoesNot() = runTest(dispatcher) {
+        val h = harness()
+        h.drafts.saveJobRecord("draft-1", JobRecord("job-9", "errored", 0L))
+        val api = FakeCloudApi(polls = ArrayDeque(listOf(complete())))
+        val vm = h.vm(api)
+        advanceUntilIdle()
+        assertTrue((vm.ui.value.phase as ProcessingPhase.Consent).hasJob)
+
+        vm.send()
+        advanceUntilIdle()
+        assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
+        assertEquals(listOf<String?>("job-9"), api.resumeOfs)
+
+        // A fresh draft has no previous job to reuse work from.
+        val fresh = harness()
+        val freshApi = FakeCloudApi(polls = ArrayDeque(listOf(complete())))
+        val freshVm = fresh.vm(freshApi)
+        advanceUntilIdle()
+        freshVm.send()
+        advanceUntilIdle()
+        assertEquals(listOf<String?>(null), freshApi.resumeOfs)
     }
 
     @Test

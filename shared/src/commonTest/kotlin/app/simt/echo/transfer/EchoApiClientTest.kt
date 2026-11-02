@@ -5,13 +5,20 @@ import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.MockRequestHandleScope
 import io.ktor.client.engine.mock.respond
 import io.ktor.client.engine.mock.toByteArray
+import io.ktor.client.plugins.HttpTimeoutCapability
 import io.ktor.client.request.HttpRequestData
 import io.ktor.client.request.HttpResponseData
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
+import io.ktor.utils.io.ByteChannel
+import io.ktor.utils.io.writeStringUtf8
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -325,6 +332,90 @@ class EchoApiClientTest {
         val checkpoint = events[1] as JobEvent.Checkpoint
         assertEquals("n1", checkpoint.nodeId)
         assertEquals("[]", checkpoint.candidatesRaw)
+    }
+
+    @Test
+    fun watchEventsDeliversEachFrameWhileTheStreamIsStillOpen() = runTest {
+        // The server holds the connection ~25 s: a client that buffers the
+        // whole body would see nothing until it closes. The channel below
+        // never closes, so only an incremental reader can return event 1.
+        val channel = ByteChannel()
+        val api = client({
+            respond(channel, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "text/event-stream"))
+        })
+        channel.writeStringUtf8(
+            "id: evt-1\ndata: {\"id\":\"evt-1\",\"type\":\"stage\",\"stage\":\"scouting\"}\n\n",
+        )
+        channel.flush()
+
+        val first = withContext(Dispatchers.Default) {
+            withTimeout(5_000) { api.watchEvents("job-1", null).first() }
+        }
+
+        assertEquals(JobEvent.Stage("evt-1", JobStage.SCOUTING), first)
+        channel.close()
+    }
+
+    @Test
+    fun watchEventsReadsFramesSplitAcrossChunksAndCrLf() = runTest {
+        val channel = ByteChannel()
+        val api = client({
+            respond(channel, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "text/event-stream"))
+        })
+        channel.writeStringUtf8("id: evt-1\r\ndata: {\"id\":\"evt-1\",")
+        channel.writeStringUtf8("\"type\":\"stage\",\"stage\":\"grounding\"}\r\n\r\n: keep-alive\n\n")
+        channel.writeStringUtf8("data: {\"id\":\"evt-2\",\"type\":\"complete\"}")
+        channel.close()
+
+        val events = api.watchEvents("job-1", null).toList()
+
+        // The unterminated trailing frame is still delivered when the stream closes.
+        assertEquals(listOf("evt-1", "evt-2"), events.map { it.id })
+        assertEquals(JobStage.GROUNDING, (events[0] as JobEvent.Stage).stage)
+    }
+
+    @Test
+    fun watchEventsOutlivesThePlatformRequestTimeout() = runTest {
+        var requestTimeoutMs: Long? = null
+        val api = client({ request ->
+            requestTimeoutMs = request.getCapabilityOrNull(HttpTimeoutCapability)?.requestTimeoutMillis
+            respond("data: [DONE]\n\n", HttpStatusCode.OK)
+        })
+        api.watchEvents("job-1", null).toList()
+        // Longer than the server's ~25 s hold, or every healthy read would be cut at 20 s.
+        assertTrue((requestTimeoutMs ?: 0L) > 25_000L, "stream deadline was $requestTimeoutMs")
+    }
+
+    @Test
+    fun watchEventsMapsOnlyAJobNotFoundBodyToJobNotFound() = runTest {
+        val gone = client({
+            respond("""{"ok":false,"error":"job_not_found"}""", HttpStatusCode.NotFound)
+        })
+        assertFailsWith<EchoApiError.JobNotFound> { gone.watchEvents("job-1", null).toList() }
+
+        // A server without the events route 404s too; the job may well be running.
+        val noRoute = client({ respond("Not Found", HttpStatusCode.NotFound) })
+        val failure = assertFailsWith<EchoApiError.Server> { noRoute.watchEvents("job-1", null).toList() }
+        assertEquals(404, failure.status)
+        val otherCode = client({ respond("""{"ok":false,"error":"route_missing"}""", HttpStatusCode.NotFound) })
+        assertFailsWith<EchoApiError.Server> { otherCode.watchEvents("job-1", null).toList() }
+    }
+
+    @Test
+    fun createJobSendsTheFrameBudgetAndResumeOfOnlyWhenResuming() = runTest {
+        val bodies = mutableListOf<String>()
+        val api = client({ request ->
+            bodies += request.body.toByteArray().decodeToString()
+            respond("""{"ok":true,"jobId":"job-7"}""", HttpStatusCode.Accepted)
+        })
+        api.createJob("""{"schema":1}""", "up-1", "idem-1")
+        api.createJob("""{"schema":1}""", "up-1", "idem-1", resumeOf = "job-6")
+        api.createJobFromStaged("""{"schema":1}""", listOf("up-1"), "idem-2")
+
+        for (body in bodies) assertTrue(body.contains(""""budget":{"maxSamFrames":120}"""), body)
+        assertTrue(!bodies[0].contains("resumeOf"), bodies[0])
+        assertTrue(bodies[1].contains(""""resumeOf":"job-6""""), bodies[1])
+        assertTrue(!bodies[2].contains("resumeOf"), bodies[2])
     }
 
     @Test

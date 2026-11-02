@@ -2,6 +2,7 @@ package app.simt.echo.ui.screens.processing
 
 import app.simt.echo.model.EchoRoute
 import app.simt.echo.model.NodeType
+import app.simt.echo.transfer.SAM_FRAME_BUDGET
 
 /**
  * Processing "Constellation" state (plan W13-06): the route drawn as a
@@ -63,7 +64,7 @@ data class ConstellationStar(
 )
 
 /** Design frame budget from the plan's cost gate (≤ 120 billed frames). */
-const val CONSTELLATION_FRAME_BUDGET = 120
+const val CONSTELLATION_FRAME_BUDGET = SAM_FRAME_BUDGET
 
 /** Meter text, e.g. "38 / 120 frames". [used] is max-seen billed frames. */
 fun constellationBudgetText(used: Int, budgetExhausted: Boolean = false): String {

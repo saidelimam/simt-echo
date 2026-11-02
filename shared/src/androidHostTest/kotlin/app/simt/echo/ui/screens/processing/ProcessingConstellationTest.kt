@@ -110,7 +110,7 @@ class ProcessingConstellationTest {
 
         override suspend fun putUploadFile(uploadId: String, file: UploadFile) = Unit
 
-        override suspend fun createJob(manifestJson: String, uploadId: String, idempotencyKey: String): String =
+        override suspend fun createJob(manifestJson: String, uploadId: String, idempotencyKey: String, resumeOf: String?): String =
             "job-1"
 
         override suspend fun deleteUpload(uploadId: String) = Unit
