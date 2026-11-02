@@ -70,4 +70,8 @@ object R {
         const val tab = 0x7f0e0012
         const val template_percent = 0x7f0e0013
     }
+    object style {
+        const val DialogWindowTheme = 0x7f0d0250
+        const val FloatingDialogWindowTheme = 0x7f0d0251
+    }
 }

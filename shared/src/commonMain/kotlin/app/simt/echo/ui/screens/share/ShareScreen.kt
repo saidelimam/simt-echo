@@ -28,8 +28,8 @@ import app.simt.echo.transfer.ExportSummary
 import app.simt.echo.transfer.LANDMARK_TEXT_DISCLOSURE
 import app.simt.echo.transfer.START_PHOTO_ITEM_ID
 import app.simt.echo.transfer.TransferService
-import app.simt.echo.ui.components.EchoButton
-import app.simt.echo.ui.components.PillButton
+import app.simt.echo.ui.components.CosmosPrimaryButton
+import app.simt.echo.ui.components.CosmosSecondaryButton
 import app.simt.echo.ui.components.QrCard
 import app.simt.echo.ui.components.StatusChip
 import app.simt.echo.ui.copy.UNTITLED_WALK
@@ -100,15 +100,15 @@ fun ShareScreen(
             else -> StatusChip(text = "Starting offer…")
         }
         if (error != null && qrUri == null) {
-            EchoButton(
-                text = "Try again",
+            CosmosPrimaryButton(
+                label = "Try again",
                 onClick = viewModel::retryOffer,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
         if (ui.relayAvailable && !ui.relayOffered && qrUri != null) {
-            EchoButton(
-                text = "Use internet relay",
+            CosmosPrimaryButton(
+                label = "Use internet relay",
                 onClick = viewModel::useInternetRelay,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -131,13 +131,13 @@ fun ShareScreen(
                     text = FILE_WARNING_COPY,
                     style = MaterialTheme.typography.bodyLarge,
                 )
-                EchoButton(
-                    text = "Share anyway",
+                CosmosPrimaryButton(
+                    label = "Share anyway",
                     onClick = viewModel::confirmFileShare,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                PillButton(
-                    text = "Cancel",
+                CosmosSecondaryButton(
+                    label = "Cancel",
                     onClick = viewModel::dismissFileShare,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -147,13 +147,13 @@ fun ShareScreen(
             StatusChip(text = "File shared ✓")
         }
         if (!ui.fileShared) {
-            PillButton(
-                text = "Share as file",
+            CosmosSecondaryButton(
+                label = "Share as file",
                 onClick = viewModel::requestFileShare,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
-        EchoButton(text = "Back", onClick = onClose, modifier = Modifier.fillMaxWidth())
+        CosmosPrimaryButton(label = "Back", onClick = onClose, modifier = Modifier.fillMaxWidth())
     }
 }
 

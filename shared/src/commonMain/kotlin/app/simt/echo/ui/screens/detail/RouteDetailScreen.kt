@@ -20,8 +20,8 @@ import androidx.compose.ui.unit.dp
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.transfer.CloudApi
 import app.simt.echo.transfer.TransferService
-import app.simt.echo.ui.components.EchoButton
-import app.simt.echo.ui.components.PillButton
+import app.simt.echo.ui.components.CosmosPrimaryButton
+import app.simt.echo.ui.components.CosmosSecondaryButton
 import app.simt.echo.ui.copy.MISSING_ROUTE_ERROR
 import app.simt.echo.ui.copy.UNTITLED_WALK
 import kotlinx.coroutines.launch
@@ -79,7 +79,7 @@ fun RouteDetailScreen(
                 text = "${MISSING_ROUTE_ERROR.whatsSafe} ${MISSING_ROUTE_ERROR.nextAction}",
                 style = MaterialTheme.typography.bodyLarge,
             )
-            EchoButton(text = "Back home", onClick = onBack, modifier = Modifier.fillMaxWidth())
+            CosmosPrimaryButton(label = "Back home", onClick = onBack, modifier = Modifier.fillMaxWidth())
             return@Column
         }
         Text(text = route.name.ifEmpty { UNTITLED_WALK }, style = MaterialTheme.typography.titleLarge)
@@ -96,25 +96,25 @@ fun RouteDetailScreen(
                 }
             }
         }
-        EchoButton(
-            text = "Navigate",
+        CosmosPrimaryButton(
+            label = "Navigate",
             onClick = { onNavigate(routeId) },
             modifier = Modifier.fillMaxWidth(),
         )
-        EchoButton(
-            text = "Share",
+        CosmosPrimaryButton(
+            label = "Share",
             onClick = { onShare(routeId) },
             modifier = Modifier.fillMaxWidth(),
         )
-        PillButton(
-            text = "Simulate walk",
+        CosmosSecondaryButton(
+            label = "Simulate walk",
             onClick = { onSimulate(routeId) },
             modifier = Modifier.fillMaxWidth(),
         )
         val jobId = cloudJobId
         if (jobId != null && api != null && !mediaDeleted) {
-            PillButton(
-                text = "Delete uploaded media now",
+            CosmosSecondaryButton(
+                label = "Delete uploaded media now",
                 onClick = {
                     scope.launch {
                         try {
@@ -138,14 +138,14 @@ fun RouteDetailScreen(
             Text(text = it, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.error)
         }
         if (!confirmDelete) {
-            PillButton(
-                text = "Delete route",
+            CosmosSecondaryButton(
+                label = "Delete route",
                 onClick = { confirmDelete = true },
                 modifier = Modifier.fillMaxWidth(),
             )
         } else {
-            EchoButton(
-                text = "Confirm delete",
+            CosmosPrimaryButton(
+                label = "Confirm delete",
                 onClick = {
                     transferService?.deletePlainExportsFor(routeId)
                     routes.delete(routeId)
@@ -153,12 +153,12 @@ fun RouteDetailScreen(
                 },
                 modifier = Modifier.fillMaxWidth(),
             )
-            PillButton(
-                text = "Keep route",
+            CosmosSecondaryButton(
+                label = "Keep route",
                 onClick = { confirmDelete = false },
                 modifier = Modifier.fillMaxWidth(),
             )
         }
-        PillButton(text = "Back home", onClick = onBack, modifier = Modifier.fillMaxWidth())
+        CosmosSecondaryButton(label = "Back home", onClick = onBack, modifier = Modifier.fillMaxWidth())
     }
 }

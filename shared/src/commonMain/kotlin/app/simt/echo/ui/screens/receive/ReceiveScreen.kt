@@ -24,9 +24,9 @@ import app.simt.echo.platform.CameraPermissionGate
 import app.simt.echo.platform.FileSharing
 import app.simt.echo.platform.QrScannerView
 import app.simt.echo.transfer.TransferService
-import app.simt.echo.ui.components.EchoButton
-import app.simt.echo.ui.components.ErrorState
-import app.simt.echo.ui.components.PillButton
+import app.simt.echo.ui.components.CosmosPrimaryButton
+import app.simt.echo.ui.components.CosmosErrorState
+import app.simt.echo.ui.components.CosmosSecondaryButton
 import app.simt.echo.ui.components.oneDecimal
 import app.simt.echo.ui.copy.UNTITLED_WALK
 import app.simt.echo.ui.copy.expiryCopy
@@ -60,8 +60,8 @@ fun ReceiveScreen(
         when {
             savedId != null -> {
                 Text(text = "Received ✓", style = MaterialTheme.typography.titleLarge)
-                EchoButton(
-                    text = "Open route",
+                CosmosPrimaryButton(
+                    label = "Open route",
                     onClick = { onImported(savedId) },
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -95,8 +95,8 @@ fun ReceiveScreen(
                         text = "Scan the other phone's QR",
                         style = MaterialTheme.typography.bodyLarge,
                     )
-                    PillButton(
-                        text = "Import file",
+                    CosmosSecondaryButton(
+                        label = "Import file",
                         onClick = viewModel::importFile,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -107,7 +107,7 @@ fun ReceiveScreen(
                 }
                 val error = ui.error
                 if (error != null) {
-                    ErrorState(
+                    CosmosErrorState(
                         message = error,
                         actionLabel = "Scan again",
                         onAction = viewModel::rescan,
@@ -146,7 +146,7 @@ private fun ImportSheet(
                 style = MaterialTheme.typography.bodyLarge,
             )
         }
-        EchoButton(text = "Save", onClick = onSave, modifier = Modifier.fillMaxWidth())
-        PillButton(text = "Scan again", onClick = onRescan, modifier = Modifier.fillMaxWidth())
+        CosmosPrimaryButton(label = "Save", onClick = onSave, modifier = Modifier.fillMaxWidth())
+        CosmosSecondaryButton(label = "Scan again", onClick = onRescan, modifier = Modifier.fillMaxWidth())
     }
 }

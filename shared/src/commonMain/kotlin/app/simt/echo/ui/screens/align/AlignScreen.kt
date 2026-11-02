@@ -17,8 +17,8 @@ import androidx.compose.ui.unit.dp
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.platform.rememberCameraRecorder
 import app.simt.echo.ui.components.CropImage
-import app.simt.echo.ui.components.EchoButton
-import app.simt.echo.ui.components.EmptyState
+import app.simt.echo.ui.components.CosmosPrimaryButton
+import app.simt.echo.ui.components.CosmosEmptyState
 import app.simt.echo.ui.copy.MISSING_ROUTE_ERROR
 
 /**
@@ -39,7 +39,7 @@ fun AlignScreen(
     val camera = rememberCameraRecorder()
 
     if (route == null) {
-        EmptyState(
+        CosmosEmptyState(
             title = MISSING_ROUTE_ERROR.whatHappened,
             actionLabel = "Back",
             onAction = onBack,
@@ -75,6 +75,6 @@ fun AlignScreen(
             )
         }
         Text(text = route.start.alignmentHint, style = MaterialTheme.typography.bodyLarge)
-        EchoButton(text = "I'm aligned", onClick = onAligned, modifier = Modifier.fillMaxWidth())
+        CosmosPrimaryButton(label = "I'm aligned", onClick = onAligned, modifier = Modifier.fillMaxWidth())
     }
 }

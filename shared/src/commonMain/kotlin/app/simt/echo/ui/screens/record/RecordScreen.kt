@@ -43,9 +43,9 @@ import app.simt.echo.platform.rememberCameraRecorder
 import app.simt.echo.platform.rememberHaptics
 import app.simt.echo.platform.rememberMotionSource
 import app.simt.echo.ui.components.DistanceReadout
-import app.simt.echo.ui.components.EchoButton
-import app.simt.echo.ui.components.PillButton
-import app.simt.echo.ui.components.RoundActionButton
+import app.simt.echo.ui.components.CosmosPrimaryButton
+import app.simt.echo.ui.components.CosmosSecondaryButton
+import app.simt.echo.ui.components.CosmosRecordButton
 import app.simt.echo.ui.components.StatusChip
 import app.simt.echo.ui.components.oneDecimal
 import app.simt.echo.ui.theme.EchoTouchOther
@@ -126,13 +126,13 @@ fun RecordScreen(
                     }
                     DistanceReadout(text = "${oneDecimal(uiState.hud.distanceM)} m")
                     when (uiState.state) {
-                        CaptureState.READY -> RoundActionButton(
-                            text = "Start",
+                        CaptureState.READY -> CosmosRecordButton(
+                            label = "Start",
                             onClick = viewModel::start,
                         )
 
                         CaptureState.RECORDING -> {
-                            PillButton(text = "Mark spot", onClick = viewModel::mark)
+                            CosmosSecondaryButton(label = "Mark spot", onClick = viewModel::mark)
                             FinishButton(onFinish = viewModel::beginFinish)
                         }
 
@@ -172,8 +172,8 @@ private fun FinishForm(onSave: (String, String) -> Unit) {
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
-        EchoButton(
-            text = "Save ECHO draft",
+        CosmosPrimaryButton(
+            label = "Save ECHO draft",
             onClick = { onSave(name, destination) },
             modifier = Modifier.fillMaxWidth(),
         )

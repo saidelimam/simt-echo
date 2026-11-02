@@ -20,8 +20,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import app.simt.echo.ui.components.EchoButton
-import app.simt.echo.ui.components.PillButton
+import app.simt.echo.ui.components.CosmosPrimaryButton
+import app.simt.echo.ui.components.CosmosSecondaryButton
 import app.simt.echo.ui.components.threeDecimals
 import app.simt.echo.ui.copy.cloudAiStatusCopy
 
@@ -66,8 +66,8 @@ fun SettingsScreen(
             modifier = Modifier.fillMaxWidth(),
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            EchoButton(text = "Calibrate", onClick = viewModel::calibrate)
-            PillButton(text = "Reset", onClick = viewModel::resetK)
+            CosmosPrimaryButton(label = "Calibrate", onClick = viewModel::calibrate)
+            CosmosSecondaryButton(label = "Reset", onClick = viewModel::resetK)
         }
         ui.calibrationNote?.let { Text(text = it) }
 
@@ -90,7 +90,7 @@ fun SettingsScreen(
             text = "Hides landmark cards: turns and distance only.",
             style = MaterialTheme.typography.bodyMedium,
         )
-        EchoButton(text = "Export CSV", onClick = viewModel::exportTrials)
+        CosmosPrimaryButton(label = "Export CSV", onClick = viewModel::exportTrials)
         ui.exportNote?.let { Text(text = it) }
 
         Text(text = "Navigation", style = MaterialTheme.typography.titleMedium)
@@ -162,6 +162,6 @@ fun SettingsScreen(
             style = MaterialTheme.typography.bodyMedium,
         )
 
-        EchoButton(text = "Back", onClick = onBack, modifier = Modifier.fillMaxWidth())
+        CosmosPrimaryButton(label = "Back", onClick = onBack, modifier = Modifier.fillMaxWidth())
     }
 }

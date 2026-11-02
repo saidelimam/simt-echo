@@ -16,7 +16,7 @@ import app.simt.echo.data.RecoverableDraft
 import app.simt.echo.data.destination
 import app.simt.echo.model.EchoRoute as SavedRoute
 import app.simt.echo.ui.EchoRoute
-import app.simt.echo.ui.components.EchoButton
+import app.simt.echo.ui.components.CosmosPrimaryButton
 import app.simt.echo.ui.components.StatusChip
 import app.simt.echo.ui.copy.UNTITLED_WALK
 import kotlin.math.roundToInt
@@ -54,8 +54,8 @@ fun HomeScreen(
             Text(text = "Interrupted drafts", style = MaterialTheme.typography.titleMedium)
             recoverableDrafts.forEach { draft ->
                 val name = draftDisplayName(draft.draftId, draftNames)
-                EchoButton(
-                    text = if (draft.hasRouteDraft) {
+                CosmosPrimaryButton(
+                    label = if (draft.hasRouteDraft) {
                         "$name · Open in Review"
                     } else {
                         "$name · Resume recording (${draft.sampleCount} samples)"
@@ -66,8 +66,8 @@ fun HomeScreen(
         }
         savedRoutes.forEach { route ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                EchoButton(
-                    text = "${route.name.ifEmpty { UNTITLED_WALK }} · " +
+                CosmosPrimaryButton(
+                    label = "${route.name.ifEmpty { UNTITLED_WALK }} · " +
                         "${route.totalLengthM.roundToInt()} m · ${route.landmarks.size} landmarks",
                     onClick = { onOpenRoute(route.routeId) },
                     modifier = Modifier.weight(1f),
@@ -78,14 +78,14 @@ fun HomeScreen(
             }
         }
         draftIds.forEach { draftId ->
-            EchoButton(
-                text = "${draftDisplayName(draftId, draftNames)} · Draft",
+            CosmosPrimaryButton(
+                label = "${draftDisplayName(draftId, draftNames)} · Draft",
                 onClick = { onOpenDraft(draftId) },
             )
         }
-        EchoButton(text = "Record", onClick = { onOpen(EchoRoute.Record()) })
-        EchoButton(text = "Receive", onClick = { onOpen(EchoRoute.Receive) })
-        EchoButton(text = "Settings", onClick = { onOpen(EchoRoute.Settings) })
+        CosmosPrimaryButton(label = "Record", onClick = { onOpen(EchoRoute.Record()) })
+        CosmosPrimaryButton(label = "Receive", onClick = { onOpen(EchoRoute.Receive) })
+        CosmosPrimaryButton(label = "Settings", onClick = { onOpen(EchoRoute.Settings) })
     }
 }
 

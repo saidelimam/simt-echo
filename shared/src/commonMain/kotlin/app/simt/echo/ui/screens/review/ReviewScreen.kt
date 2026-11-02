@@ -45,10 +45,10 @@ import app.simt.echo.media.cropBoxFromRect
 import app.simt.echo.model.Landmark
 import app.simt.echo.model.NodeType
 import app.simt.echo.platform.decodeImage
-import app.simt.echo.ui.components.EchoButton
+import app.simt.echo.ui.components.CosmosPrimaryButton
 import app.simt.echo.ui.components.CropImage
 import app.simt.echo.ui.components.Minimap
-import app.simt.echo.ui.components.PillButton
+import app.simt.echo.ui.components.CosmosSecondaryButton
 import app.simt.echo.ui.copy.MISSING_DRAFT_ERROR
 import app.simt.echo.ui.copy.UNTITLED_WALK
 import kotlin.math.roundToInt
@@ -103,7 +103,7 @@ fun ReviewScreen(
                 text = "${MISSING_DRAFT_ERROR.whatsSafe} ${MISSING_DRAFT_ERROR.nextAction}",
                 style = MaterialTheme.typography.bodyLarge,
             )
-            EchoButton(text = "Back home", onClick = onBack, modifier = Modifier.fillMaxWidth())
+            CosmosPrimaryButton(label = "Back home", onClick = onBack, modifier = Modifier.fillMaxWidth())
             return@Column
         }
         Text(text = ui.routeName.ifEmpty { UNTITLED_WALK }, style = MaterialTheme.typography.titleLarge)
@@ -144,18 +144,18 @@ fun ReviewScreen(
         ui.error?.let {
             Text(text = it, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.error)
         }
-        EchoButton(
-            text = "Find landmarks",
+        CosmosPrimaryButton(
+            label = "Find landmarks",
             onClick = onFindLandmarks,
             modifier = Modifier.fillMaxWidth(),
         )
-        EchoButton(
-            text = if (ui.saving) "Saving…" else "Save ECHO",
+        CosmosPrimaryButton(
+            label = if (ui.saving) "Saving…" else "Save ECHO",
             onClick = { viewModel.save(onSaved) },
             modifier = Modifier.fillMaxWidth(),
             enabled = !ui.saving && ui.savedRouteId == null,
         )
-        PillButton(text = "Back", onClick = onBack, modifier = Modifier.fillMaxWidth())
+        CosmosSecondaryButton(label = "Back", onClick = onBack, modifier = Modifier.fillMaxWidth())
     }
 }
 
@@ -234,7 +234,7 @@ private fun NodeCard(
                 onDelete = onDeleteLandmark,
             )
         }
-        PillButton(text = "Draw landmark", onClick = onDraw, modifier = Modifier.fillMaxWidth())
+        CosmosSecondaryButton(label = "Draw landmark", onClick = onDraw, modifier = Modifier.fillMaxWidth())
     }
 }
 
@@ -321,9 +321,9 @@ private fun SuggestionCard(
             Text(text = "Suggested by $it", style = MaterialTheme.typography.bodySmall)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            EchoButton(text = "Use", onClick = onUse)
-            if (count > 1) PillButton(text = "Next option", onClick = onNext)
-            PillButton(text = "Skip", onClick = onSkip)
+            CosmosPrimaryButton(label = "Use", onClick = onUse)
+            if (count > 1) CosmosSecondaryButton(label = "Next option", onClick = onNext)
+            CosmosSecondaryButton(label = "Skip", onClick = onSkip)
         }
     }
 }
@@ -362,7 +362,7 @@ private fun LandmarkRow(
                 onCheckedChange = { onEdit(landmark.id, landmark.title, landmark.cue, it) },
             )
         }
-        PillButton(text = "Delete", onClick = { onDelete(landmark.id) })
+        CosmosSecondaryButton(label = "Delete", onClick = { onDelete(landmark.id) })
     }
 }
 
@@ -449,15 +449,15 @@ internal fun DrawOverlay(
                 }
                 val current = box
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    EchoButton(
-                        text = "Use box",
+                    CosmosPrimaryButton(
+                        label = "Use box",
                         onClick = {
-                            val rect = current ?: return@EchoButton
+                            val rect = current ?: return@CosmosPrimaryButton
                             onConfirm(nodeId, cropBoxFromRect(rect, widthPx, heightPx))
                         },
                         enabled = current != null && title.isNotBlank(),
                     )
-                    PillButton(text = "Clear", onClick = { box = null }, enabled = current != null)
+                    CosmosSecondaryButton(label = "Clear", onClick = { box = null }, enabled = current != null)
                 }
             }
         }
@@ -467,6 +467,6 @@ internal fun DrawOverlay(
             label = { Text(text = "Landmark name") },
             modifier = Modifier.fillMaxWidth(),
         )
-        PillButton(text = "Cancel", onClick = onCancel, modifier = Modifier.fillMaxWidth())
+        CosmosSecondaryButton(label = "Cancel", onClick = onCancel, modifier = Modifier.fillMaxWidth())
     }
 }
