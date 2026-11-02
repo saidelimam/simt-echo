@@ -8,7 +8,7 @@ navigates a friend along it — turn cues, landmark AR overlays, QR checkpoints.
 Status: **in development — feature code throughout, not yet production-true.**
 Plan `docs/plans/0001-agentic-flow.md` stands at 34/36 Complete (W5-03
 Accepted/postponed, W4-06 Queued); the active plan is
-`docs/plans/0002-production-ready-cosmos.md` (W7-01, W7-02 Complete), whose
+`docs/plans/0002-mvp-cosmos-design.md` (W7-01, W7-02 Complete), whose
 review verdict on the app as it stands is **BLOCK**: the core loop dead-ends
 from the UI, the worker has never been deployed, and device proofs are open.
 W6-02's draw-box extraction landed (`1c51afa`, recorded Complete in

@@ -1,4 +1,4 @@
-# Plan 0002 — Production-Ready Cosmos ECHO (Plan 2)
+# Plan 0002 — MVP-Cosmos-design
 
 Status: **queued** · created 2026-11-01
 
@@ -54,7 +54,7 @@ call.
 
 Acceptance for this document itself:
 
-- [x] This file exists at `docs/plans/0002-production-ready-cosmos.md` and
+- [x] This file exists at `docs/plans/0002-mvp-cosmos-design.md` and
       `simt plan status` reads its tracker (36 rows W7-01…W9-12;
       verified 2026-11-01: `slices=36 queued=36, tiers F=15 L=2 S=5 T=14`).
 - [x] Every 0001/0002 residual and every V2 §5–§13 requirement appears in

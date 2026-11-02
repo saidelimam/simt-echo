@@ -1,6 +1,6 @@
 # W9-11 build record — first-run, icon, splash, screenshots
 
-Slice: W9-11 (plan `docs/plans/0002-production-ready-cosmos.md` §6).
+Slice: W9-11 (plan `docs/plans/0002-mvp-cosmos-design.md` §6).
 Base commit: `815af09c60f15e6b768fde1a4bdfb44053ed7967`
 Slice commit: recorded by `simt slice finish W9-11 --yes` (see tracker row).
 

@@ -1,6 +1,6 @@
 # Cosmos → ECHO adoption freeze (W8-01)
 
-Status: **frozen** · slice W8-01 · plan `docs/plans/0002-production-ready-cosmos.md` §5.
+Status: **frozen** · slice W8-01 · plan `docs/plans/0002-mvp-cosmos-design.md` §5.
 
 Authority order (plan §5, snapshot §0.1): product/privacy/a11y → published spec
 at `simt.space/cosmos/design` → simt-app snapshot → ECHO code. Where the snapshot
