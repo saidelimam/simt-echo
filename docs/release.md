@@ -110,6 +110,12 @@ Deploy evidence (all live):
 - URL: `https://echo-api.saidelimam.workers.dev`, version id
   `df4792af-aaf0-4bdb-b309-1a848a78e994`, bindings MEDIA (echo-media)
   + AI + RL + PIPELINE confirmed in deploy output.
+- Canonical base URL: `https://api.echo.simt.app` (custom domain
+  declared in `worker/wrangler.jsonc` `routes`, cert provisioned,
+  health + authenticated checks green 2026-11-02; deploy version
+  `47544eee-392d-4dd1-9e8d-71d407e79dc9`). The workers.dev URL stays
+  enabled as a fallback route for the same worker. Release builds
+  default to the canonical domain (`ECHO_PROD_API_BASE` overrides).
 - `GET /v1/health` (public): `{ok: true, version: 0.1.0,
   metaKeyConfigured: false, providers: {workersAi: true, metaKey:
   false}}` — true-to-config.

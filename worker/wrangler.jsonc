@@ -4,6 +4,13 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
+  // Custom domain (W9-01): api.echo.simt.app is declared here, not in
+  // the dashboard — redeploy re-attaches it and provisions the cert.
+  // workers.dev stays enabled as a fallback route for the same worker.
+  "workers_dev": true,
+  "routes": [
+    { "pattern": "api.echo.simt.app", "custom_domain": true }
+  ],
   "r2_buckets": [
     {
       "binding": "MEDIA",
