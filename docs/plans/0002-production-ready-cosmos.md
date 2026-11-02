@@ -226,7 +226,7 @@ with device model + build SHA. No slice is Complete on a partial pass.
 | W8-02 | Complete | Cosmos tokens & theme in code + contrast gate | F (T) | E | W8-01 | 233d5111913041e0e13437f2d2f4287b0ace70fb |
 | W8-03 | Complete | Cosmos atmosphere: background, canopy, motion tiers | T | E | W8-02 | 88628f07a8ec3d39257afb7fe96a18cae0c2ae76 |
 | W8-04 | Complete | Cosmos component library (commands, fields, dialogs, states) | F (T) | E | W8-02, W8-03 | 2047fbab37db3a3d7dc86a07ca9690d42da9ec0e |
-| W8-05 | Queued | App shell & navigation grammar (chrome, back, transitions) | T (S) | A | W8-04 | — |
+| W8-05 | Complete | App shell & navigation grammar (chrome, back, transitions) | T (S) | A | W8-04 | 94a591a93ad1ea849ea7d10eb6bf095cb12e004d |
 | W8-06 | Queued | Home in Cosmos (route records, first-run, recovery) | T | E | W8-05 | — |
 | W8-07 | Queued | Record in Cosmos (camera instrument, Finish sheet) | T | B | W8-05 | — |
 | W8-08 | Queued | Review in Cosmos (minimap instrument, landmark records) | T (S) | E | W8-05 | — |
