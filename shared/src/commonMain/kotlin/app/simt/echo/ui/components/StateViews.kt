@@ -49,6 +49,8 @@ private fun CosmosStateScaffold(
     modifier: Modifier = Modifier,
     body: String? = null,
     assertive: Boolean = false,
+    /** Replaces the 48 dp kind mark with an illustration (W13-11: brand mark, bloom). Decorative. */
+    hero: @Composable (() -> Unit)? = null,
     actions: @Composable (() -> Unit)? = null,
 ) {
     Column(
@@ -62,7 +64,9 @@ private fun CosmosStateScaffold(
         verticalArrangement = Arrangement.spacedBy(EchoSpace12),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        if (kind == CosmosStateKind.Loading) {
+        if (hero != null) {
+            hero()
+        } else if (kind == CosmosStateKind.Loading) {
             CircularProgressIndicator(
                 modifier = Modifier
                     .size(48.dp)
@@ -110,12 +114,14 @@ fun CosmosEmptyState(
     onAction: () -> Unit,
     modifier: Modifier = Modifier,
     body: String? = null,
+    hero: @Composable (() -> Unit)? = null,
 ) {
     CosmosStateScaffold(
         kind = CosmosStateKind.Empty,
         title = title,
         body = body,
         modifier = modifier,
+        hero = hero,
         actions = {
             CosmosPrimaryButton(
                 label = actionLabel,
@@ -214,12 +220,14 @@ fun CosmosSuccessState(
     body: String? = null,
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
+    hero: @Composable (() -> Unit)? = null,
 ) {
     CosmosStateScaffold(
         kind = CosmosStateKind.Success,
         title = title,
         body = body,
         modifier = modifier,
+        hero = hero,
         actions = {
             if (actionLabel != null && onAction != null) {
                 CosmosPrimaryButton(

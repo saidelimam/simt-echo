@@ -35,8 +35,9 @@ import app.simt.echo.ui.theme.EchoSpace16
 const val CosmosRecordDividerTag = "CosmosRecordDivider"
 
 /**
- * One record row: title (heading), optional subtitle metadata, badge texts,
- * and an optional trailing slot. Rows are pressable only when [onClick] is
+ * One record row: optional leading mark (W13-11: the route's sigil),
+ * title (heading), optional subtitle metadata, badge texts, and an
+ * optional trailing slot. Rows are pressable only when [onClick] is
  * given; dividers between rows are drawn by [CosmosRecordRows].
  */
 @Composable
@@ -46,6 +47,7 @@ fun CosmosRecordRow(
     subtitle: String? = null,
     badges: List<String> = emptyList(),
     onClick: (() -> Unit)? = null,
+    leading: (@Composable RowScope.() -> Unit)? = null,
     trailing: (@Composable RowScope.() -> Unit)? = null,
 ) {
     val extras = EchoExtras
@@ -62,7 +64,11 @@ fun CosmosRecordRow(
             )
             .padding(horizontal = EchoSpace16, vertical = EchoSpace12)
             .testTag("CosmosRecord:$title"),
+        horizontalArrangement = Arrangement.spacedBy(EchoSpace16),
     ) {
+        if (leading != null) {
+            leading()
+        }
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = title,
