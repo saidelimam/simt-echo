@@ -32,6 +32,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import app.simt.echo.data.ConfigRepository
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.data.TrialRepository
 import app.simt.echo.model.EchoConfig
@@ -92,6 +93,11 @@ fun NavigateScreen(
      * `trials/` (null [trials] sink). Null for every saved-route walk.
      */
     ephemeralRoute: SavedRoute? = null,
+    /**
+     * Where the learned stride is persisted (W12-03). Null for walks that
+     * must not touch the stored posterior (the practice tour).
+     */
+    configs: ConfigRepository? = null,
 ) {
     val motion = motionSource ?: rememberMotionSource()
     val haptics = rememberHaptics()
@@ -104,7 +110,7 @@ fun NavigateScreen(
         key = routeId,
         factory = viewModelFactory {
             addInitializer(NavigateViewModel::class) {
-                NavigateViewModel(routeId, routes, motion, haptics, config, trials, device, baselineMode, onArrived = onArrived, ephemeralRoute = ephemeralRoute)
+                NavigateViewModel(routeId, routes, motion, haptics, config, trials, device, baselineMode, configs = configs, onArrived = onArrived, ephemeralRoute = ephemeralRoute)
             }
         },
     )

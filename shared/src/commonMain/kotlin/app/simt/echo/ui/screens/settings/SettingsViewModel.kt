@@ -7,6 +7,7 @@ import app.simt.echo.data.ConfigRepository
 import app.simt.echo.data.DraftRepository
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.data.TrialRepository
+import app.simt.echo.model.EchoConfig
 import app.simt.echo.platform.CSV_MIME
 import app.simt.echo.platform.FileSharing
 import app.simt.echo.ui.copy.settingsExportErrorCopy
@@ -113,15 +114,15 @@ class SettingsViewModel(
             _ui.update { it.copy(calibrationNote = note) }
             return
         }
-        configs.update { it.copy(stepK = next) }
+        configs.update { it.copy(stepK = next).withoutLearnedStride() }
         val error = calibrationWalkError(CALIBRATION_WALK_M, measured ?: 0.0)
         val pct = error?.let { " (walk read ${oneDecimalPct(it)} ${if (it >= 0) "long" else "short"})" } ?: ""
-        _ui.update { it.copy(stepK = next, measuredM = "", calibrationNote = "K = ${round(next * 1000) / 1000.0}$pct") }
+        _ui.update { it.copy(stepK = next, strideLearnedLegs = 0, measuredM = "", calibrationNote = "K = ${round(next * 1000) / 1000.0}$pct") }
     }
 
     fun resetK() {
-        configs.update { it.copy(stepK = 0.48) }
-        _ui.update { it.copy(stepK = 0.48, calibrationNote = "K reset to 0.48.") }
+        configs.update { it.copy(stepK = 0.48).withoutLearnedStride() }
+        _ui.update { it.copy(stepK = 0.48, strideLearnedLegs = 0, calibrationNote = "K reset to 0.48.") }
     }
 
     fun setBaselineMode(enabled: Boolean) {
@@ -197,6 +198,17 @@ class SettingsViewModel(
         _ui.update { it.copy(deleteNote = note) }
     }
 }
+
+/** Settings line for the learned stride (W12-03): "1 leg", "3 legs". */
+internal fun strideLearnedLabel(legs: Int): String = "Stride learned from ${plural(legs, "leg")}"
+
+/**
+ * A manual K (calibrate / reset) supersedes whatever the walks learned:
+ * the learned posterior is relative to the old K, so keeping it would
+ * seed the next walk from a stride the user just overrode.
+ */
+private fun EchoConfig.withoutLearnedStride(): EchoConfig =
+    copy(learnedStepK = null, learnedStrideLegs = 0)
 
 /** Count with a human singular/plural noun (W7-06 copy discipline). */
 private fun plural(count: Int, singular: String): String =

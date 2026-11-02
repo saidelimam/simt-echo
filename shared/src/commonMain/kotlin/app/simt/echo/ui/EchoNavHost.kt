@@ -252,6 +252,7 @@ fun EchoNavHost(
                 device = graph.platform.name,
                 baselineMode = graph.configRepository.get().baselineMode,
                 motionSource = motion,
+                configs = graph.configRepository,
             )
         }
         echoDestination<EchoRoute.Practice> {

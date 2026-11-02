@@ -83,6 +83,32 @@ class SettingsViewModelTest {
     )
 
     @Test
+    fun manualKChangeClearsTheLearnedStride() {
+        configs.setLearnedStride(1.1, 6)
+        val vm = vm()
+        assertEquals(6, vm.ui.value.strideLearnedLegs)
+
+        vm.onMeasuredChange("9")
+        vm.calibrate()
+        assertEquals(null, configs.get().learnedStepK)
+        assertEquals(0, configs.get().learnedStrideLegs)
+        assertEquals(0, vm.ui.value.strideLearnedLegs)
+
+        configs.setLearnedStride(1.2, 4)
+        vm.resetK()
+        assertEquals(null, configs.get().learnedStepK)
+        assertEquals(0, configs.get().learnedStrideLegs)
+        assertEquals(0, vm.ui.value.strideLearnedLegs)
+    }
+
+    @Test
+    fun strideLearnedLabelPluralises() {
+        assertEquals("Stride learned from 0 legs", strideLearnedLabel(0))
+        assertEquals("Stride learned from 1 leg", strideLearnedLabel(1))
+        assertEquals("Stride learned from 3 legs", strideLearnedLabel(3))
+    }
+
+    @Test
     fun cameraOverlayDefaultsOffAndPersistsWhenEnabled() {
         val vm = vm()
         assertFalse(vm.ui.value.cameraOverlayEnabled)

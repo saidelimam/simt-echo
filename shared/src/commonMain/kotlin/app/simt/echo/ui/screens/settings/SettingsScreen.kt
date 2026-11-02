@@ -104,7 +104,7 @@ fun SettingsScreen(
                             }
                             ui.calibrationNote?.let { Text(text = it) }
                             Text(
-                                text = "Stride learned from ${ui.strideLearnedLegs} legs",
+                                text = strideLearnedLabel(ui.strideLearnedLegs),
                                 style = MaterialTheme.typography.bodyMedium,
                             )
                         }
