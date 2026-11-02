@@ -53,7 +53,6 @@ import app.simt.echo.ui.components.CosmosRecordButton
 import app.simt.echo.ui.components.CosmosSecondaryButton
 import app.simt.echo.ui.components.CosmosSheet
 import app.simt.echo.ui.components.CosmosTextField
-import app.simt.echo.ui.components.DistanceReadout
 import app.simt.echo.ui.components.StatusChip
 import app.simt.echo.ui.components.oneDecimal
 import app.simt.echo.ui.theme.EchoTouchOther
@@ -127,8 +126,22 @@ fun RecordScreen(
     // slot and shows a placeholder, so unavailable/denied/stale sensors
     // never move the geometry.
     var headingRad by remember { mutableStateOf<Double?>(null) }
+    // Echo-walk overlay state (W13-04): presentation-only reader of the
+    // same motion flow (PDR multicasts) plus hud.marks; CaptureSession's
+    // own collection is unaffected. Snapshot refreshes are event-rate.
+    val walkTracker = remember { EchoWalkTracker() }
+    var walk by remember { mutableStateOf(EchoWalkSnapshot()) }
     LaunchedEffect(motion) {
-        motion.updates.collect { headingRad = it.yawRad }
+        motion.updates.collect {
+            headingRad = it.yawRad
+            walkTracker.onMotion(it)
+            walk = walkTracker.snapshot()
+        }
+    }
+    val markCount = uiState.hud.marks
+    LaunchedEffect(markCount) {
+        walkTracker.onMarks(markCount)
+        walk = walkTracker.snapshot()
     }
 
     CameraPermissionGate {
@@ -137,6 +150,11 @@ fun RecordScreen(
             hud = uiState.hud,
             headingRad = headingRad,
             error = uiState.error,
+            walk = walk,
+            onHighlightExpired = {
+                walkTracker.clearHighlight()
+                walk = walkTracker.snapshot()
+            },
             onStart = viewModel::start,
             onMark = viewModel::mark,
             onBeginFinish = viewModel::beginFinish,
@@ -168,10 +186,22 @@ internal fun RecordInstrument(
     onBeginFinish: () -> Unit,
     onSave: (String, String) -> Unit,
     modifier: Modifier = Modifier,
+    walk: EchoWalkSnapshot = EchoWalkSnapshot(),
+    onHighlightExpired: () -> Unit = {},
     preview: @Composable () -> Unit = {},
 ) {
     Box(modifier = modifier.fillMaxSize().testTag(RecordInstrumentTag)) {
         preview()
+        // Echo-walk overlays (W13-04): behind the instrument column so the
+        // action zone stays on top; none consume input or semantics beyond
+        // their documented tags.
+        StepRipples(ripples = walk.ripples)
+        TrailRibbon(
+            trail = walk.trail,
+            headYaw = headingRad,
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
+        LedgerBrackets(highlight = walk.highlight, onExpired = onHighlightExpired)
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -191,7 +221,7 @@ internal fun RecordInstrument(
                 error?.let { message ->
                     CosmosBanner(message = message, kind = CosmosBannerKind.Error)
                 }
-                DistanceReadout(text = "${oneDecimal(hud.distanceM)} m")
+                RollingDistance(text = "${oneDecimal(hud.distanceM)} m")
                 HeadingTick(yawRad = headingRad)
                 when (state) {
                     CaptureState.READY, CaptureState.IDLE -> PrestartOverlay(onStart = onStart)
