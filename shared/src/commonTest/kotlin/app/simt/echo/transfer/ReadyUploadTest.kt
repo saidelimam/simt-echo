@@ -98,6 +98,7 @@ class ReadyUploadTest {
 
     private fun harness(
         metered: Boolean = false,
+        network: NetworkKind = if (metered) NetworkKind.METERED else NetworkKind.UNMETERED,
         detector: FaceDetector? = faceFree,
     ): Harness {
         val api = FakeV11Api()
@@ -106,7 +107,7 @@ class ReadyUploadTest {
         val drafts = DraftRepository(FileStore(fileSystem, "/data".toPath()))
         val uploader = ReadyUploader(
             api = api,
-            network = NetworkGate { !metered },
+            network = NetworkGate { network },
             drafts = drafts,
             draftId = "draft-1",
             faceDetector = detector,
@@ -150,6 +151,65 @@ class ReadyUploadTest {
         val outcome = h.uploader.stageWindow(listOf(entry("a")), bytesFor("a"))
         assertEquals(ReadyStageOutcome.Staged, outcome)
         assertEquals(1, h.api.uploadCreates.size)
+    }
+
+    @Test
+    fun mobileDataAllowedUploadsOnMeteredViaSettingsPolicy() = runTest {
+        val h = harness(network = NetworkKind.METERED)
+        h.uploader.grantConsent(ReadyUploadConsent.granted(mobileDataAllowed = true))
+        assertEquals(ReadyStageOutcome.Staged, h.uploader.stageWindow(listOf(entry("a")), bytesFor("a")))
+        assertEquals(1, h.api.puts.size)
+    }
+
+    @Test
+    fun mobileDataDefaultKeepsWifiOnly() = runTest {
+        val h = harness(network = NetworkKind.METERED)
+        h.uploader.grantConsent(ReadyUploadConsent.granted(mobileDataAllowed = false))
+        assertEquals(ReadyStageOutcome.SkippedMetered, h.uploader.stageWindow(listOf(entry("a")), bytesFor("a")))
+        assertTrue(h.api.uploadCreates.isEmpty())
+    }
+
+    @Test
+    fun roamingNeverUploadsEvenWithMobileData() = runTest {
+        val h = harness(network = NetworkKind.ROAMING)
+        h.uploader.grantConsent(ReadyUploadConsent.granted(mobileDataAllowed = true))
+        assertEquals(ReadyStageOutcome.SkippedMetered, h.uploader.stageWindow(listOf(entry("a")), bytesFor("a")))
+        assertTrue(h.api.uploadCreates.isEmpty())
+        assertTrue(h.api.puts.isEmpty())
+    }
+
+    @Test
+    fun offlineNeverTouchesTheApiOrTheDraft() = runTest {
+        val h = harness(network = NetworkKind.OFFLINE)
+        h.uploader.grantConsent(ReadyUploadConsent.granted(mobileDataAllowed = true))
+        assertEquals(ReadyStageOutcome.SkippedOffline, h.uploader.stageWindow(listOf(entry("a")), bytesFor("a")))
+        assertTrue(h.api.uploadCreates.isEmpty())
+        assertNull(h.drafts.loadReadyStagedRecord("draft-1"))
+    }
+
+    @Test
+    fun networkPolicyTableIsExactlyTheDocumentedOne() {
+        val wifiOnly = ReadyUploadConsent.granted(mobileDataAllowed = false)
+        val withData = ReadyUploadConsent.granted(mobileDataAllowed = true)
+        assertEquals(
+            listOf(true, false, false, false),
+            NetworkKind.entries.map { wifiOnly.allows(it) },
+            "Wi-Fi only: unmetered yes; metered, roaming, offline no",
+        )
+        assertEquals(
+            listOf(true, true, false, false),
+            NetworkKind.entries.map { withData.allows(it) },
+            "mobile data allowed: unmetered and metered yes; roaming, offline no",
+        )
+    }
+
+    @Test
+    fun capabilitiesMapToTheNetworkKind() {
+        assertEquals(NetworkKind.OFFLINE, networkKindOf(hasInternet = false, notMetered = true, notRoaming = true))
+        assertEquals(NetworkKind.UNMETERED, networkKindOf(hasInternet = true, notMetered = true, notRoaming = true))
+        assertEquals(NetworkKind.METERED, networkKindOf(hasInternet = true, notMetered = false, notRoaming = true))
+        assertEquals(NetworkKind.ROAMING, networkKindOf(hasInternet = true, notMetered = false, notRoaming = false))
+        assertEquals(NetworkKind.OFFLINE, OfflineNetworkGate.kind())
     }
 
     @Test

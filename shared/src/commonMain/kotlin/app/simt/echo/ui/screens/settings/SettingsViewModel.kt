@@ -31,6 +31,8 @@ data class SettingsUi(
     val turnHeartbeat: Boolean = true,
     /** Opt-in earcons at turns (W13-09), persisted. */
     val earcons: Boolean = false,
+    /** Walk-time upload may use mobile data, not just Wi-Fi (W11-09), persisted. */
+    val readyUploadMobileData: Boolean = false,
     /** LAN local-model base URL (W5-01), persisted. Empty = none. */
     val localModelBaseUrl: String = "",
     /** LAN local-model id (W5-01), persisted. Empty = none. */
@@ -88,6 +90,7 @@ class SettingsViewModel(
                 cameraOverlayEnabled = it.cameraOverlayEnabled,
                 turnHeartbeat = it.turnHeartbeat,
                 earcons = it.earcons,
+                readyUploadMobileData = it.readyUploadMobileData,
                 localModelBaseUrl = it.localModelBaseUrl,
                 localModelName = it.localModelName,
                 preferLocalModel = it.preferLocalModel,
@@ -144,6 +147,11 @@ class SettingsViewModel(
     fun setEarcons(enabled: Boolean) {
         configs.update { it.copy(earcons = enabled) }
         _ui.update { it.copy(earcons = enabled) }
+    }
+
+    fun setReadyUploadMobileData(enabled: Boolean) {
+        configs.update { it.copy(readyUploadMobileData = enabled) }
+        _ui.update { it.copy(readyUploadMobileData = enabled) }
     }
 
     fun setCameraOverlay(enabled: Boolean) {

@@ -115,7 +115,7 @@ fun RecordScreen(
         key = resumeDraftId ?: "new",
         factory = viewModelFactory {
             addInitializer(RecordViewModel::class) {
-                RecordViewModel(session)
+                RecordViewModel(session, mobileDataAllowed = config.readyUploadMobileData)
             }
         },
     )
@@ -244,6 +244,7 @@ internal fun RecordInstrument(
                     CaptureState.READY, CaptureState.IDLE -> PrestartOverlay(
                         onStart = onStart,
                         optIn = readyOptIn.optIn,
+                        optInLabel = readyOptIn.optInLabel,
                         onOptInChange = onOptInChange,
                     )
                     CaptureState.RECORDING -> {
@@ -261,6 +262,7 @@ internal fun RecordInstrument(
     if (readyOptIn.consentPending) {
         ReadyConsentSheet(
             onGrant = onGrantConsent,
+            body = readyOptIn.consentBody,
             onDismiss = onDismissConsent,
             onDecline = onDeclineConsent,
         )
@@ -280,6 +282,7 @@ private fun PrestartOverlay(
     onStart: () -> Unit,
     modifier: Modifier = Modifier,
     optIn: Boolean = false,
+    optInLabel: String = ReadyOptInUiState().optInLabel,
     onOptInChange: (Boolean) -> Unit = {},
 ) {
     Surface(
@@ -317,7 +320,7 @@ private fun PrestartOverlay(
                     onCheckedChange = null,
                 )
                 Text(
-                    text = "Find landmarks while I walk · Wi-Fi only",
+                    text = optInLabel,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -339,6 +342,7 @@ internal fun ReadyConsentSheet(
     onDismiss: () -> Unit,
     onDecline: () -> Unit,
     modifier: Modifier = Modifier,
+    body: String = ReadyOptInUiState().consentBody,
 ) {
     CosmosSheet(
         title = "Find landmarks while I walk",
@@ -348,10 +352,7 @@ internal fun ReadyConsentSheet(
         modifier = modifier,
         content = {
             Text(
-                text = "As each checkpoint window closes, face-filtered strips upload " +
-                    "over Wi-Fi only so landmarks are ready when you finish. " +
-                    "Nothing sends before you allow it. " +
-                    "Cancel or discard deletes staged uploads.",
+                text = body,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

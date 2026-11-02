@@ -71,7 +71,7 @@ class RecordViewModelTest {
         override fun play(pattern: HapticPattern) = Unit
     }
 
-    private fun viewModel(scope: CoroutineScope): Pair<RecordViewModel, CaptureSession> {
+    private fun viewModel(scope: CoroutineScope, mobileDataAllowed: Boolean = false): Pair<RecordViewModel, CaptureSession> {
         val drafts = DraftRepository(FileStore(FakeFileSystem(), "/data".toPath()))
         val session = CaptureSession(
             motion = FakeMotion(),
@@ -84,7 +84,7 @@ class RecordViewModelTest {
             nowMs = { 1_762_000_000_000L },
             newDraftId = { "draft-1" },
         )
-        return RecordViewModel(session) to session
+        return RecordViewModel(session, mobileDataAllowed) to session
     }
 
     @Test
@@ -92,6 +92,20 @@ class RecordViewModelTest {
         val (vm) = viewModel(this)
         assertEquals(ReadyOptInUiState(), vm.readyOptIn.value)
         assertFalse(vm.readyOptIn.value.optIn)
+    }
+
+    @Test
+    fun theCopyNamesOnlyTheNetworksTheSettingAllows() = runTest {
+        val wifi = viewModel(this).first.readyOptIn.value
+        assertEquals("Find landmarks while I walk · Wi-Fi only", wifi.optInLabel)
+        assertTrue("over Wi-Fi only so landmarks" in wifi.consentBody)
+        assertFalse("mobile data" in wifi.consentBody)
+
+        val data = viewModel(this, mobileDataAllowed = true).first.readyOptIn.value
+        assertEquals("Find landmarks while I walk · Wi-Fi or mobile data", data.optInLabel)
+        assertTrue("mobile data when there is no Wi-Fi (never while roaming)" in data.consentBody)
+        assertFalse("Wi-Fi only" in data.consentBody)
+        assertFalse(data.optIn, "the data setting never turns the opt-in on")
     }
 
     @Test

@@ -121,6 +121,16 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun mobileDataForWalkUploadIsOptInAndPersists() {
+        val vm = vm()
+        assertFalse(vm.ui.value.readyUploadMobileData, "walk upload must be Wi-Fi only by default")
+        assertFalse(configs.get().readyUploadMobileData)
+        vm.setReadyUploadMobileData(true)
+        assertTrue(vm.ui.value.readyUploadMobileData)
+        assertTrue(configs.get().readyUploadMobileData)
+    }
+
+    @Test
     fun strideLearnedLabelPluralises() {
         assertEquals("Stride learned from 0 legs", strideLearnedLabel(0))
         assertEquals("Stride learned from 1 leg", strideLearnedLabel(1))

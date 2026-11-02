@@ -19,6 +19,9 @@ import app.simt.echo.platform.createPlatform
 import app.simt.echo.platform.currentEpochMs
 import app.simt.echo.transfer.EchoApiClient
 import app.simt.echo.transfer.KtorRelayClient
+import app.simt.echo.transfer.NetworkGate
+import app.simt.echo.transfer.OfflineNetworkGate
+import app.simt.echo.transfer.ReadyUploadConsent
 import app.simt.echo.transfer.RelayClient
 import app.simt.echo.transfer.TransferService
 import okio.FileSystem
@@ -58,6 +61,11 @@ class AppGraph(
      * because it only mentions the filter when one is active.
      */
     private val faceScanner: FaceScanner? = null,
+    /**
+     * What the active network is, for the walk-time upload policy (W11-09).
+     * Defaults to offline so a platform with no verified view never uploads.
+     */
+    val networkGate: NetworkGate = OfflineNetworkGate,
 ) {
     /** Root of all on-disk state (plan §5.3). Empty only in previews/tests. */
     val fileStore: FileStore by lazy {
@@ -86,6 +94,14 @@ class AppGraph(
         faceScanner?.let { scanner ->
             ScanningFaceDetector(scanner) { entry -> draftRepository.readLedgerJpeg(draftId, entry) }
         }
+
+    /**
+     * Consent the Record sheet grants for a walk: Wi-Fi only unless the
+     * "mobile data" Settings switch is on (W11-09). Read at grant time, so a
+     * Settings change applies to the next walk.
+     */
+    fun readyUploadConsent(): ReadyUploadConsent =
+        ReadyUploadConsent.granted(mobileDataAllowed = configRepository.get().readyUploadMobileData)
 
     /** Live Updates director (W13-10), or null when no sink was provided. */
     val liveUpdates: LiveUpdateDirector? by lazy {

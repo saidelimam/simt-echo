@@ -4,6 +4,7 @@ import android.app.Application
 import android.os.Build
 import app.simt.echo.capture.MlKitFaceScanner
 import app.simt.echo.platform.AndroidLiveUpdateSink
+import app.simt.echo.platform.AndroidNetworkGate
 import app.simt.echo.platform.AndroidPlatform
 import app.simt.echo.BuildConfig
 
@@ -28,6 +29,8 @@ class EchoApplication : Application() {
             sdkInt = Build.VERSION.SDK_INT,
             // W11-04: strip frames are scanned on-device before upload.
             faceScanner = MlKitFaceScanner(),
+            // W11-09: walk-time uploads follow the active network's policy.
+            networkGate = AndroidNetworkGate(this),
         )
     }
 

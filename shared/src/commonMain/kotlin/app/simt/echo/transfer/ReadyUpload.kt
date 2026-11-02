@@ -10,21 +10,69 @@ import kotlinx.serialization.Serializable
 
 /**
  * Ready-on-arrival consent (plan W11-09): the Record pre-start overlay
- * offers "Find landmarks while I walk · Wi-Fi only". Default off — no
- * byte leaves the phone until the consent sheet is accepted.
+ * offers "Find landmarks while I walk". Default off — no byte leaves the
+ * phone until the consent sheet is accepted. [wifiOnly] is the default
+ * policy; the Settings switch "Use mobile data" turns it off, never the
+ * consent sheet, so the data decision is made once and visibly.
  */
 data class ReadyUploadConsent(
     val enabled: Boolean = false,
     val wifiOnly: Boolean = true,
-)
+) {
+    /**
+     * Whether a walk-time upload may use a network of this [kind]. Offline
+     * and roaming never upload, even with mobile data allowed (roaming is
+     * the one case where data costs the user real money by surprise).
+     */
+    fun allows(kind: NetworkKind): Boolean = when (kind) {
+        NetworkKind.UNMETERED -> true
+        NetworkKind.METERED -> !wifiOnly
+        NetworkKind.ROAMING, NetworkKind.OFFLINE -> false
+    }
+
+    companion object {
+        /** Consent granted at the pre-start sheet, under the Settings data policy. */
+        fun granted(mobileDataAllowed: Boolean) =
+            ReadyUploadConsent(enabled = true, wifiOnly = !mobileDataAllowed)
+    }
+}
+
+/** What the active network is, for the walk uploader's data policy. */
+enum class NetworkKind {
+    /** Wi-Fi or any network the system reports as not metered. */
+    UNMETERED,
+
+    /** A metered network, typically mobile data. */
+    METERED,
+
+    /** Mobile data while roaming. */
+    ROAMING,
+
+    /** No usable internet. Unknown also lands here: fail closed. */
+    OFFLINE,
+}
 
 /**
- * Metering seam (plan W11-09): true when the active network is unmetered
- * (Wi-Fi). Production wires `ConnectivityManager.isActiveNetworkMetered`;
- * tests script a fake. Unknown means metered — fail closed.
+ * Network seam (plan W11-09). Production wires `ConnectivityManager`; tests
+ * script a fake. Anything unknown is [NetworkKind.OFFLINE].
  */
 fun interface NetworkGate {
-    fun unmetered(): Boolean
+    fun kind(): NetworkKind
+}
+
+/** Fail-closed gate for platforms with no verified network view (iOS in v1). */
+val OfflineNetworkGate = NetworkGate { NetworkKind.OFFLINE }
+
+/**
+ * Maps the three system capabilities to a [NetworkKind]. A network that is
+ * not validated internet is [NetworkKind.OFFLINE]; otherwise not-metered wins,
+ * then roaming, then plain metered.
+ */
+fun networkKindOf(hasInternet: Boolean, notMetered: Boolean, notRoaming: Boolean): NetworkKind = when {
+    !hasInternet -> NetworkKind.OFFLINE
+    notMetered -> NetworkKind.UNMETERED
+    !notRoaming -> NetworkKind.ROAMING
+    else -> NetworkKind.METERED
 }
 
 /** Outcome of one closed checkpoint window (plan W11-09). */
@@ -35,8 +83,11 @@ enum class ReadyStageOutcome {
     /** No consent: nothing touched — no draft write, no network call. */
     SkippedNoConsent,
 
-    /** Wi-Fi-only consent on a metered network: nothing sent. */
+    /** The consent's data policy refuses this network (metered under Wi-Fi only, or roaming): nothing sent. */
     SkippedMetered,
+
+    /** No usable network: nothing sent, nothing staged. */
+    SkippedOffline,
 
     /** The window held no sendable bytes after filtering. */
     SkippedEmpty,
@@ -68,10 +119,11 @@ data class ReadyStagedRecord(
  * staged uploads ([discard]).
  *
  * Load-bearing order, enforced in the code path and pinned by
- * `ReadyUploadTest`: consent → metered gate → privacy filter →
- * network. With consent off (the default), on a metered network
- * under Wi-Fi-only consent, or with no [faceDetector] (the consent
- * copy promises face-filtered strips), no call reaches the API.
+ * `ReadyUploadTest`: consent → network policy → privacy filter →
+ * network. With consent off (the default), offline, roaming, on a
+ * metered network under Wi-Fi-only consent, or with no [faceDetector]
+ * (the consent copy promises face-filtered strips), no call reaches
+ * the API.
  *
  * Blob ids are the ledger JPEG file names; the Finish manifest built
  * from the same ledger maps 1:1. Owed: the live motion→window trigger
@@ -114,7 +166,9 @@ class ReadyUploader(
         readBytes: (GlimpseEntry) -> ByteArray?,
     ): ReadyStageOutcome {
         if (!consent.enabled) return ReadyStageOutcome.SkippedNoConsent
-        if (consent.wifiOnly && !network.unmetered()) return ReadyStageOutcome.SkippedMetered
+        val kind = network.kind()
+        if (kind == NetworkKind.OFFLINE) return ReadyStageOutcome.SkippedOffline
+        if (!consent.allows(kind)) return ReadyStageOutcome.SkippedMetered
         if (faceDetector == null) return ReadyStageOutcome.SkippedNoFilter
         val sendable = excludeFaces(entries, faceDetector)
         val files = sendable.mapNotNull { entry ->

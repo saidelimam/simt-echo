@@ -42,6 +42,12 @@ data class EchoConfig(
      * silent while a screen reader is active.
      */
     val earcons: Boolean = false,
+    /**
+     * Walk-time upload data policy (W11-09): when "Find landmarks while I
+     * walk" is on, upload over Wi-Fi only (default) or also over mobile
+     * data. Never while roaming either way.
+     */
+    val readyUploadMobileData: Boolean = false,
 
     // Local model (plan §7.5 / W5-01), Settings → Advanced. All defaults
     // are "nothing configured": with these unset the app behaves exactly

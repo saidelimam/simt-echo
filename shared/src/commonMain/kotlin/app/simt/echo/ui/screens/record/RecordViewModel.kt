@@ -33,9 +33,27 @@ data class ReadyOptInUiState(
     val optIn: Boolean = false,
     val consentPending: Boolean = false,
     val consented: Boolean = false,
-)
+    /** The Settings "mobile data" switch, read when the screen opens. */
+    val mobileData: Boolean = false,
+) {
+    /** Pre-start checkbox label; says which networks the upload may use. */
+    val optInLabel: String
+        get() = "Find landmarks while I walk · " + if (mobileData) "Wi-Fi or mobile data" else "Wi-Fi only"
 
-class RecordViewModel(private val session: CaptureSession) : ViewModel() {
+    /** Consent sheet body; the network sentence follows the Settings switch. */
+    val consentBody: String
+        get() = "As each checkpoint window closes, face-filtered strips upload " +
+            (if (mobileData) "over Wi-Fi, or mobile data when there is no Wi-Fi (never while roaming) " else "over Wi-Fi only ") +
+            "so landmarks are ready when you finish. " +
+            "Nothing sends before you allow it. " +
+            "Cancel or discard deletes staged uploads."
+}
+
+class RecordViewModel(
+    private val session: CaptureSession,
+    /** Settings "mobile data" switch (W11-09): shapes the opt-in copy only; the uploader's policy comes from [app.simt.echo.AppGraph.readyUploadConsent]. */
+    mobileDataAllowed: Boolean = false,
+) : ViewModel() {
 
     private val error = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
 
@@ -44,7 +62,7 @@ class RecordViewModel(private val session: CaptureSession) : ViewModel() {
             RecordUiState(state = state, hud = hud, error = err)
         }.stateIn(viewModelScope, SharingStarted.Eagerly, RecordUiState())
 
-    private val _readyOptIn = kotlinx.coroutines.flow.MutableStateFlow(ReadyOptInUiState())
+    private val _readyOptIn = kotlinx.coroutines.flow.MutableStateFlow(ReadyOptInUiState(mobileData = mobileDataAllowed))
     val readyOptIn: StateFlow<ReadyOptInUiState> = _readyOptIn
 
     fun onPreviewReady() = session.ready()

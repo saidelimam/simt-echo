@@ -68,26 +68,6 @@ actual fun rememberOnline(pollMs: Long): Boolean {
     return online
 }
 
-/**
- * Polls whether the active network is unmetered (plan W11-09); unknown
- * or absent means metered so the walk uploader fails closed.
- */
-@Composable
-actual fun rememberUnmetered(pollMs: Long): Boolean {
-    val context = LocalContext.current.applicationContext
-    var unmetered by remember { mutableStateOf(false) }
-    LaunchedEffect(context, pollMs) {
-        while (true) {
-            unmetered = runCatching {
-                val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-                manager.activeNetwork != null && !manager.isActiveNetworkMetered
-            }.getOrDefault(false)
-            delay(pollMs)
-        }
-    }
-    return unmetered
-}
-
 @Composable
 actual fun KeepScreenOn() {
     val context = LocalContext.current

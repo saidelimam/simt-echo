@@ -190,6 +190,19 @@ fun SettingsScreen(
             CosmosRecordRows(
                 rows = listOf(
                     {
+                        CosmosRecordRow(
+                            title = "Mobile data for landmarks",
+                            subtitle = "When you choose to find landmarks while you walk, upload over mobile data " +
+                                "too, not only Wi-Fi. Never while roaming.",
+                            trailing = {
+                                Switch(
+                                    checked = ui.readyUploadMobileData,
+                                    onCheckedChange = viewModel::setReadyUploadMobileData,
+                                )
+                            },
+                        )
+                    },
+                    {
                         Column(
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                             modifier = Modifier
