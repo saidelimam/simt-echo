@@ -902,3 +902,35 @@ for a smarter model / a device session instead of being faked:
 "Unmeasured is not Complete" (W11-10) applies to all five: no numbers were
 invented for any of them. The `GROUND_MODE=legacy` flag stays until W11-10
 passes; GHOST stays default-off until W14-03 passes.
+
+## 13. Post-build review of Complete rows (2026-11-02)
+
+Six read-only reviewers audited the 34 Complete rows not already reworked
+(W10-07, W13-01/02/03/07/11 excluded). Confirmed defects were fixed, one
+commit each (`git log 2d53cf5..` · `fix(…)`), and the worker, shared and wear
+suites pass on main. Headline fixes: Record could not start on a device
+(`takePhoto` had no still source) and the ledger was never fed — the Frame Tap
+is now a synchronous consumer feeding a per-recording ledger; the worker had
+no `events` route and lost SAM results on Workflow replay; the face pre-filter
+failed open; the Navigate aura camouflaged the arrow; learned stride was never
+persisted; the perception disclosure was never shown.
+
+These seams exist and are unit-tested but have **no production caller or no
+device evidence**; the rows above stay Complete only for what is wired, and the
+remainder is owed:
+
+| Row | Still owed |
+|---|---|
+| W10-02/03/04, W11-03 | StrictMode, Frame Tap ≤ 6 ms, jank and 2 MB upload device evidence; `:benchmark` not compiled on the build machine; Navigate-Simulate benchmark needs a seeded fixture route |
+| W11-04 | A shippable face detector (ML Kit); production uses `NoOpFaceDetector`, so no frame is filtered yet |
+| W11-07 | Live probe table (no `META_API_KEY`) |
+| W11-09 | Ready-on-arrival trigger, Wi-Fi gate and Finish coordination are not wired; `ReadyUploader` has no caller |
+| W12-01 | `HeadingQuality.correctedYaw` is not applied to `PdrEngine` yaw: a ±2°/min estimator error compounds to ~20° over 10 min, so it waits for W14-03 field evidence |
+| W12-04/05 | Device magnetic trace; fingerprint embedder and capture are not wired to the camera; precision table and τ unmeasured |
+| W13-04 | `LedgerBrackets` has no caller of `EchoWalkTracker.onLedgerOffer` |
+| W13-05 | `ReviewViewModel.onCheckpointEvent` has no caller; the shared-element flight is unasserted |
+| W13-10 | Processing-side Live Update (`updateProcessing`) is not wired; navigation side is |
+| W13-12 | Plain-View watch screen, not a Wear ongoing activity or tile |
+
+W14-01/02/03/05 and W11-10 remain Queued as in §12. The W14-02 manual TalkBack
+pass and V review of frames at fontScale 2.0 are still owed.
