@@ -5,6 +5,7 @@ import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import app.simt.echo.Fixtures
 import app.simt.echo.data.FileStore
 import app.simt.echo.data.RouteRepository
@@ -61,13 +62,13 @@ class RouteDetailAlignJourneyTest {
                 onSimulate = { simulated = it },
             )
         }
-        compose.onNodeWithText("Navigate").assertIsDisplayed()
-        compose.onNodeWithText("Share").assertIsDisplayed()
-        compose.onNodeWithText("Simulate walk").assertIsDisplayed()
+        compose.onNodeWithText("Navigate").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Share").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Simulate walk").performScrollTo().assertIsDisplayed()
 
-        compose.onNodeWithText("Navigate").performClick()
+        compose.onNodeWithText("Navigate").performScrollTo().performClick()
         assertEquals(Fixtures.L_ROUTE.routeId, navigated)
-        compose.onNodeWithText("Simulate walk").performClick()
+        compose.onNodeWithText("Simulate walk").performScrollTo().performClick()
         assertEquals(Fixtures.L_ROUTE.routeId, simulated)
     }
 
