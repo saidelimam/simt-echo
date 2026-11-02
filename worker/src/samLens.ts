@@ -31,6 +31,7 @@ import { boxOnly, boxOnlyOne, toGrounded } from "./groundCommon";
 import {
   JobResultSchema,
   MAX_SAM_FRAMES,
+  UuidSchema,
   type Candidate,
   type Checkpoint,
   type JobEvent,
@@ -235,8 +236,10 @@ async function readLensBudget(env: Env, jobId: string): Promise<LensBudget> {
     if (typeof raw !== "object" || raw === null) {
       return { maxSamFrames: MAX_SAM_FRAMES, note: "budget_unreadable" };
     }
-    const resume =
-      typeof raw.resumeOf === "string" && raw.resumeOf !== "" ? { resumeOf: raw.resumeOf } : {};
+    // Intake validated resumeOf; it is re-checked here because it is
+    // interpolated into R2 keys.
+    const resumeOf = UuidSchema.safeParse(raw.resumeOf);
+    const resume = resumeOf.success ? { resumeOf: resumeOf.data } : {};
     if (raw.maxSamFrames === undefined) return { maxSamFrames: MAX_SAM_FRAMES, ...resume };
     if (typeof raw.maxSamFrames !== "number" || !(raw.maxSamFrames > 0)) {
       return { maxSamFrames: MAX_SAM_FRAMES, note: "budget_invalid", ...resume };

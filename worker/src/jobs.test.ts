@@ -45,9 +45,7 @@ class FakeR2 {
     };
   }
 
-  async head(key: string) {
-    return this.store.has(key) ? { key } : null;
-  }
+  head = async (key: string) => (this.store.has(key) ? { key } : null);
 
   async list({ prefix }: { prefix?: string; cursor?: string }) {
     const keys = [...this.store.keys()].filter((k) => !prefix || k.startsWith(prefix)).sort();
@@ -448,19 +446,16 @@ describe("v1.1 contract freeze (W10-06)", () => {
   it("parses the upload create response with a resumable missing[]", () => {
     const parsed = CreateUploadResponseSchema.parse({
       ok: true,
-      uploadId: "11111111-1111-1111-1111-111111111111",
+      uploadId: "11111111-1111-4111-8111-111111111111",
       missing: ["clip_n2"],
     });
     expect(parsed.missing).toEqual(["clip_n2"]);
   });
 
   it("parses upload PUT params and rejects bad file names", () => {
-    expect(
-      UploadPutParamsSchema.parse({ uploadId: "some-upload-id", name: "kf_n2_0" }).name,
-    ).toBe("kf_n2_0");
-    expect(() =>
-      UploadPutParamsSchema.parse({ uploadId: "some-upload-id", name: "EVIL!" }),
-    ).toThrow();
+    const uploadId = "11111111-1111-4111-8111-111111111111";
+    expect(UploadPutParamsSchema.parse({ uploadId, name: "kf_n2_0" }).name).toBe("kf_n2_0");
+    expect(() => UploadPutParamsSchema.parse({ uploadId, name: "EVIL!" })).toThrow();
   });
 
   it("caps the SAM frame budget at 240", () => {
@@ -480,10 +475,10 @@ describe("v1.1 contract freeze (W10-06)", () => {
   it("accepts a full v1.1 job create with upload, budget, idempotency, resume", () => {
     const parsed = CreateJobV11RequestSchema.parse({
       manifest: validManifest(),
-      uploadId: "22222222-2222-2222-2222-222222222222",
+      uploadId: "22222222-2222-4222-8222-222222222222",
       budget: { maxSamFrames: 120 },
       idempotencyKey: "idempotent-client-key-1",
-      resumeOf: "33333333-3333-3333-3333-333333333333",
+      resumeOf: "33333333-3333-4333-8333-333333333333",
     });
     expect(parsed.budget).toEqual({ maxSamFrames: 120 });
     expect(parsed.idempotencyKey).toBe("idempotent-client-key-1");
@@ -765,10 +760,13 @@ describe("v1.1 resumable uploads (W11-05)", () => {
     const media = new FakeR2();
     const pipeline = new FakePipeline();
     const env = envFor(media, pipeline);
+    // resumeOf must name a job that exists.
+    const prior = "33333333-3333-4333-8333-333333333333";
+    await media.put(`jobs/${prior}/manifest.json`, "{}");
     const res = await postJobJson(env, {
       manifest: validManifest(),
       budget: { maxSamFrames: 120 },
-      resumeOf: "33333333-3333-3333-3333-333333333333",
+      resumeOf: prior,
       idempotencyKey: "governor-budget-key-1",
     });
     expect(res.status).toBe(202);
@@ -777,7 +775,7 @@ describe("v1.1 resumable uploads (W11-05)", () => {
     expect(stored).toBeDefined();
     expect(JSON.parse(new TextDecoder().decode(stored!.body))).toEqual({
       maxSamFrames: 120,
-      resumeOf: "33333333-3333-3333-3333-333333333333",
+      resumeOf: prior,
     });
   });
 

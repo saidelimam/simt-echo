@@ -3,7 +3,9 @@ import type { Env } from "./index";
 import {
   CreateJobV11RequestSchema,
   CreateUploadRequestSchema,
+  MAX_UPLOAD_BYTES,
   UploadPutParamsSchema,
+  UuidSchema,
   type UploadFileRef,
 } from "./types";
 
@@ -16,7 +18,6 @@ import {
 // The v1 multipart path in jobs.ts is untouched; JSON job creates dispatch here.
 
 export const STAGING_TTL_MS = 3_600_000;
-const MAX_TOTAL_BYTES = 80 * 1024 * 1024;
 
 const stagingPrefix = (uploadId: string) => `jobs/staging/${uploadId}/`;
 const stagingMetaKey = (uploadId: string) => `jobs/staging/${uploadId}/meta.json`;
@@ -80,6 +81,35 @@ async function jobIdForKey(idempotencyKey: string): Promise<string> {
   const hex = await hexSha256Hex(idempotencyKey);
   const variant = ((parseInt(hex[16], 16) & 0x3) | 0x8).toString(16);
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+/** Reads a request body, giving up (null) as soon as it exceeds `limit`
+ * bytes so an oversized upload is never fully buffered. */
+async function readBodyCapped(
+  body: ReadableStream<Uint8Array> | null,
+  limit: number,
+): Promise<Uint8Array | null> {
+  if (body === null) return new Uint8Array(0);
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > limit) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
 }
 
 async function instanceExists(pipeline: Workflow, jobId: string): Promise<boolean> {
@@ -229,6 +259,13 @@ export async function handleCreateJobV11(c: Context<{ Bindings: Env }>): Promise
     await c.env.MEDIA.delete(idemKey(jobId));
   }
 
+  // resumeOf later becomes an R2 key prefix for cache adoption, so it must
+  // name a job that exists in this deployment (every job shares one app
+  // token, so existence is the whole ownership check).
+  if (resumeOf !== undefined && (await c.env.MEDIA.head(jobManifestKey(resumeOf))) === null) {
+    return c.json({ ok: false, error: "resume_not_found" }, 404);
+  }
+
   // Staged blobs to move under the job (manifest-only creates skip this).
   // One session (uploadId) or several per-window sessions (uploadIds,
   // W11-09): completeness is measured over the union of staged names.
@@ -279,7 +316,7 @@ export async function handleCreateJobV11(c: Context<{ Bindings: Env }>): Promise
     if (staged.length > 60) {
       return c.json({ ok: false, error: "too_many_files" }, 413);
     }
-    if (totalBytes > MAX_TOTAL_BYTES) {
+    if (totalBytes > MAX_UPLOAD_BYTES) {
       return c.json({ ok: false, error: "payload_too_large" }, 413);
     }
   }
@@ -353,14 +390,17 @@ export function registerUploadRoutes(app: Hono<{ Bindings: Env }>): void {
     }
     const parsed = CreateUploadRequestSchema.safeParse(body);
     if (!parsed.success) {
-      return c.json({ ok: false, error: "invalid_request" }, 400);
+      // A single declared file over the cap keeps the documented 413.
+      const oversize = parsed.error.issues.some(
+        (i) => i.code === "too_big" && i.path[i.path.length - 1] === "bytes",
+      );
+      return oversize
+        ? c.json({ ok: false, error: "payload_too_large" }, 413)
+        : c.json({ ok: false, error: "invalid_request" }, 400);
     }
     const { files } = parsed.data;
     const names = files.map((f) => f.name);
-    if (new Set(names).size !== names.length) {
-      return c.json({ ok: false, error: "invalid_request" }, 400);
-    }
-    if (files.reduce((sum, f) => sum + f.bytes, 0) > MAX_TOTAL_BYTES) {
+    if (files.reduce((sum, f) => sum + f.bytes, 0) > MAX_UPLOAD_BYTES) {
       return c.json({ ok: false, error: "payload_too_large" }, 413);
     }
     try {
@@ -381,6 +421,9 @@ export function registerUploadRoutes(app: Hono<{ Bindings: Env }>): void {
 
   app.get("/v1/uploads/:uploadId", async (c) => {
     const uploadId = c.req.param("uploadId");
+    if (!UuidSchema.safeParse(uploadId).success) {
+      return c.json({ ok: false, error: "upload_not_found" }, 404);
+    }
     const loaded = await loadUploadMeta(c.env, uploadId, Date.now());
     if ("error" in loaded) {
       return loaded.error === "expired"
@@ -410,8 +453,18 @@ export function registerUploadRoutes(app: Hono<{ Bindings: Env }>): void {
     if (!declared) {
       return c.json({ ok: false, error: "unknown_file" }, 400);
     }
-    const bytes = await c.req.arrayBuffer();
-    const actual = await hexSha256Hex(new Uint8Array(bytes));
+    // The declared size is the contract: refuse a mismatching Content-Length
+    // before reading anything, and cap the read for bodies without one.
+    const contentLength = c.req.header("content-length");
+    if (contentLength !== undefined && Number(contentLength) !== declared.bytes) {
+      return c.json({ ok: false, error: "size_mismatch" }, 400);
+    }
+    const body = await readBodyCapped(c.req.raw.body, declared.bytes);
+    if (body === null || body.byteLength !== declared.bytes) {
+      return c.json({ ok: false, error: "size_mismatch" }, 400);
+    }
+    const bytes = body.buffer as ArrayBuffer;
+    const actual = await hexSha256Hex(body);
     if (actual !== declared.sha256) {
       return c.json({ ok: false, error: "sha_mismatch" }, 400);
     }
@@ -432,6 +485,10 @@ export function registerUploadRoutes(app: Hono<{ Bindings: Env }>): void {
   // already gone, so both answer 204 with nothing to sweep.
   app.delete("/v1/uploads/:uploadId", async (c) => {
     const uploadId = c.req.param("uploadId");
+    // The id becomes an R2 prefix: only a UUID names a staging session.
+    if (!UuidSchema.safeParse(uploadId).success) {
+      return c.json({ ok: false, error: "invalid_request" }, 400);
+    }
     await deletePrefix(c.env, stagingPrefix(uploadId));
     return new Response(null, { status: 204 });
   });

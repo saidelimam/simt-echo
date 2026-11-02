@@ -185,25 +185,39 @@ export const ApiErrorSchema = z.object({
 // Content hash declared per file at upload creation (plan W10-06).
 export const Sha256Schema = z.string().regex(/^[0-9a-f]{64}$/);
 
+/** Upload sessions and jobs are keyed by server-issued UUIDs. */
+export const UuidSchema = z.uuid();
+
+/** Total upload cap (80 MB, W3-03 §10); no single file can exceed it. */
+export const MAX_UPLOAD_BYTES = 80 * 1024 * 1024;
+
 export const UploadFileRefSchema = z.object({
   name: JobIdSchema,
   sha256: Sha256Schema,
-  bytes: z.number().int().nonnegative(),
+  bytes: z.number().int().nonnegative().max(MAX_UPLOAD_BYTES),
 });
 export type UploadFileRef = z.infer<typeof UploadFileRefSchema>;
 
 // POST /v1/uploads {files:[{name,sha256,bytes}]} (caps mirror W3-03 §10:
-// at most 60 files; the 80 MB total is enforced on PUT bytes in W11-05).
-export const CreateUploadRequestSchema = z.object({
-  files: z.array(UploadFileRefSchema).min(1).max(60),
-});
+// at most 60 files, unique names; the 80 MB total is checked on declared
+// sizes here and on actual PUT bytes in W11-05).
+export const CreateUploadRequestSchema = z
+  .object({
+    files: z.array(UploadFileRefSchema).min(1).max(60),
+  })
+  .superRefine((req, ctx) => {
+    const names = req.files.map((f) => f.name);
+    if (new Set(names).size !== names.length) {
+      ctx.addIssue({ code: "custom", message: "file names must be unique", path: ["files"] });
+    }
+  });
 export type CreateUploadRequest = z.infer<typeof CreateUploadRequestSchema>;
 
 // POST /v1/uploads → {uploadId, missing[]}; missing[] lets clients resume
 // by PUTing only what the server does not already hold (W11-05).
 export const CreateUploadResponseSchema = z.object({
   ok: z.literal(true),
-  uploadId: z.string().min(1),
+  uploadId: UuidSchema,
   missing: z.array(JobIdSchema),
 });
 export type CreateUploadResponse = z.infer<typeof CreateUploadResponseSchema>;
@@ -211,7 +225,7 @@ export type CreateUploadResponse = z.infer<typeof CreateUploadResponseSchema>;
 // PUT /v1/uploads/:uploadId/:name carries raw file bytes; W11-05 verifies
 // sha256(bytes) against the declared sha and answers 400 on mismatch.
 export const UploadPutParamsSchema = z.object({
-  uploadId: z.string().min(1),
+  uploadId: UuidSchema,
   name: JobIdSchema,
 });
 export type UploadPutParams = z.infer<typeof UploadPutParamsSchema>;
@@ -229,14 +243,16 @@ export type JobBudget = z.infer<typeof JobBudgetSchema>;
 
 export const CreateJobV11RequestSchema = z.object({
   manifest: ManifestSchema,
-  uploadId: z.string().min(1).optional(),
+  uploadId: UuidSchema.optional(),
   // W11-09 ready-on-arrival: per-window upload sessions staged during the
   // walk; Finish creates the job against all of them. Never alongside
   // uploadId — one addressing mode per create.
-  uploadIds: z.array(z.string().min(1)).min(1).max(12).optional(),
+  uploadIds: z.array(UuidSchema).min(1).max(12).optional(),
   budget: JobBudgetSchema.optional(),
   idempotencyKey: z.string().min(1).max(128).optional(),
-  resumeOf: z.string().min(1).optional(),
+  // The id of an earlier job; the server checks it exists before it is
+  // ever used as an R2 key prefix.
+  resumeOf: UuidSchema.optional(),
 });
 export type CreateJobV11Request = z.infer<typeof CreateJobV11RequestSchema>;
 

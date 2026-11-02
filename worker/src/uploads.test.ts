@@ -362,3 +362,107 @@ describe("idempotent create and job cleanup", () => {
     expect(media.store.size).toBe(before);
   });
 });
+
+describe("upload PUT and id hardening", () => {
+  const DATA = [1, 2, 3];
+  const stagedBlobs = (media: FakeR2) =>
+    [...media.store.keys()].filter((k) => k.startsWith("jobs/staging/") && !k.endsWith("meta.json"));
+
+  const putRaw = (env: never, uploadId: string, init: RequestInit & { duplex?: "half" }) =>
+    app.request(
+      `/v1/uploads/${uploadId}/kf_n2_0`,
+      { method: "PUT", ...init, headers: { ...auth, ...(init.headers as Record<string, string>) } },
+      env,
+    );
+
+  it("rejects a Content-Length that differs from the declared bytes, storing nothing", async () => {
+    const media = new FakeR2();
+    const env = envFor(media, new FakePipeline());
+    const uploadId = await createUploadFor(env, [{ name: "kf_n2_0", data: DATA }]);
+
+    const res = await putRaw(env, uploadId, {
+      headers: { "Content-Length": "9" },
+      body: new Uint8Array(DATA),
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ ok: false, error: "size_mismatch" });
+    expect(stagedBlobs(media)).toEqual([]);
+  });
+
+  it("stops reading an oversized streamed body early and stores nothing", async () => {
+    const media = new FakeR2();
+    const env = envFor(media, new FakePipeline());
+    const uploadId = await createUploadFor(env, [{ name: "kf_n2_0", data: DATA }]);
+    let pulled = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled++;
+        if (pulled > 1000) controller.close();
+        else controller.enqueue(new Uint8Array(1024));
+      },
+    });
+
+    const res = await putRaw(env, uploadId, { body: stream, duplex: "half" });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ ok: false, error: "size_mismatch" });
+    expect(pulled).toBeLessThan(10);
+    expect(stagedBlobs(media)).toEqual([]);
+  });
+
+  it("rejects a body shorter than declared and accepts the exact one", async () => {
+    const media = new FakeR2();
+    const env = envFor(media, new FakePipeline());
+    const uploadId = await createUploadFor(env, [{ name: "kf_n2_0", data: DATA }]);
+
+    expect((await putRaw(env, uploadId, { body: new Uint8Array([1, 2]) })).status).toBe(400);
+    expect(stagedBlobs(media)).toEqual([]);
+    expect((await putRaw(env, uploadId, { body: new Uint8Array(DATA) })).status).toBe(200);
+    expect(stagedBlobs(media)).toHaveLength(1);
+  });
+
+  it("requires resumeOf to be a UUID naming an existing job", async () => {
+    const media = new FakeR2();
+    const pipeline = new FakePipeline();
+    const env = envFor(media, pipeline);
+
+    const traversal = await postJobJson(env, { manifest: validManifest(), resumeOf: "../other/x" });
+    expect(traversal.status).toBe(400);
+    expect(await traversal.json()).toEqual({ ok: false, error: "invalid_request" });
+
+    const missing = await postJobJson(env, {
+      manifest: validManifest(),
+      resumeOf: "33333333-3333-4333-8333-333333333333",
+    });
+    expect(missing.status).toBe(404);
+    expect(await missing.json()).toEqual({ ok: false, error: "resume_not_found" });
+    expect(pipeline.instances.size).toBe(0);
+  });
+
+  it("only treats UUIDs as upload session ids", async () => {
+    const media = new FakeR2();
+    const env = envFor(media, new FakePipeline());
+    const uploadId = await createUploadFor(env, [{ name: "kf_n2_0", data: DATA }]);
+    const before = media.store.size;
+
+    expect((await app.request("/v1/uploads/not-a-uuid", { headers: auth }, env)).status).toBe(404);
+    expect((await putRaw(env, "not-a-uuid", { body: new Uint8Array(DATA) })).status).toBe(400);
+    for (const id of ["staging", `${uploadId}%2Fmeta.json`, "a%2Fb"]) {
+      const del = await app.request(`/v1/uploads/${id}`, { method: "DELETE", headers: auth }, env);
+      expect(del.status).toBe(400);
+    }
+    expect(media.store.size).toBe(before);
+  });
+
+  it("bounds declared sizes and requires unique file names", async () => {
+    const env = envFor(new FakeR2(), new FakePipeline());
+    const sha = await shaHexOf(DATA);
+    const dup = await createUpload(env, [
+      { name: "kf_n2_0", sha256: sha, bytes: 3 },
+      { name: "kf_n2_0", sha256: sha, bytes: 3 },
+    ]);
+    expect(dup.status).toBe(400);
+    const huge = await createUpload(env, [{ name: "kf_n2_0", sha256: sha, bytes: 2 ** 40 }]);
+    expect(huge.status).toBe(413);
+    expect(await huge.json()).toEqual({ ok: false, error: "payload_too_large" });
+  });
+});
