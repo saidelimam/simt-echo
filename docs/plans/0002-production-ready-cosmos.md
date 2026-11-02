@@ -221,7 +221,7 @@ with device model + build SHA. No slice is Complete on a partial pass.
 | W7-09 | Complete | Headless user-journey tests for the full core loop | T | F | W7-04, W7-05, W7-08 | 23d9dd636219df03a474b1e88d3ba25e344dcda6 |
 | W7-10 | Complete | Corrupt/missing storage never crashes startup or screens | F (T) | A | W7-02 | f73c967d4b4a7fbaa816a8c3697ec266ecb18683 |
 | W7-11 | Complete | Repo truth: README, tracker states, stale scaffolding removed | L (F) | F | W7-01 | 72c8c1cbde400ddbf19614a5e03e9d7b7a495fdf |
-| W7-12 | Queued | Wave 7 exit gate: offline core loop proven on one device | S | F | W7-09, W7-10, W7-11 | — |
+| W7-12 | Complete | Wave 7 exit gate: offline core loop proven on one device | S | F | W7-09, W7-10, W7-11 | 8d15207ab7e29fa08ce1ddb4cfdd6f94417bd556 |
 | W8-01 | Queued | Cosmos adoption freeze (tokens, accents, non-adoptions) | S | A | W7-12 | — |
 | W8-02 | Queued | Cosmos tokens & theme in code + contrast gate | F (T) | E | W8-01 | — |
 | W8-03 | Queued | Cosmos atmosphere: background, canopy, motion tiers | T | E | W8-02 | — |
