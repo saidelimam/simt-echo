@@ -1,6 +1,14 @@
 package app.simt.echo.ui.screens.processing
 
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onChildren
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -315,5 +323,57 @@ class ProcessingConstellationTest {
         compose.onNodeWithText("Queued").assertIsDisplayed()
         compose.onNodeWithText("Cancel").assertIsDisplayed()
         compose.onNodeWithText("Continue without AI").assertIsDisplayed()
+    }
+
+    // TalkBack and orientation (fontScale 2.0 lives in ProcessingConstellationFontScaleTest: it needs real text metrics).
+
+    private val sampleStars = listOf(
+        ConstellationStar("a", "Start of the long corridor", 0.1f, 0f, StarState.GROUNDED),
+        ConstellationStar("b", "Elevator lobby", 0.9f, 1f, StarState.QUEUED),
+    )
+
+    private fun showConstellation() {
+        compose.setContent {
+            EchoTheme(darkTheme = true) {
+                ProvideCosmosMotionTier(CosmosMotionTier.STATIC) {
+                    ConstellationView(stars = sampleStars)
+                }
+            }
+        }
+        compose.waitForIdle()
+    }
+
+    private fun boundsOf(tag: String): Rect =
+        compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
+
+    @Test
+    fun starIsOneTalkBackStopWithADecorativeGlyph() {
+        showConstellation()
+        val tag = ProcessingStarTagPrefix + "a"
+        compose.onNodeWithTag(tag).assert(
+            SemanticsMatcher.expectValue(
+                SemanticsProperties.ContentDescription,
+                listOf("Start of the long corridor — Grounded"),
+            ),
+        )
+        // Announced once: the glyph carries no description of its own.
+        compose.onAllNodesWithContentDescription("Start of the long corridor — Grounded", useUnmergedTree = true)
+            .assertCountEquals(1)
+        // One merged stop: the label and the state word live on the star's own node.
+        compose.onNodeWithText("Start of the long corridor").assert(hasTestTag(tag))
+        compose.onNodeWithText("Grounded").assert(hasTestTag(tag))
+        compose.onNodeWithTag(tag).onChildren().assertCountEquals(0)
+    }
+
+    @Test
+    fun routeReadsTheSameWayUpAsTheReviewMap() {
+        // y01 grows forward along the path; Review draws forward up, so the
+        // later star must sit higher on screen than the earlier one.
+        showConstellation()
+        val earlier = boundsOf(ProcessingStarTagPrefix + "a") // y01 = 0
+        val later = boundsOf(ProcessingStarTagPrefix + "b") // y01 = 1
+        assertTrue(later.top < earlier.top, "the later star must sit higher: $later vs $earlier")
+        assertEquals(1f, ConstellationStar("x", "x", 0f, 0f, StarState.QUEUED).screenY01())
+        assertEquals(0f, ConstellationStar("x", "x", 0f, 1f, StarState.QUEUED).screenY01())
     }
 }
