@@ -66,6 +66,7 @@ suspend fun ensureKeyframes(
 ): Unit = withContext(ioDispatcher) {
     val ledger = drafts.loadGlimpseEntries(draftId) ?: emptyList()
     fillLedgerStartPhoto(drafts, draftId, ledger)
+    fillKeyframesFromLedger(drafts, draftId, route.nodes, ledger)
     val videoMissing = !drafts.draftFileExists(draftId, CaptureSession.VIDEO_FILE)
     val video = drafts.draftFilePath(draftId, CaptureSession.VIDEO_FILE)
     val missing = buildList {
@@ -75,22 +76,42 @@ suspend fun ensureKeyframes(
         for (node in route.nodes) {
             if (node.type == NodeType.START) continue
             val spec = keyframeSpecs(listOf(node)).firstOrNull() ?: continue
-            val picks = ledgerPicksFor(ledger, node)
             spec.timesMs.forEachIndexed { index, atMs ->
-                val name = spec.fileName(index)
-                if (drafts.draftFileExists(draftId, name)) return@forEachIndexed
-                val bytes = picks.getOrNull(index)?.let { drafts.readLedgerJpeg(draftId, it) }
-                if (bytes != null) {
-                    drafts.writeDraftFile(draftId, name, bytes)
-                } else if (!videoMissing) {
-                    add(FrameRequest(atMs, maxSide, drafts.draftFilePath(draftId, name)))
-                }
                 // No ledger frame and no video: the slot stays missing;
                 // Review still edits, uploads just carry fewer files.
+                if (!videoMissing && !drafts.draftFileExists(draftId, spec.fileName(index))) {
+                    add(FrameRequest(atMs, maxSide, drafts.draftFilePath(draftId, spec.fileName(index))))
+                }
             }
         }
     }
     if (missing.isNotEmpty()) media.extractFrames(video, missing)
+}
+
+/**
+ * Fills each missing `kf/` slot of [nodes] with its distance-picked ledger
+ * frame ([ledgerPicksFor]), never touching an existing file and never the
+ * video. Ledger-only on purpose: the walk-time uploader (plan W11-09) calls
+ * it while `video.mp4` is still being written, and `ensureKeyframes` calls it
+ * first so both fill slots identically. Slots the ledger cannot fill stay
+ * missing for the caller's fallback.
+ */
+fun fillKeyframesFromLedger(
+    drafts: DraftRepository,
+    draftId: String,
+    nodes: List<RouteNode>,
+    ledger: List<GlimpseEntry>,
+) {
+    for (node in nodes) {
+        if (node.type == NodeType.START) continue
+        val spec = keyframeSpecs(listOf(node)).firstOrNull() ?: continue
+        val picks = ledgerPicksFor(ledger, node)
+        spec.timesMs.indices.forEach { index ->
+            val name = spec.fileName(index)
+            if (drafts.draftFileExists(draftId, name)) return@forEach
+            picks.getOrNull(index)?.let { drafts.readLedgerJpeg(draftId, it) }?.let { drafts.writeDraftFile(draftId, name, it) }
+        }
+    }
 }
 
 /**

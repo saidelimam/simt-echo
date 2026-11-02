@@ -1,8 +1,5 @@
 package app.simt.echo.transfer
 
-import app.simt.echo.capture.FaceDetector
-import app.simt.echo.capture.GlimpseEntry
-import app.simt.echo.capture.excludeFaces
 import app.simt.echo.data.DraftRepository
 import app.simt.echo.media.sha256Hex
 import kotlinx.coroutines.CancellationException
@@ -75,9 +72,9 @@ fun networkKindOf(hasInternet: Boolean, notMetered: Boolean, notRoaming: Boolean
     else -> NetworkKind.METERED
 }
 
-/** Outcome of one closed checkpoint window (plan W11-09). */
+/** Outcome of staging one batch of closed-checkpoint files. */
 enum class ReadyStageOutcome {
-    /** Privacy-filtered strip staged with the server. */
+    /** The batch is staged with the server. */
     Staged,
 
     /** No consent: nothing touched — no draft write, no network call. */
@@ -89,54 +86,55 @@ enum class ReadyStageOutcome {
     /** No usable network: nothing sent, nothing staged. */
     SkippedOffline,
 
-    /** The window held no sendable bytes after filtering. */
+    /** Every file in the batch is already staged byte for byte, or the batch is empty. */
     SkippedEmpty,
 
-    /**
-     * No [FaceDetector] is configured: the consent sheet promises
-     * face-filtered strips, so nothing is staged unfiltered.
-     */
-    SkippedNoFilter,
+    /** [MAX_STAGED_SESSIONS] sessions are staged: the rest ships with the Finish upload. */
+    SkippedFull,
 }
 
 /**
  * Staged walk-upload sessions (`ready-upload.json`, plan W11-09): one
- * upload id per closed checkpoint window, so a restart still discards
- * (or finishes against) every staged blob. Cleared on job create and
- * on discard.
+ * upload id per staged batch, so a restart still discards (or finishes
+ * against) every staged blob. Cleared on job create and on discard.
+ *
+ * [files] maps each staged file name to the SHA-256 of the bytes staged under
+ * it. Finish compares its own bytes against it, so a file Review changed since
+ * the walk (a recaptured keyframe) is sent again instead of silently shipping
+ * the stale one.
  */
 @Serializable
 data class ReadyStagedRecord(
     val uploadIds: List<String>,
     val updatedAtMs: Long,
+    val files: Map<String, String> = emptyMap(),
 )
 
 /**
- * Walk-time strip staging (plan W11-09): as each checkpoint window
- * closes, its strip uploads — privacy filter first — against a
- * per-window upload session. Finish creates the job against the
- * already-uploaded blobs ([finish]); cancel or discard deletes the
- * staged uploads ([discard]).
+ * The worker takes at most 12 upload sessions per job; one is kept for what
+ * Finish still has to send, so a walk stages at most this many.
+ */
+const val MAX_STAGED_SESSIONS = 11
+
+/**
+ * Walk-time staging (plan W11-09): as checkpoints close, their files — built
+ * by [UploadPreparer], privacy filter included — upload into one session per
+ * batch. Finish then creates the job against what is already there
+ * ([createJobFromWalkStaging]); cancel or discard deletes it ([discard]).
  *
- * Load-bearing order, enforced in the code path and pinned by
- * `ReadyUploadTest`: consent → network policy → privacy filter →
- * network. With consent off (the default), offline, roaming, on a
- * metered network under Wi-Fi-only consent, or with no [faceDetector]
- * (the consent copy promises face-filtered strips), no call reaches
- * the API.
- *
- * Blob ids are the ledger JPEG file names; the Finish manifest built
- * from the same ledger maps 1:1. Owed: the live motion→window trigger
- * and Finish-manifest coordination (no in-walk ledger capture exists
- * yet), plus device evidence (result ready ≤ 15 s after Finish on a
- * 60 m walk).
+ * This class owns the policy, not the content: consent → network → bytes, in
+ * that order, pinned by `ReadyUploadTest`. With consent off (the default),
+ * offline, roaming, or on a metered network under Wi-Fi-only consent, no call
+ * reaches the API and nothing is written to the draft. Whether a file is
+ * face-filtered is decided upstream by [UploadPreparer]; the walk-time caller
+ * refuses to build files at all without a detector, because the consent copy
+ * promises filtered strips.
  */
 class ReadyUploader(
     private val api: V11CloudApi,
     private val network: NetworkGate,
     private val drafts: DraftRepository,
     private val draftId: String,
-    private val faceDetector: FaceDetector? = null,
     private val nowMs: () -> Long = { 0L },
 ) {
     /** Default off: set only via the pre-start consent sheet. */
@@ -154,53 +152,34 @@ class ReadyUploader(
     }
 
     /**
-     * Stages one closed checkpoint window: declares its privacy-filtered
-     * strip and PUTs the missing bytes. Skips (never throws) on the
-     * consent, metering and filter gates; an empty post-filter window
-     * stages nothing. The upload id is recorded as soon as the session
-     * exists, before any PUT, so a crash mid-window still leaves
-     * [discard] a session to delete.
+     * Stages [files]: declares them and PUTs the bytes the server lacks. Skips
+     * (never throws) on the consent, network and session-cap gates; files
+     * already staged with the same bytes are not sent twice. The session id is
+     * recorded as soon as it exists, before any PUT, so a crash mid-batch still
+     * leaves [discard] a session to delete.
      */
-    suspend fun stageWindow(
-        entries: List<GlimpseEntry>,
-        readBytes: (GlimpseEntry) -> ByteArray?,
-    ): ReadyStageOutcome {
+    suspend fun stage(files: List<UploadFile>): ReadyStageOutcome {
         if (!consent.enabled) return ReadyStageOutcome.SkippedNoConsent
         val kind = network.kind()
         if (kind == NetworkKind.OFFLINE) return ReadyStageOutcome.SkippedOffline
         if (!consent.allows(kind)) return ReadyStageOutcome.SkippedMetered
-        if (faceDetector == null) return ReadyStageOutcome.SkippedNoFilter
-        val sendable = excludeFaces(entries, faceDetector)
-        val files = sendable.mapNotNull { entry ->
-            val name = entry.jpegPath?.substringAfterLast('/')?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
-            val bytes = readBytes(entry) ?: return@mapNotNull null
-            UploadFile(name, "image/jpeg", bytes)
-        }
-        if (files.isEmpty()) return ReadyStageOutcome.SkippedEmpty
-        val refs = files.map { file -> UploadFileRef(file.id, sha256Hex(file.bytes), file.bytes.size.toLong()) }
-        val created = api.createUpload(refs)
         val staged = drafts.loadReadyStagedRecord(draftId)
+        val hashed = files.map { it to sha256Hex(it.bytes) }
+        val fresh = hashed.filter { (file, sha) -> staged?.files?.get(file.id) != sha }
+        if (fresh.isEmpty()) return ReadyStageOutcome.SkippedEmpty
+        if ((staged?.uploadIds?.size ?: 0) >= MAX_STAGED_SESSIONS) return ReadyStageOutcome.SkippedFull
+        val created = api.createUpload(fresh.map { (file, sha) -> UploadFileRef(file.id, sha, file.bytes.size.toLong()) })
         drafts.saveReadyStagedRecord(
             draftId,
-            ReadyStagedRecord(staged.orEmpty() + created.uploadId, nowMs()),
+            ReadyStagedRecord(
+                uploadIds = staged?.uploadIds.orEmpty() + created.uploadId,
+                updatedAtMs = nowMs(),
+                files = staged?.files.orEmpty() + fresh.associate { (file, sha) -> file.id to sha },
+            ),
         )
-        val byId = files.associateBy { it.id }
+        val byId = fresh.associate { (file, _) -> file.id to file }
         created.missing.forEach { id -> byId[id]?.let { api.putUploadFile(created.uploadId, it) } }
         return ReadyStageOutcome.Staged
-    }
-
-    /**
-     * Creates the job against the already-uploaded blobs: no PUT, only
-     * the multi-session create. Fail-closed on missing consent or with
-     * nothing staged.
-     */
-    suspend fun finish(manifestJson: String, idempotencyKey: String): String {
-        if (!consent.enabled) throw EchoApiError.ConsentRequired()
-        val staged = drafts.loadReadyStagedRecord(draftId)
-        if (staged.isNullOrEmpty()) throw IllegalStateException("finish: no staged windows")
-        val jobId = api.createJobFromStaged(manifestJson, staged, idempotencyKey)
-        drafts.clearReadyStagedRecord(draftId)
-        return jobId
     }
 
     /**
@@ -208,19 +187,63 @@ class ReadyUploader(
      * Mirrors `deleteNow` discipline: a failed delete keeps the record
      * (orphans fall to the server's staging-TTL sweep) and rethrows.
      */
-    suspend fun discard() {
-        val staged = drafts.loadReadyStagedRecord(draftId) ?: return
-        var failure: Exception? = null
-        for (uploadId in staged) {
-            try {
-                api.deleteUpload(uploadId)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                if (failure == null) failure = e
-            }
+    suspend fun discard() = discardWalkStaging(api, drafts, draftId)
+}
+
+/** Deletes the staged sessions of [draftId], keeping the record when a delete fails (see [ReadyUploader.discard]). */
+suspend fun discardWalkStaging(api: V11CloudApi, drafts: DraftRepository, draftId: String) {
+    val staged = drafts.loadReadyStagedRecord(draftId) ?: return
+    var failure: Exception? = null
+    for (uploadId in staged.uploadIds) {
+        try {
+            api.deleteUpload(uploadId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (failure == null) failure = e
         }
-        if (failure != null) throw failure
+    }
+    if (failure != null) throw failure
+    drafts.clearReadyStagedRecord(draftId)
+}
+
+/**
+ * Creates the Finish job against the sessions staged during the walk, or
+ * returns null when none were staged (the caller then uploads everything).
+ *
+ * [files] are the bytes Finish would upload anyway. Those already staged with
+ * identical bytes are not sent again; the rest (checkpoints that closed after
+ * the last window, files Review changed) go in one final session, listed
+ * first because the worker takes a name from the first session that holds it,
+ * so changed bytes win over stale staged ones. The record is cleared once the
+ * job exists. A server that no longer has a session throws
+ * [EchoApiError.UploadStale]; the record is cleared then too, so the caller
+ * can fall back to a full upload without the dead sessions.
+ */
+suspend fun createJobFromWalkStaging(
+    api: V11CloudApi,
+    drafts: DraftRepository,
+    draftId: String,
+    manifestJson: String,
+    files: List<UploadFile>,
+    idempotencyKey: String,
+): String? {
+    val staged = drafts.loadReadyStagedRecord(draftId)?.takeIf { it.uploadIds.isNotEmpty() } ?: return null
+    val hashed = files.map { it to sha256Hex(it.bytes) }
+    val remainder = hashed.filter { (file, sha) -> staged.files[file.id] != sha }
+    try {
+        var sessions = staged.uploadIds
+        if (remainder.isNotEmpty()) {
+            val created = api.createUpload(remainder.map { (file, sha) -> UploadFileRef(file.id, sha, file.bytes.size.toLong()) })
+            val byId = remainder.associate { (file, _) -> file.id to file }
+            created.missing.forEach { id -> byId[id]?.let { api.putUploadFile(created.uploadId, it) } }
+            sessions = listOf(created.uploadId) + sessions
+        }
+        val jobId = api.createJobFromStaged(manifestJson, sessions, idempotencyKey)
         drafts.clearReadyStagedRecord(draftId)
+        return jobId
+    } catch (e: EchoApiError.UploadStale) {
+        drafts.clearReadyStagedRecord(draftId)
+        throw e
     }
 }

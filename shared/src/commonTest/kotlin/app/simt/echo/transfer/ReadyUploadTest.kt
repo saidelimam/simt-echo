@@ -1,10 +1,8 @@
 package app.simt.echo.transfer
 
-import app.simt.echo.capture.FaceDetector
-import app.simt.echo.capture.FaceVerdict
-import app.simt.echo.capture.GlimpseEntry
 import app.simt.echo.data.DraftRepository
 import app.simt.echo.data.FileStore
+import app.simt.echo.media.sha256Hex
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.runTest
@@ -14,7 +12,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
-import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -32,6 +29,7 @@ class ReadyUploadTest {
         val stagedCreates = mutableListOf<Triple<String, List<String>, String>>()
         var deleteError: EchoApiError? = null
         var putError: EchoApiError? = null
+        var staleOnCreate: EchoApiError? = null
         private var nextUpload = 0
 
         override suspend fun submit(manifestJson: String, files: List<UploadFile>): String = "job-x"
@@ -68,6 +66,7 @@ class ReadyUploadTest {
             uploadIds: List<String>,
             idempotencyKey: String,
         ): String {
+            staleOnCreate?.let { throw it }
             stagedCreates += Triple(manifestJson, uploadIds, idempotencyKey)
             return "job-1"
         }
@@ -75,31 +74,15 @@ class ReadyUploadTest {
         override fun watchEvents(jobId: String, lastEventId: String?): Flow<JobEvent> = emptyFlow()
     }
 
-    private fun entry(id: String, d: Double = 12.0): GlimpseEntry = GlimpseEntry(
-        bucketIndex = 1L,
-        tNs = 1_000_000_000L,
-        odometerM = d,
-        score = 0.9,
-        sharp = 0.8,
-        hash = id.hashCode().toLong(),
-        jpegPath = "glimpse/$id.jpg",
-    )
-
     private data class Harness(
         val api: FakeV11Api,
         val drafts: DraftRepository,
         val uploader: ReadyUploader,
     )
 
-    /** A scanner that clears every frame; an explicit `null` means no detector. */
-    private val faceFree = object : FaceDetector {
-        override fun verdictFor(entry: GlimpseEntry): FaceVerdict = FaceVerdict.FACE_FREE
-    }
-
     private fun harness(
         metered: Boolean = false,
         network: NetworkKind = if (metered) NetworkKind.METERED else NetworkKind.UNMETERED,
-        detector: FaceDetector? = faceFree,
     ): Harness {
         val api = FakeV11Api()
         val fileSystem = FakeFileSystem()
@@ -110,35 +93,30 @@ class ReadyUploadTest {
             network = NetworkGate { network },
             drafts = drafts,
             draftId = "draft-1",
-            faceDetector = detector,
             nowMs = { 1_762_000_100_000L },
         )
         return Harness(api, drafts, uploader)
     }
 
-    private fun bytesFor(vararg ids: String): (GlimpseEntry) -> ByteArray? {
-        val map = ids.associateWith { "$it-bytes".encodeToByteArray() }
-        return { entry -> entry.jpegPath?.substringAfterLast('/')?.removeSuffix(".jpg")?.let(map::get) }
-    }
+    private fun file(id: String, content: String = "$id-bytes") = UploadFile(id, "image/jpeg", content.encodeToByteArray())
+
+    private fun sha(file: UploadFile) = sha256Hex(file.bytes)
 
     @Test
     fun noByteLeavesBeforeConsent() = runTest {
         val h = harness()
-        val outcome = h.uploader.stageWindow(listOf(entry("a"), entry("b")), bytesFor("a", "b"))
+        val outcome = h.uploader.stage(listOf(file("a"), file("b")))
         assertEquals(ReadyStageOutcome.SkippedNoConsent, outcome)
         assertTrue(h.api.uploadCreates.isEmpty())
         assertTrue(h.api.puts.isEmpty())
         assertNull(h.drafts.loadReadyStagedRecord("draft-1"))
-        assertFailsWith<EchoApiError.ConsentRequired> { h.uploader.finish("""{"ok":true}""", "key-1") }
-        assertTrue(h.api.stagedCreates.isEmpty())
     }
 
     @Test
     fun meteredNetworkBlocksUpload() = runTest {
         val h = harness(metered = true)
         h.uploader.grantConsent()
-        val outcome = h.uploader.stageWindow(listOf(entry("a")), bytesFor("a"))
-        assertEquals(ReadyStageOutcome.SkippedMetered, outcome)
+        assertEquals(ReadyStageOutcome.SkippedMetered, h.uploader.stage(listOf(file("a"))))
         assertTrue(h.api.uploadCreates.isEmpty())
         assertTrue(h.api.puts.isEmpty())
         assertNull(h.drafts.loadReadyStagedRecord("draft-1"))
@@ -148,8 +126,7 @@ class ReadyUploadTest {
     fun wifiOnlyOffUploadsOnMetered() = runTest {
         val h = harness(metered = true)
         h.uploader.grantConsent(ReadyUploadConsent(enabled = true, wifiOnly = false))
-        val outcome = h.uploader.stageWindow(listOf(entry("a")), bytesFor("a"))
-        assertEquals(ReadyStageOutcome.Staged, outcome)
+        assertEquals(ReadyStageOutcome.Staged, h.uploader.stage(listOf(file("a"))))
         assertEquals(1, h.api.uploadCreates.size)
     }
 
@@ -157,7 +134,7 @@ class ReadyUploadTest {
     fun mobileDataAllowedUploadsOnMeteredViaSettingsPolicy() = runTest {
         val h = harness(network = NetworkKind.METERED)
         h.uploader.grantConsent(ReadyUploadConsent.granted(mobileDataAllowed = true))
-        assertEquals(ReadyStageOutcome.Staged, h.uploader.stageWindow(listOf(entry("a")), bytesFor("a")))
+        assertEquals(ReadyStageOutcome.Staged, h.uploader.stage(listOf(file("a"))))
         assertEquals(1, h.api.puts.size)
     }
 
@@ -165,7 +142,7 @@ class ReadyUploadTest {
     fun mobileDataDefaultKeepsWifiOnly() = runTest {
         val h = harness(network = NetworkKind.METERED)
         h.uploader.grantConsent(ReadyUploadConsent.granted(mobileDataAllowed = false))
-        assertEquals(ReadyStageOutcome.SkippedMetered, h.uploader.stageWindow(listOf(entry("a")), bytesFor("a")))
+        assertEquals(ReadyStageOutcome.SkippedMetered, h.uploader.stage(listOf(file("a"))))
         assertTrue(h.api.uploadCreates.isEmpty())
     }
 
@@ -173,7 +150,7 @@ class ReadyUploadTest {
     fun roamingNeverUploadsEvenWithMobileData() = runTest {
         val h = harness(network = NetworkKind.ROAMING)
         h.uploader.grantConsent(ReadyUploadConsent.granted(mobileDataAllowed = true))
-        assertEquals(ReadyStageOutcome.SkippedMetered, h.uploader.stageWindow(listOf(entry("a")), bytesFor("a")))
+        assertEquals(ReadyStageOutcome.SkippedMetered, h.uploader.stage(listOf(file("a"))))
         assertTrue(h.api.uploadCreates.isEmpty())
         assertTrue(h.api.puts.isEmpty())
     }
@@ -182,7 +159,7 @@ class ReadyUploadTest {
     fun offlineNeverTouchesTheApiOrTheDraft() = runTest {
         val h = harness(network = NetworkKind.OFFLINE)
         h.uploader.grantConsent(ReadyUploadConsent.granted(mobileDataAllowed = true))
-        assertEquals(ReadyStageOutcome.SkippedOffline, h.uploader.stageWindow(listOf(entry("a")), bytesFor("a")))
+        assertEquals(ReadyStageOutcome.SkippedOffline, h.uploader.stage(listOf(file("a"))))
         assertTrue(h.api.uploadCreates.isEmpty())
         assertNull(h.drafts.loadReadyStagedRecord("draft-1"))
     }
@@ -213,121 +190,80 @@ class ReadyUploadTest {
     }
 
     @Test
-    fun windowCloseTriggersUpload() = runTest {
+    fun stagingDeclaresHashesPutsTheBytesAndRecordsTheSession() = runTest {
         val h = harness()
         h.uploader.grantConsent()
-        val outcome = h.uploader.stageWindow(listOf(entry("a"), entry("b")), bytesFor("a", "b"))
-        assertEquals(ReadyStageOutcome.Staged, outcome)
-        assertEquals(1, h.api.uploadCreates.size)
-        assertEquals(listOf("a.jpg", "b.jpg"), h.api.uploadCreates.single().map { it.name })
-        assertEquals(listOf("a.jpg", "b.jpg"), h.api.puts.map { it.id })
-        assertEquals(listOf("upload-1"), h.drafts.loadReadyStagedRecord("draft-1"))
+        val a = file("a")
+        val b = file("b")
+        assertEquals(ReadyStageOutcome.Staged, h.uploader.stage(listOf(a, b)))
+        assertEquals(listOf(UploadFileRef("a", sha(a), a.bytes.size.toLong()), UploadFileRef("b", sha(b), b.bytes.size.toLong())), h.api.uploadCreates.single())
+        assertEquals(listOf("a", "b"), h.api.puts.map { it.id })
+        val record = checkNotNull(h.drafts.loadReadyStagedRecord("draft-1"))
+        assertEquals(listOf("upload-1"), record.uploadIds)
+        assertEquals(mapOf("a" to sha(a), "b" to sha(b)), record.files)
     }
 
     @Test
-    fun privacyFilterRunsBeforeUpload() = runTest {
-        val detector = object : FaceDetector {
-            override fun verdictFor(entry: GlimpseEntry): FaceVerdict =
-                if (entry.jpegPath?.contains("faced") == true) FaceVerdict.HAS_FACE else FaceVerdict.FACE_FREE
-        }
-        val h = harness(detector = detector)
-        h.uploader.grantConsent()
-        val outcome = h.uploader.stageWindow(listOf(entry("faced"), entry("free")), bytesFor("faced", "free"))
-        assertEquals(ReadyStageOutcome.Staged, outcome)
-        assertEquals(listOf("free.jpg"), h.api.uploadCreates.single().map { it.name })
-        assertEquals(listOf("free.jpg"), h.api.puts.map { it.id })
-    }
-
-    @Test
-    fun unknownScanIsExcludedLikeAFace() = runTest {
-        val detector = object : FaceDetector {
-            override fun verdictFor(entry: GlimpseEntry): FaceVerdict = FaceVerdict.UNKNOWN
-        }
-        val h = harness(detector = detector)
-        h.uploader.grantConsent()
-        // NoOp-style detector clears nothing: the window stages nothing
-        // and, critically, PUTs nothing.
-        val outcome = h.uploader.stageWindow(listOf(entry("a")), bytesFor("a"))
-        assertEquals(ReadyStageOutcome.SkippedEmpty, outcome)
-        assertTrue(h.api.uploadCreates.isEmpty())
-        assertTrue(h.api.puts.isEmpty())
-    }
-
-    @Test
-    fun withoutADetectorNothingIsStagedUnfiltered() = runTest {
-        // The consent sheet promises face-filtered strips: no detector, no upload.
-        val h = harness(detector = null)
-        h.uploader.grantConsent()
-        val outcome = h.uploader.stageWindow(listOf(entry("a")), bytesFor("a"))
-        assertEquals(ReadyStageOutcome.SkippedNoFilter, outcome)
-        assertTrue(h.api.uploadCreates.isEmpty())
-        assertTrue(h.api.puts.isEmpty())
-        assertNull(h.drafts.loadReadyStagedRecord("draft-1"))
-    }
-
-    @Test
-    fun uploadIdIsRecordedBeforeThePutsSoACrashStillDiscards() = runTest {
+    fun theSessionIsRecordedBeforeTheFirstPutSoACrashStillDiscards() = runTest {
         val h = harness()
         h.uploader.grantConsent()
-        // The process dies (or the network drops) mid-window, after the
-        // session exists and before every PUT lands.
-        h.api.putError = EchoApiError.Network(RuntimeException("connection lost"))
-        assertFailsWith<EchoApiError.Network> {
-            h.uploader.stageWindow(listOf(entry("a")), bytesFor("a"))
-        }
-        assertEquals(listOf("upload-1"), h.drafts.loadReadyStagedRecord("draft-1"))
-
+        h.api.putError = EchoApiError.Server(500, "boom")
+        assertFailsWith<EchoApiError.Server> { h.uploader.stage(listOf(file("a"))) }
+        assertEquals(listOf("upload-1"), h.drafts.loadReadyStagedRecord("draft-1")?.uploadIds)
         h.uploader.discard()
         assertEquals(listOf("upload-1"), h.api.uploadDeletes)
-        assertNull(h.drafts.loadReadyStagedRecord("draft-1"))
     }
 
     @Test
-    fun finishCreatesJobAgainstStagedBlobsWithoutNewPuts() = runTest {
+    fun filesAlreadyStagedWithTheSameBytesAreNotSentAgainButChangedBytesAre() = runTest {
         val h = harness()
         h.uploader.grantConsent()
-        h.uploader.stageWindow(listOf(entry("a")), bytesFor("a"))
-        h.uploader.stageWindow(listOf(entry("b")), bytesFor("b"))
-        val putsBefore = h.api.puts.size
-        assertEquals(2, putsBefore)
-        val jobId = h.uploader.finish("""{"schema":1}""", "key-1")
-        assertEquals("job-1", jobId)
-        assertEquals(1, h.api.stagedCreates.size)
-        val (manifest, ids, key) = h.api.stagedCreates.single()
-        assertEquals("""{"schema":1}""", manifest)
-        assertEquals(listOf("upload-1", "upload-2"), ids)
-        assertEquals("key-1", key)
-        assertEquals(putsBefore, h.api.puts.size)
-        assertNull(h.drafts.loadReadyStagedRecord("draft-1"))
+        h.uploader.stage(listOf(file("a"), file("b")))
+        assertEquals(ReadyStageOutcome.SkippedEmpty, h.uploader.stage(listOf(file("a"), file("b"))))
+        assertEquals(1, h.api.uploadCreates.size)
+
+        assertEquals(ReadyStageOutcome.Staged, h.uploader.stage(listOf(file("a"), file("b", content = "recaptured"), file("c"))))
+        assertEquals(listOf("b", "c"), h.api.uploadCreates.last().map { it.name })
+        assertEquals(listOf("upload-1", "upload-2"), h.drafts.loadReadyStagedRecord("draft-1")?.uploadIds)
     }
 
     @Test
-    fun finishWithNothingStagedFailsClosed() = runTest {
+    fun anEmptyBatchStagesNothing() = runTest {
         val h = harness()
         h.uploader.grantConsent()
-        assertFailsWith<IllegalStateException> { h.uploader.finish("""{"schema":1}""", "key-1") }
-        assertTrue(h.api.stagedCreates.isEmpty())
+        assertEquals(ReadyStageOutcome.SkippedEmpty, h.uploader.stage(emptyList()))
+        assertTrue(h.api.uploadCreates.isEmpty())
     }
 
     @Test
-    fun discardDeletesStagedUploads() = runTest {
+    fun stagingStopsAtTheSessionCapSoFinishKeepsOneSlot() = runTest {
         val h = harness()
         h.uploader.grantConsent()
-        h.uploader.stageWindow(listOf(entry("a")), bytesFor("a"))
-        h.uploader.stageWindow(listOf(entry("b")), bytesFor("b"))
+        repeat(MAX_STAGED_SESSIONS) { i -> assertEquals(ReadyStageOutcome.Staged, h.uploader.stage(listOf(file("n$i")))) }
+        assertEquals(ReadyStageOutcome.SkippedFull, h.uploader.stage(listOf(file("late"))))
+        assertEquals(MAX_STAGED_SESSIONS, h.api.uploadCreates.size)
+        assertTrue(MAX_STAGED_SESSIONS < 12, "the worker takes 12 sessions; one is for Finish")
+    }
+
+    @Test
+    fun discardDeletesEverySessionAndClearsTheRecord() = runTest {
+        val h = harness()
+        h.uploader.grantConsent()
+        h.uploader.stage(listOf(file("a")))
+        h.uploader.stage(listOf(file("b")))
         h.uploader.discard()
         assertEquals(listOf("upload-1", "upload-2"), h.api.uploadDeletes)
         assertNull(h.drafts.loadReadyStagedRecord("draft-1"))
     }
 
     @Test
-    fun discardFailureKeepsRecord() = runTest {
+    fun aFailedDeleteKeepsTheRecordAndRethrows() = runTest {
         val h = harness()
         h.uploader.grantConsent()
-        h.uploader.stageWindow(listOf(entry("a")), bytesFor("a"))
+        h.uploader.stage(listOf(file("a")))
         h.api.deleteError = EchoApiError.Server(500, "boom")
         assertFailsWith<EchoApiError.Server> { h.uploader.discard() }
-        assertNotNull(h.drafts.loadReadyStagedRecord("draft-1"))
+        assertEquals(listOf("upload-1"), h.drafts.loadReadyStagedRecord("draft-1")?.uploadIds)
     }
 
     @Test
@@ -343,5 +279,64 @@ class ReadyUploadTest {
         assertIs<ReadyUploadConsent>(h.uploader.consent)
         assertEquals(false, h.uploader.consent.enabled)
         assertEquals(true, h.uploader.consent.wifiOnly)
+    }
+
+    @Test
+    fun finishWithNothingStagedFallsBackToTheCaller() = runTest {
+        val h = harness()
+        assertNull(createJobFromWalkStaging(h.api, h.drafts, "draft-1", "{}", listOf(file("a")), "key-1"))
+        assertTrue(h.api.stagedCreates.isEmpty())
+        assertTrue(h.api.uploadCreates.isEmpty())
+    }
+
+    @Test
+    fun finishWithEverythingStagedSendsNoByteAndCreatesTheJobFromTheSessions() = runTest {
+        val h = harness()
+        h.uploader.grantConsent()
+        h.uploader.stage(listOf(file("a"), file("b")))
+        h.uploader.stage(listOf(file("c")))
+        h.api.uploadCreates.clear()
+        h.api.puts.clear()
+
+        val jobId = createJobFromWalkStaging(h.api, h.drafts, "draft-1", """{"m":1}""", listOf(file("a"), file("b"), file("c")), "key-1")
+
+        assertEquals("job-1", jobId)
+        assertTrue(h.api.uploadCreates.isEmpty(), "nothing left to declare")
+        assertTrue(h.api.puts.isEmpty(), "no byte leaves at Finish")
+        assertEquals(Triple("""{"m":1}""", listOf("upload-1", "upload-2"), "key-1"), h.api.stagedCreates.single())
+        assertNull(h.drafts.loadReadyStagedRecord("draft-1"))
+    }
+
+    @Test
+    fun finishSendsOnlyTheRemainderInAFinalSessionListedFirst() = runTest {
+        val h = harness()
+        h.uploader.grantConsent()
+        h.uploader.stage(listOf(file("a"), file("b")))
+        h.api.uploadCreates.clear()
+        h.api.puts.clear()
+
+        // "b" was recaptured in Review since the walk; "z" closed after the last window.
+        val files = listOf(file("a"), file("b", content = "recaptured"), file("z"))
+        createJobFromWalkStaging(h.api, h.drafts, "draft-1", "{}", files, "key-1")
+
+        assertEquals(listOf("b", "z"), h.api.uploadCreates.single().map { it.name })
+        assertEquals(listOf("b", "z"), h.api.puts.map { it.id })
+        assertEquals("recaptured", h.api.puts.first { it.id == "b" }.bytes.decodeToString())
+        assertEquals(listOf("upload-2", "upload-1"), h.api.stagedCreates.single().second, "the final session wins a name conflict")
+    }
+
+    @Test
+    fun aSessionTheServerForgotClearsTheRecordSoTheCallerCanUploadEverything() = runTest {
+        val h = harness()
+        h.uploader.grantConsent()
+        h.uploader.stage(listOf(file("a")))
+        h.api.staleOnCreate = EchoApiError.UploadStale("upload_expired")
+
+        assertFailsWith<EchoApiError.UploadStale> {
+            createJobFromWalkStaging(h.api, h.drafts, "draft-1", "{}", listOf(file("a")), "key-1")
+        }
+
+        assertNull(h.drafts.loadReadyStagedRecord("draft-1"))
+        assertNull(createJobFromWalkStaging(h.api, h.drafts, "draft-1", "{}", listOf(file("a")), "key-1"))
     }
 }

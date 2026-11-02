@@ -13,6 +13,7 @@ import app.simt.echo.model.TurnDir
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
@@ -224,6 +225,26 @@ class LedgerKeyframesTest {
         assertEquals(1, media.requested.size, "only the unreadable slot seeks video")
         assertEquals("ledger16.0", drafts.readDraftFile("d1", "kf/n1_0.jpg")?.decodeToString())
         assertTrue((drafts.readDraftFile("d1", "kf/n1_1.jpg")?.decodeToString() ?: "").startsWith("video"))
+    }
+
+    @Test
+    fun theLedgerOnlyFillTouchesNeitherVideoNorStartPhotoAndLeavesUnfillableSlotsMissing() {
+        val fs = FakeFileSystem()
+        val drafts = DraftRepository(FileStore(fs, "/data".toPath()))
+        // A thin ledger: only the 16 m and 19 m frames of n1 exist; nothing near n2.
+        val thin = listOf(entry(16.0), entry(19.0), entry(0.5, score = 7.0))
+        seedLedger(drafts, thin)
+        drafts.writeDraftFile("d1", "video.mp4", "half-written".encodeToByteArray())
+        drafts.writeDraftFile("d1", "kf/n1_1.jpg", "reviewed".encodeToByteArray())
+
+        fillKeyframesFromLedger(drafts, "d1", route().nodes, thin)
+
+        assertEquals("ledger16.0", drafts.readDraftFile("d1", "kf/n1_0.jpg")?.decodeToString())
+        assertEquals("reviewed", drafts.readDraftFile("d1", "kf/n1_1.jpg")?.decodeToString(), "an existing slot is never overwritten")
+        assertFalse(drafts.draftFileExists("d1", "kf/n1_2.jpg"), "the ledger has no third frame, and the fill never falls back to video")
+        assertFalse(drafts.draftFileExists("d1", "kf/n2_0.jpg"))
+        assertFalse(drafts.draftFileExists("d1", "start.jpg"), "START is the start photo's business, not a keyframe slot")
+        assertEquals("half-written", drafts.readDraftFile("d1", "video.mp4")?.decodeToString())
     }
 
     @Test

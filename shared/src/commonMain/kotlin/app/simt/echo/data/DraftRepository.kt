@@ -132,10 +132,10 @@ class DraftRepository(private val store: FileStore) {
         store.writeText("$DRAFTS_DIR/$draftId/$READY_UPLOAD_FILE", EchoJson.encodeToString(record))
     }
 
-    /** Staged walk-upload session ids, or null when none were staged, consumed, or corrupt. */
-    fun loadReadyStagedRecord(draftId: String): List<String>? {
+    /** The staged walk-upload record, or null when none was staged, it was consumed, or it is corrupt. */
+    fun loadReadyStagedRecord(draftId: String): ReadyStagedRecord? {
         val text = store.readText("$DRAFTS_DIR/$draftId/$READY_UPLOAD_FILE") ?: return null
-        return runCatching { EchoJson.decodeFromString<ReadyStagedRecord>(text).uploadIds }.getOrNull()
+        return runCatching { EchoJson.decodeFromString<ReadyStagedRecord>(text) }.getOrNull()
     }
 
     /** Clears the staged-session record (job created, discard done). */
