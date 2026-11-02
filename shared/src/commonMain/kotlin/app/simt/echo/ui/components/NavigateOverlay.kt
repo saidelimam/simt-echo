@@ -103,6 +103,33 @@ fun CameraNavigateOverlay(
     preview: @Composable () -> Unit,
     actions: @Composable () -> Unit,
     modifier: Modifier = Modifier,
+    /** W13-08 instrument slots: defaults preserve the W5-02 HUD. */
+    arrow: @Composable () -> Unit = {
+        DirectionArrow(
+            angleRad = arrowRad,
+            color = Color(0xFFC6F432).copy(alpha = 0.92f),
+        )
+    },
+    distance: @Composable () -> Unit = {
+        DistanceReadout(text = distanceText, color = Color.White)
+    },
+    landmarkCard: @Composable () -> Unit = {
+        DefaultOverlayLandmarkCard(
+            landmarkTitle = landmarkTitle,
+            landmarkCue = landmarkCue,
+            landmarkStats = landmarkStats,
+            cropBytes = cropBytes,
+            cropDescription = cropDescription,
+            maskSvgPath = maskSvgPath,
+            maskW = maskW,
+            maskH = maskH,
+            box = maskBox,
+            frameW = maskFrameW,
+            frameH = maskFrameH,
+        )
+    },
+    /** Below the distance: fingerprint chip + relock ring (W13-08). */
+    belowDistance: @Composable () -> Unit = {},
 ) {
     Box(modifier = modifier.fillMaxSize()) {
         preview()
@@ -122,40 +149,64 @@ fun CameraNavigateOverlay(
                 if (offline) StatusChip(text = "Offline ✓")
                 StatusChip(text = uncertaintyText)
             }
-            DirectionArrow(
-                angleRad = arrowRad,
-                color = Color(0xFFC6F432).copy(alpha = 0.92f),
-            )
+            arrow()
             // Light text over a dark scrim in BOTH schemes: the scrim is
             // black, so scheme text colours (near-black in light theme)
             // would vanish (review 0004 R4).
             Text(text = instruction, style = MaterialTheme.typography.titleLarge, color = Color.White)
-            DistanceReadout(text = distanceText, color = Color.White)
-            if (landmarkTitle != null && landmarkCue != null) {
-                if (shouldShowLandmarkCrop(cropBytes)) {
-                    MaskedCropImage(
-                        bytes = cropBytes,
-                        contentDescription = cropDescription,
-                        maskSvgPath = maskSvgPath,
-                        maskW = maskW,
-                        maskH = maskH,
-                        box = maskBox,
-                        frameW = maskFrameW,
-                        frameH = maskFrameH,
-                    )
-                }
-                LandmarkCard(
-                    title = landmarkTitle,
-                    cue = landmarkCue,
-                    stats = landmarkStats,
-                )
-            }
+            distance()
+            belowDistance()
+            landmarkCard()
             LinearProgressIndicator(
                 progress = { progress01 },
                 modifier = Modifier.fillMaxWidth(),
             )
             Text(text = legText, style = MaterialTheme.typography.bodyMedium, color = Color.White)
             actions()
+        }
+    }
+}
+
+/**
+ * Standard masked landmark card shared by the overlay default slot and
+ * both W13-08 Navigate bodies: persisted SAM mask over the crop, else
+ * the plain crop, plus the landmark copy. Renders nothing without a
+ * title and cue.
+ */
+@Composable
+fun DefaultOverlayLandmarkCard(
+    landmarkTitle: String?,
+    landmarkCue: String?,
+    landmarkStats: String?,
+    cropBytes: ByteArray?,
+    cropDescription: String?,
+    maskSvgPath: String?,
+    maskW: Int?,
+    maskH: Int?,
+    box: List<Int>?,
+    frameW: Int?,
+    frameH: Int?,
+    modifier: Modifier = Modifier,
+) {
+    if (landmarkTitle != null && landmarkCue != null) {
+        Column(modifier = modifier) {
+            if (shouldShowLandmarkCrop(cropBytes)) {
+                MaskedCropImage(
+                    bytes = cropBytes,
+                    contentDescription = cropDescription,
+                    maskSvgPath = maskSvgPath,
+                    maskW = maskW,
+                    maskH = maskH,
+                    box = box,
+                    frameW = frameW,
+                    frameH = frameH,
+                )
+            }
+            LandmarkCard(
+                title = landmarkTitle,
+                cue = landmarkCue,
+                stats = landmarkStats,
+            )
         }
     }
 }
