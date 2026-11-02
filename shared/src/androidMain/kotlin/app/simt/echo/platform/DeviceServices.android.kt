@@ -8,6 +8,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.view.WindowManager
+import android.view.accessibility.AccessibilityManager
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -77,7 +78,27 @@ actual fun rememberHaptics(): Haptics {
     }
 }
 
-/** Waveforms from plan §8.4 (exact timings). */
+/**
+ * TalkBack-aware mute hook for the [EarconGate] (plan W13-09): true while a
+ * screen reader is likely speaking over our output — touch exploration or
+ * any enabled accessibility service. The earcon player passes this as the
+ * gate's `talkBackSpeaking` input so earcons never play over speech.
+ */
+fun Context.isScreenReaderActive(): Boolean {
+    val manager = runCatching {
+        getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager
+    }.getOrNull() ?: return false
+    return manager.isTouchExplorationEnabled ||
+        manager.getEnabledAccessibilityServiceList(
+            android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_SPOKEN,
+        ).isNotEmpty()
+}
+
+/**
+ * Phone vibrator (plan W13-09): freeze §7 primitive compositions via
+ * `VibrationEffect.Composition` when every required primitive is supported
+ * (API 31+), the V2 §8.4 waveform fallback from [HapticCueMap] otherwise.
+ */
 private class AndroidHaptics(context: Context) : Haptics {
 
     private val vibrator: Vibrator? =
@@ -92,16 +113,33 @@ private class AndroidHaptics(context: Context) : Haptics {
     override fun play(pattern: HapticPattern) {
         val device = vibrator ?: return
         if (!device.hasVibrator()) return
-        device.vibrate(VibrationEffect.createWaveform(timings(pattern), -1))
+        val useComposition = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            runCatching {
+                device.areAllPrimitivesSupported(*primitiveIds(pattern))
+            }.getOrDefault(false)
+        when (val effect = HapticCueMap.effectFor(pattern, useComposition)) {
+            is HapticEffect.Composition -> device.vibrate(compose(effect))
+            is HapticEffect.Waveform -> device.vibrate(VibrationEffect.createWaveform(effect.timings, -1))
+        }
     }
 
-    private fun timings(pattern: HapticPattern): LongArray = when (pattern) {
-        HapticPattern.TICK -> longArrayOf(0, 30)
-        HapticPattern.CONFIRM -> longArrayOf(0, 40, 80, 40)
-        HapticPattern.LEFT -> longArrayOf(0, 60, 120, 60)
-        HapticPattern.RIGHT -> longArrayOf(0, 60, 120, 60, 120, 60)
-        HapticPattern.U_TURN -> longArrayOf(0, 300, 150, 300)
-        HapticPattern.WARN -> longArrayOf(0, 400)
-        HapticPattern.ARRIVE -> longArrayOf(0, 200, 120, 60, 120, 200)
+    private fun primitiveIds(pattern: HapticPattern): IntArray =
+        HapticCueMap.requiredPrimitives(pattern).map { primitiveId(it) }.toIntArray()
+
+    private fun primitiveId(primitive: HapticPrimitive): Int = when (primitive) {
+        HapticPrimitive.TICK -> VibrationEffect.Composition.PRIMITIVE_TICK
+        HapticPrimitive.CLICK -> VibrationEffect.Composition.PRIMITIVE_CLICK
+        HapticPrimitive.QUICK_RISE -> VibrationEffect.Composition.PRIMITIVE_QUICK_RISE
+        HapticPrimitive.SLOW_RISE -> VibrationEffect.Composition.PRIMITIVE_SLOW_RISE
+        HapticPrimitive.THUD -> VibrationEffect.Composition.PRIMITIVE_THUD
+        HapticPrimitive.SPIN -> VibrationEffect.Composition.PRIMITIVE_SPIN
+    }
+
+    private fun compose(effect: HapticEffect.Composition): VibrationEffect {
+        val composition = VibrationEffect.startComposition()
+        for (step in effect.steps) {
+            composition.addPrimitive(primitiveId(step.primitive), step.scale, step.delayMs.toInt())
+        }
+        return composition.compose()
     }
 }
