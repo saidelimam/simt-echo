@@ -5,14 +5,19 @@ import androidx.lifecycle.viewModelScope
 import app.simt.echo.capture.CaptureHud
 import app.simt.echo.capture.CaptureSession
 import app.simt.echo.capture.CaptureState
+import app.simt.echo.transfer.WalkStagerFactory
 import app.simt.echo.ui.copy.recordCameraErrorCopy
 import app.simt.echo.ui.copy.recordResumeErrorCopy
 import app.simt.echo.ui.copy.recordSaveErrorCopy
 import app.simt.echo.ui.copy.recordStartErrorCopy
 import app.simt.echo.ui.copy.recordStopErrorCopy
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -53,9 +58,16 @@ class RecordViewModel(
     private val session: CaptureSession,
     /** Settings "mobile data" switch (W11-09): shapes the opt-in copy only; the uploader's policy comes from [app.simt.echo.AppGraph.readyUploadConsent]. */
     mobileDataAllowed: Boolean = false,
+    /**
+     * Builds the walk-time stager (W11-09) once recording has started with the
+     * user's consent; null from it, or this default, means no upload while walking.
+     */
+    private val walkStagers: WalkStagerFactory = WalkStagerFactory { _, _, _ -> null },
 ) : ViewModel() {
 
     private val error = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+
+    private var walkJob: Job? = null
 
     val uiState: StateFlow<RecordUiState> =
         combine(session.state, session.hud, error) { state, hud, err ->
@@ -88,6 +100,22 @@ class RecordViewModel(
         viewModelScope.launch {
             runCatching { session.start() }
                 .onFailure { error.value = recordStartErrorCopy() }
+                .onSuccess { startWalkStaging() }
+        }
+    }
+
+    /**
+     * Upload while walking (W11-09): only when the user opted in and accepted
+     * the consent sheet, and only once the draft exists. The stager is best
+     * effort and swallows its own failures, so it never reaches [error].
+     */
+    private fun startWalkStaging() {
+        val state = _readyOptIn.value
+        if (!state.optIn || !state.consented) return
+        val draftId = session.activeDraftId ?: return
+        val stager = walkStagers.create(draftId, session::liveLog, session::liveLedger) ?: return
+        walkJob = viewModelScope.launch {
+            stager.run(session.hud.map { it.distanceM }.distinctUntilChanged())
         }
     }
 
@@ -132,6 +160,9 @@ class RecordViewModel(
     /** Long-press Finish: stop recording, show the finish form. */
     fun beginFinish() {
         viewModelScope.launch {
+            // An in-flight batch is abandoned, not awaited: its session is
+            // recorded, and Finish sends whatever it had not claimed.
+            walkJob?.cancelAndJoin()
             runCatching { session.beginFinish() }
                 .onFailure { error.value = recordStopErrorCopy() }
         }

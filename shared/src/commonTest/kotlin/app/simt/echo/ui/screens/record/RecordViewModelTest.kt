@@ -2,15 +2,31 @@ package app.simt.echo.ui.screens.record
 
 import app.simt.echo.capture.CaptureSession
 import app.simt.echo.capture.CaptureState
+import app.simt.echo.capture.FaceDetector
+import app.simt.echo.capture.FaceVerdict
+import app.simt.echo.capture.GlimpseEntry
 import app.simt.echo.data.DraftRepository
 import app.simt.echo.data.FileStore
+import app.simt.echo.model.CaptureLog
+import app.simt.echo.model.CaptureSample
+import app.simt.echo.model.EchoConfig
+import app.simt.echo.model.Mark
 import app.simt.echo.platform.CameraRecorder
 import app.simt.echo.platform.HapticPattern
 import app.simt.echo.platform.Haptics
 import app.simt.echo.platform.MotionSource
 import app.simt.echo.platform.MotionUpdate
+import app.simt.echo.transfer.FakeStripMedia
+import app.simt.echo.transfer.FakeV11Api
+import app.simt.echo.transfer.NetworkGate
+import app.simt.echo.transfer.NetworkKind
+import app.simt.echo.transfer.ReadyUploader
+import app.simt.echo.transfer.UploadPreparer
+import app.simt.echo.transfer.WalkStager
+import app.simt.echo.transfer.WalkStagerFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -71,7 +87,54 @@ class RecordViewModelTest {
         override fun play(pattern: HapticPattern) = Unit
     }
 
-    private fun viewModel(scope: CoroutineScope, mobileDataAllowed: Boolean = false): Pair<RecordViewModel, CaptureSession> {
+    /**
+     * A real stager over fakes. Its live log already holds a closed checkpoint, so
+     * the first pass parks in the SAM probe, which records whether it was cancelled.
+     */
+    private class StagerProbe {
+        private val fileSystem = FakeFileSystem()
+        private val drafts = DraftRepository(FileStore(fileSystem, "/data".toPath()))
+        val builtFor = mutableListOf<String>()
+        var parked = false
+        var cancelled = false
+
+        val factory = WalkStagerFactory { draftId, _, _ ->
+            builtFor += draftId
+            WalkStager(
+                cfg = EchoConfig(),
+                drafts = drafts,
+                draftId = draftId,
+                preparer = UploadPreparer(drafts, FakeStripMedia(fileSystem), draftId, FACE_FREE, Dispatchers.Unconfined) { 0L },
+                uploader = ReadyUploader(FakeV11Api(), NetworkGate { NetworkKind.UNMETERED }, drafts, draftId) { 0L },
+                samEnabled = {
+                    parked = true
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        cancelled = true
+                    }
+                },
+                liveLog = { WALKED },
+                liveLedger = { emptyList() },
+            )
+        }
+
+        private companion object {
+            /** Straight for 20 m with a mark at 5 m: that checkpoint has long been final. */
+            val WALKED = CaptureLog(
+                draftId = "draft-1", startedAtEpochMs = 0L, motionSource = "echo_builtin_pdr", videoStartNs = 0L,
+                samples = (0..40).map { CaptureSample(tNs = it * 1_000_000_000L, d = it * 0.5, yaw = 0.0) },
+                marks = listOf(Mark(tNs = 0L, d = 5.0, label = "Spot")),
+                startPhoto = "start.jpg",
+            )
+
+            val FACE_FREE = object : FaceDetector {
+                override fun verdictFor(entry: GlimpseEntry): FaceVerdict = FaceVerdict.FACE_FREE
+            }
+        }
+    }
+
+    private fun viewModel(scope: CoroutineScope, mobileDataAllowed: Boolean = false, probe: StagerProbe? = null): Pair<RecordViewModel, CaptureSession> {
         val drafts = DraftRepository(FileStore(FakeFileSystem(), "/data".toPath()))
         val session = CaptureSession(
             motion = FakeMotion(),
@@ -84,7 +147,7 @@ class RecordViewModelTest {
             nowMs = { 1_762_000_000_000L },
             newDraftId = { "draft-1" },
         )
-        return RecordViewModel(session, mobileDataAllowed) to session
+        return RecordViewModel(session, mobileDataAllowed, probe?.factory ?: WalkStagerFactory { _, _, _ -> null }) to session
     }
 
     @Test
@@ -179,5 +242,53 @@ class RecordViewModelTest {
         assertEquals(CaptureState.RECORDING, session.state.value)
         session.beginFinish()
         runCurrent()
+    }
+
+    @Test
+    fun consentedOptInStagesWhileRecordingAndStopsAtFinish() = runTest {
+        val probe = StagerProbe()
+        val (vm, session) = viewModel(this, probe = probe)
+        vm.prepare(null)
+        runCurrent()
+        vm.setReadyOptIn(true)
+        vm.requestStart()
+        runCurrent()
+        vm.grantReadyConsent()
+        runCurrent()
+        assertEquals(listOf("draft-1"), probe.builtFor)
+        assertTrue(probe.parked, "the stager started its first pass")
+        assertFalse(probe.cancelled)
+
+        vm.beginFinish()
+        runCurrent()
+        assertTrue(probe.cancelled, "Finish stops the stager before it stops the recording")
+        assertEquals(CaptureState.FINISHING, session.state.value)
+    }
+
+    @Test
+    fun noStagerWithoutOptInOrWithoutConsent() = runTest {
+        val probe = StagerProbe()
+        val (plain, plainSession) = viewModel(this, probe = probe)
+        plain.prepare(null)
+        runCurrent()
+        plain.requestStart()
+        runCurrent()
+        assertEquals(CaptureState.RECORDING, plainSession.state.value)
+        plainSession.beginFinish()
+        runCurrent()
+
+        val (declined, declinedSession) = viewModel(this, probe = probe)
+        declined.prepare(null)
+        runCurrent()
+        declined.setReadyOptIn(true)
+        declined.requestStart()
+        runCurrent()
+        declined.declineReadyConsent()
+        runCurrent()
+        assertEquals(CaptureState.RECORDING, declinedSession.state.value)
+        declinedSession.beginFinish()
+        runCurrent()
+
+        assertTrue(probe.builtFor.isEmpty(), "no stager is even built: ${probe.builtFor}")
     }
 }

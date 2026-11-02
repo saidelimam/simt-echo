@@ -118,11 +118,13 @@ fun EchoNavHost(
         echoDestination<EchoRoute.Record> { entry ->
             val route = entry.toRoute<EchoRoute.Record>()
             LaunchedEffect(route) { currentRoute = route }
+            val mediaTools = rememberMediaTools()
             RecordScreen(
                 drafts = graph.draftRepository,
                 onSaved = { draftId -> navController.navigateTo(reviewAfterRecord(draftId)) },
                 config = graph.configRepository.get(),
                 resumeDraftId = route.resumeDraftId,
+                walkStagers = { draftId, liveLog, liveLedger -> graph.walkStager(draftId, mediaTools, liveLog, liveLedger) },
             )
         }
         echoDestination<EchoRoute.Review> { entry ->

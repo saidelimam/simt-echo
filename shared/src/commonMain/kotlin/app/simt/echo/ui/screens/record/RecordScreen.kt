@@ -49,6 +49,7 @@ import app.simt.echo.platform.currentEpochMs
 import app.simt.echo.platform.rememberCameraRecorder
 import app.simt.echo.platform.rememberHaptics
 import app.simt.echo.platform.rememberMotionSource
+import app.simt.echo.transfer.WalkStagerFactory
 import app.simt.echo.ui.components.CosmosBanner
 import app.simt.echo.ui.components.CosmosBannerKind
 import app.simt.echo.ui.components.CosmosRecordButton
@@ -90,6 +91,8 @@ fun RecordScreen(
     modifier: Modifier = Modifier,
     config: EchoConfig = EchoConfig(),
     resumeDraftId: String? = null,
+    /** Upload while walking (W11-09); null builds a screen that stages nothing. */
+    walkStagers: WalkStagerFactory = WalkStagerFactory { _, _, _ -> null },
 ) {
     val motion = rememberMotionSource()
     // Record graph: Preview + Video + Analysis (plan W10-03); the bind
@@ -115,7 +118,7 @@ fun RecordScreen(
         key = resumeDraftId ?: "new",
         factory = viewModelFactory {
             addInitializer(RecordViewModel::class) {
-                RecordViewModel(session, mobileDataAllowed = config.readyUploadMobileData)
+                RecordViewModel(session, mobileDataAllowed = config.readyUploadMobileData, walkStagers = walkStagers)
             }
         },
     )

@@ -2,13 +2,16 @@ package app.simt.echo
 
 import app.simt.echo.capture.FaceDetector
 import app.simt.echo.capture.FaceScanner
+import app.simt.echo.capture.GlimpseEntry
 import app.simt.echo.capture.ScanningFaceDetector
 import app.simt.echo.data.ConfigRepository
 import app.simt.echo.data.DraftRepository
 import app.simt.echo.data.FileStore
 import app.simt.echo.data.RouteRepository
-import app.simt.echo.media.readLedgerJpeg
 import app.simt.echo.data.TrialRepository
+import app.simt.echo.media.MediaTools
+import app.simt.echo.media.readLedgerJpeg
+import app.simt.echo.model.CaptureLog
 import app.simt.echo.platform.LiveUpdateDirector
 import app.simt.echo.platform.LiveUpdateSink
 import app.simt.echo.platform.PeerTransport
@@ -17,13 +20,18 @@ import app.simt.echo.platform.createHttpClient
 import app.simt.echo.platform.createPeerTransport
 import app.simt.echo.platform.createPlatform
 import app.simt.echo.platform.currentEpochMs
+import app.simt.echo.platform.platformIoDispatcher
 import app.simt.echo.transfer.EchoApiClient
 import app.simt.echo.transfer.KtorRelayClient
 import app.simt.echo.transfer.NetworkGate
 import app.simt.echo.transfer.OfflineNetworkGate
 import app.simt.echo.transfer.ReadyUploadConsent
+import app.simt.echo.transfer.ReadyUploader
 import app.simt.echo.transfer.RelayClient
 import app.simt.echo.transfer.TransferService
+import app.simt.echo.transfer.UploadPreparer
+import app.simt.echo.transfer.V11CloudApi
+import app.simt.echo.transfer.WalkStager
 import okio.FileSystem
 import okio.Path.Companion.toPath
 
@@ -102,6 +110,35 @@ class AppGraph(
      */
     fun readyUploadConsent(): ReadyUploadConsent =
         ReadyUploadConsent.granted(mobileDataAllowed = configRepository.get().readyUploadMobileData)
+
+    /**
+     * The walk-time stager for [draftId] (W11-09), granted the consent the
+     * Record sheet just collected, or null when this graph cannot stage
+     * honestly: no cloud credentials, or no face filter (the consent copy
+     * promises face-filtered strips, so an unfiltered stager is never built).
+     */
+    fun walkStager(
+        draftId: String,
+        media: MediaTools,
+        liveLog: () -> CaptureLog?,
+        liveLedger: () -> List<GlimpseEntry>,
+        api: V11CloudApi = apiClient,
+    ): WalkStager? {
+        if (!cloudAiConfigured) return null
+        val detector = faceDetectorFor(draftId) ?: return null
+        val uploader = ReadyUploader(api, networkGate, draftRepository, draftId) { currentEpochMs() }
+        uploader.grantConsent(readyUploadConsent())
+        return WalkStager(
+            cfg = configRepository.get(),
+            drafts = draftRepository,
+            draftId = draftId,
+            preparer = UploadPreparer(draftRepository, media, draftId, detector, platformIoDispatcher) { currentEpochMs() },
+            uploader = uploader,
+            samEnabled = { runCatching { api.samEnabled() }.getOrDefault(false) },
+            liveLog = liveLog,
+            liveLedger = liveLedger,
+        )
+    }
 
     /** Live Updates director (W13-10), or null when no sink was provided. */
     val liveUpdates: LiveUpdateDirector? by lazy {
