@@ -548,4 +548,87 @@ class ReviewViewModelTest {
         advanceUntilIdle()
         assertEquals("arch", vm.ui.value.nodes[1].node.label)
     }
+
+    @Test
+    fun filmStripScrubMovesSharedSelection() = runTest(dispatcher) {
+        val h = harness()
+        val vm = h.vm()
+        advanceUntilIdle()
+
+        // Default selects the first frame by distance (the start, 0 m).
+        assertEquals("n0", vm.ui.value.selectedNodeId)
+
+        vm.scrubTo("n2")
+        assertEquals("n2", vm.ui.value.selectedNodeId)
+        // A stale strip cell never blanks the timeline.
+        vm.scrubTo("nope")
+        assertEquals("n2", vm.ui.value.selectedNodeId)
+    }
+
+    @Test
+    fun nudgeJumpTargetsNearestNode() = runTest(dispatcher) {
+        val h = harness()
+        val vm = h.vm()
+        advanceUntilIdle()
+
+        vm.jumpToNudge("Add a landmark near 23 m")
+        assertEquals("n1", vm.ui.value.selectedNodeId)
+        // Unparseable nudges keep the selection.
+        vm.jumpToNudge("hello")
+        assertEquals("n1", vm.ui.value.selectedNodeId)
+    }
+
+    @Test
+    fun healthHeaderScoresCurrentDraft() = runTest(dispatcher) {
+        val h = harness()
+        val vm = h.vm()
+        advanceUntilIdle()
+
+        assertEquals(app.simt.echo.nav.routeHealth(draftRoute()), vm.ui.value.health)
+    }
+
+    @Test
+    fun partialCheckpointInsertsCardWithoutMovingGeometry() = runTest(dispatcher) {
+        val h = harness()
+        val vm = h.vm()
+        advanceUntilIdle()
+        val before = h.drafts.loadDraftRoute("draft-1")!!
+
+        vm.onCheckpointEvent("n1", "[${candidateJson(0.9)}]")
+
+        val ui = vm.ui.value
+        assertEquals(1, ui.suggestions.getValue("n1").size)
+        assertEquals("Red pillar", ui.suggestions.getValue("n1")[0].title)
+        assertEquals(0, ui.suggestionIndex.getValue("n1"))
+        // AI arrivals never write the draft: geometry identical, no crops.
+        assertEquals(before, h.drafts.loadDraftRoute("draft-1"))
+        assertTrue(h.media.cropped.isEmpty())
+    }
+
+    @Test
+    fun partialCheckpointArrivalsAreNullSafe() = runTest(dispatcher) {
+        val h = harness()
+        val vm = h.vm()
+        advanceUntilIdle()
+
+        vm.onCheckpointEvent("n1", null)
+        vm.onCheckpointEvent("n1", "garbage {{{")
+        vm.onCheckpointEvent("n1", "[]")
+        vm.onCheckpointEvent("n99", "[${candidateJson(0.9)}]")
+        assertTrue(vm.ui.value.suggestions.isEmpty())
+    }
+
+    @Test
+    fun inspectorOpensAndCloses() = runTest(dispatcher) {
+        val h = harness()
+        val vm = h.vm()
+        advanceUntilIdle()
+
+        vm.openInspector("n1")
+        assertEquals("n1", vm.ui.value.inspectorNodeId)
+        vm.openInspector("nope")
+        assertEquals("n1", vm.ui.value.inspectorNodeId)
+        vm.closeInspector()
+        assertNull(vm.ui.value.inspectorNodeId)
+    }
 }

@@ -44,6 +44,17 @@ fun ReviewScreen(
 ) {
     val ui by viewModel.ui.collectAsState()
     val drawNode = ui.nodes.firstOrNull { it.node.id == ui.drawNodeId }
+    val inspectorNode = ui.nodes.firstOrNull { it.node.id == ui.inspectorNodeId }
+    if (inspectorNode != null) {
+        KeyframeInspector(
+            nodeId = inspectorNode.node.id,
+            title = inspectorNode.node.label.ifEmpty { "Frame at ${inspectorNode.node.atDistanceM} m" },
+            heroBytes = inspectorNode.heroBytes,
+            onClose = viewModel::closeInspector,
+            modifier = modifier,
+        )
+        return
+    }
     if (drawNode != null) {
         DrawOverlay(
             nodeLabel = drawNode.node.label.ifEmpty { "this point" },
@@ -79,11 +90,26 @@ fun ReviewScreen(
             return@Column
         }
         Text(text = ui.routeName.ifEmpty { UNTITLED_WALK }, style = MaterialTheme.typography.titleLarge)
+        ui.health?.let { health ->
+            RouteHealthHeader(health = health, onNudge = viewModel::jumpToNudge)
+        }
         // Walk-forward is drawn up: path y grows forward, screen y grows down.
+        // The strip, the minimap cursor and the timeline share one
+        // selection: scrubbing the strip moves the cursor and the cards.
+        val frames = filmStripFrames(ui.nodes)
+        val selectedDistance = ui.nodes.firstOrNull { it.node.id == ui.selectedNodeId }
+            ?.node?.atDistanceM ?: 0.0
         ReviewInstrumentMap(
             points = ui.path.map { Offset(it.x.toFloat(), -it.y.toFloat()) },
-            highlightIndex = 0,
+            highlightIndex = pathIndexForDistance(ui.path, selectedDistance),
             modifier = Modifier.fillMaxWidth(),
+        )
+        FilmStrip(
+            frames = frames,
+            heroes = ui.nodes.associate { it.node.id to it.heroBytes },
+            selectedNodeId = ui.selectedNodeId,
+            onScrub = viewModel::scrubTo,
+            onInspect = viewModel::openInspector,
         )
         val startNode = ui.nodes.firstOrNull { it.node.type == NodeType.START }
         if (startNode != null) {
@@ -110,6 +136,7 @@ fun ReviewScreen(
                 onUseSuggestion = { viewModel.useSuggestion(reviewNode.node.id) },
                 onNextSuggestion = { viewModel.nextSuggestion(reviewNode.node.id) },
                 onSkipSuggestions = { viewModel.skipSuggestions(reviewNode.node.id) },
+                selected = reviewNode.node.id == ui.selectedNodeId,
             )
         }
         ui.aiModels?.let {
