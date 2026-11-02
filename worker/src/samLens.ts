@@ -1,0 +1,576 @@
+// Worker SAM Lens (plan §10 W11-06, closes G6–G9; T with S review).
+//
+// Per checkpoint, in node-priority order (DESTINATION > TURN >
+// LEVEL_CHANGE > CHECKPOINT):
+//   1. Drop candidates whose keyframe fails the W11-04 quality/face flags —
+//      zero SAM spend, AI_BOX_ONLY (stable output shape, same treatment as
+//      a governor refusal).
+//   2. SAM image on the hero frame for the top-2 survivors (1 frame each),
+//      one Workflow step `ground:<nodeId>:<phraseHash>` per call, so a retry
+//      re-bills one call — and the content-hash cache makes the re-bill zero
+//      frames when the first attempt already fetched.
+//   3. SAM video on the staged clip only for the top candidate at
+//      TURN/DESTINATION, or when image confidence is in [0.5, 0.85)
+//      (step `ground:<nodeId>:<phraseHash>:video`).
+// The budget governor reserves every estimate before any call is sent and
+// never exceeds `budget.maxSamFrames`; `usage.samFramesBilled` sums only
+// vendor-reported `response.completed` frames and `budgetExhausted` records
+// a refusal. W10-06 checkpoint + usage events are emitted per checkpoint.
+//
+// Single-phrase-per-call: the W11-07 multi-phrase probe
+// (docs/measurements.md "SAM live probe" row 1) is TBD — no META_API_KEY
+// in this environment, $0 spent — so MULTI_PHRASE stays default off and
+// every phrase gets its own call (see [phrasesPerCall]).
+
+import { NonRetryableError } from "cloudflare:workflows";
+import type { Env } from "./index";
+import { emitJobEvent, newEventId } from "./jobs";
+import { metaResponsesDetailed } from "./meta";
+import { parseSam } from "./samParse";
+import { boxOnly, boxOnlyOne, toGrounded } from "./groundCommon";
+import {
+  JobResultSchema,
+  type Candidate,
+  type Checkpoint,
+  type JobResult,
+  type Manifest,
+} from "./types";
+import type { ScoutCandidate, ScoutResult } from "./scout";
+import { heroIndex } from "./selection";
+
+/** One Workflow step per SAM call: the unit of retry (plan §10 W11-06).
+ * Steps only wrap SAM calls (side effects into preallocated maps), so the
+ * callback returns void — never pipeline data across the step boundary. */
+export type StepRunner = (name: string, fn: () => Promise<void>) => Promise<void>;
+
+/** Direct execution (tests, non-Workflow callers): steps run inline. */
+export const inlineRunner: StepRunner = (_name, fn) => fn();
+
+/** Test/threading knobs for the Meta transport bounds (defaults: 60 s/20 s). */
+export interface LensOptions {
+  samTimeoutMs?: number;
+  samIdleMs?: number;
+}
+
+/** Bounded concurrency for SAM calls (plan §10 W11-06 item 5). */
+export const LENS_CONCURRENCY = 4;
+
+const SAM_MODEL = "sam-3.1";
+const SAM_METADATA = { include_confidence: "true", mask_encoding: "one_bit" } as const;
+const IMAGE_PARAMS = JSON.stringify({ kind: "image", model: SAM_MODEL, metadata: SAM_METADATA });
+const VIDEO_PARAMS = JSON.stringify({ kind: "video", model: SAM_MODEL, metadata: SAM_METADATA });
+
+// nodejs_compat provides Buffer in workerd; Node provides it in vitest.
+// A structural type keeps this precise without pulling in @types/node.
+const nodeBuffer = (
+  globalThis as unknown as {
+    Buffer: { from(b: Uint8Array): { toString(e: "base64"): string } };
+  }
+).Buffer;
+
+function toBase64(bytes: Uint8Array): string {
+  return nodeBuffer.from(bytes).toString("base64");
+}
+
+async function hexSha256(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", bytes as unknown as ArrayBuffer);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Step-name hash: first 12 hex of sha256(samPhrase), deterministic. */
+export async function phraseHash(phrase: string): Promise<string> {
+  return (await hexSha256(new TextEncoder().encode(phrase))).slice(0, 12);
+}
+
+export function imageStepName(nodeId: string, hash: string): string {
+  return `ground:${nodeId}:${hash}`;
+}
+
+export function videoStepName(nodeId: string, hash: string): string {
+  return `ground:${nodeId}:${hash}:video`;
+}
+
+/**
+ * Phrases per video call. Always 1: the W11-07 probe row 1
+ * (docs/measurements.md "Multi-phrase in one call?") is TBD, so batching
+ * stays off even when MULTI_PHRASE=on. When the probe says yes, return >1
+ * here and attribute per-phrase output at the video call site.
+ */
+function phrasesPerCall(env: Env): number {
+  void (env.MULTI_PHRASE ?? "off");
+  return 1;
+}
+
+/** Node priority for governor reservation (plan §10 W11-06 item 4). */
+function priorityOf(cp: Checkpoint): number {
+  switch (cp.type) {
+    case "DESTINATION":
+      return 0;
+    case "TURN":
+      return 1;
+    case "LEVEL_CHANGE":
+      return 2;
+    case "CHECKPOINT":
+      return 3;
+  }
+}
+
+/**
+ * Spend guard (S-review-grade: enforced before any call). Estimates are
+ * reserved synchronously while planning — atomically in JS, so concurrent
+ * pool tasks cannot double-spend. Actuals are recorded on success; vendor
+ * billing above the estimate is a recorded residual risk (W11-07 measures
+ * real billing; the governor caps on estimates regardless of price).
+ */
+class Governor {
+  reserved = 0;
+  samFrames = 0;
+  samFramesBilled = 0;
+  samMs = 0;
+  exhausted = false;
+  constructor(readonly max: number) {}
+  reserve(estimate: number): boolean {
+    if (this.reserved + estimate > this.max) {
+      this.exhausted = true;
+      return false;
+    }
+    this.reserved += estimate;
+    return true;
+  }
+}
+
+interface LensBudget {
+  maxSamFrames: number;
+  resumeOf?: string;
+}
+
+async function readLensBudget(env: Env, jobId: string): Promise<LensBudget> {
+  const obj = await env.MEDIA.get(`jobs/${jobId}/budget.json`);
+  if (!obj) return { maxSamFrames: Number.POSITIVE_INFINITY };
+  try {
+    const raw = (await obj.json()) as { maxSamFrames?: unknown; resumeOf?: unknown };
+    return {
+      maxSamFrames:
+        typeof raw.maxSamFrames === "number" && raw.maxSamFrames > 0
+          ? raw.maxSamFrames
+          : Number.POSITIVE_INFINITY,
+      ...(typeof raw.resumeOf === "string" && raw.resumeOf !== "" ? { resumeOf: raw.resumeOf } : {}),
+    };
+  } catch {
+    return { maxSamFrames: Number.POSITIVE_INFINITY };
+  }
+}
+
+/** Cache key = sha256(media) + phrase + model + params (plan §10 W11-06). */
+async function cacheKeyHex(media: Uint8Array, phrase: string, params: string): Promise<string> {
+  const head = new TextEncoder().encode(`${SAM_MODEL}\n${params}\n${phrase}\n`);
+  const bytes = new Uint8Array(head.length + media.length);
+  bytes.set(head, 0);
+  bytes.set(media, head.length);
+  return hexSha256(bytes);
+}
+
+interface SamCall {
+  text: string;
+  reported?: number;
+  cached: boolean;
+  samMs: number;
+}
+
+/**
+ * One SAM call with cache lookup-then-fetch. The cache write lands
+ * immediately after a successful fetch — before evidence/parse — so a
+ * Workflow retry of this step replays from R2 at zero frames (closes G7).
+ * `resumeOf` is the only sanctioned cross-job reuse (W10-06 scoping): a hit
+ * there is adopted into this job's own prefix.
+ */
+async function samCall(
+  env: Env,
+  jobId: string,
+  media: Uint8Array,
+  phrase: string,
+  params: string,
+  buildBody: (b64: string) => object,
+  resumeOf: string | undefined,
+  lensOpts: LensOptions,
+): Promise<SamCall> {
+  const key = await cacheKeyHex(media, phrase, params);
+  const ownKey = `jobs/${jobId}/sam/cache/${key}.txt`;
+  const own = await env.MEDIA.get(ownKey);
+  if (own) return { text: await own.text(), cached: true, samMs: 0 };
+  if (resumeOf !== undefined) {
+    const prior = await env.MEDIA.get(`jobs/${resumeOf}/sam/cache/${key}.txt`);
+    if (prior) {
+      const text = await prior.text();
+      await env.MEDIA.put(ownKey, text);
+      return { text, cached: true, samMs: 0 };
+    }
+  }
+  const callStart = Date.now();
+  const detailed = await metaResponsesDetailed(env, buildBody(toBase64(media)), {
+    ...(lensOpts.samTimeoutMs !== undefined ? { timeoutMs: lensOpts.samTimeoutMs } : {}),
+    ...(lensOpts.samIdleMs !== undefined ? { idleMs: lensOpts.samIdleMs } : {}),
+  });
+  const samMs = Date.now() - callStart;
+  await env.MEDIA.put(ownKey, detailed.text);
+  return { text: detailed.text, reported: detailed.videoFramesProcessed, cached: false, samMs };
+}
+
+function imageBody(phrase: string, b64: string): object {
+  return {
+    model: SAM_MODEL,
+    metadata: { ...SAM_METADATA },
+    input: [
+      {
+        type: "message",
+        role: "user",
+        content: [
+          { type: "input_text", text: phrase },
+          { type: "input_image", image_url: `data:image/jpeg;base64,${b64}` },
+        ],
+      },
+    ],
+  };
+}
+
+function videoBody(phrase: string, b64: string): object {
+  return {
+    model: SAM_MODEL,
+    metadata: { ...SAM_METADATA },
+    input: [
+      {
+        type: "message",
+        role: "user",
+        content: [
+          { type: "input_text", text: phrase },
+          { type: "input_video", video_url: `data:video/mp4;base64,${b64}` },
+        ],
+      },
+    ],
+  };
+}
+
+/**
+ * W11-04 per-frame flags, read defensively: the frozen W10-06 manifest
+ * schema does not carry them yet, so intake parsing may strip them until
+ * W11-04 lands the flag shape. Present-and-failing flags drop the
+ * candidate; absent flags keep it (today's manifests).
+ */
+function frameFailsFlags(cp: Checkpoint, imageId: string): boolean {
+  const ref = cp.keyframes.find((k) => k.id === imageId) as
+    | { faceFree?: unknown; quality?: unknown; exposureOk?: unknown }
+    | undefined;
+  if (!ref) return false;
+  if (ref.faceFree === false) return true;
+  if (ref.quality === "bad") return true;
+  if (ref.exposureOk === false) return true;
+  return false;
+}
+
+function lensFallback(jobId: string, scoutModel: string, cp: Checkpoint, sc: ScoutCandidate, k: number): Candidate {
+  const base = boxOnlyOne(jobId, scoutModel, cp, sc, k, cp.tMs);
+  return {
+    ...base,
+    models: `${scoutModel} + sam-3.1`,
+    evidenceKey: `jobs/${jobId}/sam/${cp.nodeId}_${k}.txt`,
+  };
+}
+
+async function runPool<T>(tasks: Array<() => Promise<T>>, limit: number): Promise<T[]> {
+  const out = new Array<T>(tasks.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.max(1, Math.min(limit, tasks.length)) }, async () => {
+    while (next < tasks.length) {
+      const i = next++;
+      out[i] = await tasks[i]();
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
+/**
+ * The W11-06 SAM lens (see file header). Seals the same
+ * `jobs/<id>/ground.json` shape as the legacy path, plus
+ * `usage.samFramesBilled`/`usage.budgetExhausted` whenever SAM ran.
+ */
+export async function runGroundLens(
+  env: Env,
+  jobId: string,
+  manifest: Manifest,
+  scout: ScoutResult,
+  runner: StepRunner = inlineRunner,
+  lensOpts: LensOptions = {},
+): Promise<JobResult> {
+  const groundOrder = (env.GROUND_ORDER ?? "sam31,none")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s !== "");
+  const samOrdered = groundOrder.includes("sam31") || groundOrder.includes("sam-3.1");
+  const samEnabled = samOrdered && Boolean(env.META_API_KEY);
+  const scoutByNode = new Map(scout.checkpoints.map((c) => [c.nodeId, c]));
+
+  if (!samEnabled) {
+    const checkpoints: JobResult["checkpoints"] = manifest.checkpoints.map((cp) => ({
+      nodeId: cp.nodeId,
+      candidates: boxOnly(
+        jobId,
+        scout.model,
+        cp,
+        scoutByNode.get(cp.nodeId)?.candidates ?? [],
+        new Map(cp.keyframes.map((k) => [k.id, k.tMs])),
+      ).sort((a, b) => b.rank - a.rank),
+    }));
+    for (const c of checkpoints) {
+      await emitJobEvent(env, jobId, {
+        id: newEventId(),
+        type: "checkpoint",
+        nodeId: c.nodeId,
+        status: "skipped",
+        candidates: c.candidates,
+      });
+    }
+    const result = JobResultSchema.parse({
+      jobId,
+      models: { scout: scout.model, ground: "none" },
+      checkpoints,
+      usage: {},
+    });
+    await env.MEDIA.put(`jobs/${jobId}/ground.json`, JSON.stringify(result));
+    return result;
+  }
+
+  const budget = await readLensBudget(env, jobId);
+  const gov = new Governor(budget.maxSamFrames);
+  const perCall = phrasesPerCall(env);
+
+  interface Planned {
+    cp: Checkpoint;
+    index: number;
+    kept: ScoutCandidate[];
+    /** Survivor indexes into kept (top-2, flags passing). */
+    survivors: number[];
+    heroBytes: Map<number, Uint8Array>;
+    clipBytes: Uint8Array | null;
+    clipFps: number;
+    clipHeroIdx: number;
+  }
+
+  const planned: Planned[] = [];
+  for (let index = 0; index < manifest.checkpoints.length; index++) {
+    const cp = manifest.checkpoints[index];
+    const kept = scoutByNode.get(cp.nodeId)?.candidates ?? [];
+    // Top-2 by scout signal (same ordering cleanCandidates enforces).
+    const ranked = kept
+      .map((sc, k) => ({ sc, k }))
+      .sort((a, b) => b.sc.distinctiveness * b.sc.permanence - a.sc.distinctiveness * a.sc.permanence)
+      .slice(0, 2);
+    const survivors = ranked.filter(({ sc }) => !frameFailsFlags(cp, sc.imageId)).map(({ k }) => k);
+    const heroBytes = new Map<number, Uint8Array>();
+    for (const k of survivors) {
+      const obj = await env.MEDIA.get(`jobs/${jobId}/in/${kept[k].imageId}`);
+      if (obj) heroBytes.set(k, new Uint8Array(await obj.arrayBuffer()));
+    }
+    let clipBytes: Uint8Array | null = null;
+    let clipFps = 0;
+    let clipHeroIdx = 0;
+    if (cp.clip) {
+      const clipObj = await env.MEDIA.get(`jobs/${jobId}/in/${cp.clip.id}`);
+      if (clipObj) {
+        clipBytes = new Uint8Array(await clipObj.arrayBuffer());
+        const heroTMs = cp.keyframes.find((k) => k.id === cp.heroKeyframeId)?.tMs ?? cp.tMs;
+        clipFps = (cp.clip.frameCount * 1000) / Math.max(1, cp.clip.durationMs);
+        clipHeroIdx = heroIndex(heroTMs, cp.clip.startMs, clipFps);
+      }
+    }
+    planned.push({ cp, index, kept, survivors, heroBytes, clipBytes, clipFps, clipHeroIdx });
+  }
+
+  // Governor reservation order: node priority first, manifest order within.
+  const byPriority = [...planned].sort(
+    (a, b) => priorityOf(a.cp) - priorityOf(b.cp) || a.index - b.index,
+  );
+
+  // Image phase: 1 frame per hero call, reserved before any call is sent.
+  const imageResults = new Map<number, Map<number, Candidate>>();
+  const imageTasks: Array<() => Promise<void>> = [];
+  for (const p of byPriority) {
+    const perCp = new Map<number, Candidate>();
+    imageResults.set(p.index, perCp);
+    for (const k of p.survivors) {
+      const sc = p.kept[k];
+      const fallback = lensFallback(jobId, scout.model, p.cp, sc, k);
+      const media = p.heroBytes.get(k);
+      if (!media || !gov.reserve(1)) {
+        perCp.set(k, fallback);
+        continue;
+      }
+      const hash = await phraseHash(sc.samPhrase);
+      const name = imageStepName(p.cp.nodeId, hash);
+      const evidenceKey = `jobs/${jobId}/sam/${p.cp.nodeId}_${k}.txt`;
+      imageTasks.push(() =>
+        runner(name, async () => {
+          perCp.set(k, await imageCall(env, jobId, p.cp, sc, k, media, fallback, evidenceKey, budget.resumeOf, gov, lensOpts));
+        }),
+      );
+    }
+  }
+  await runPool(imageTasks, LENS_CONCURRENCY);
+
+  // Video phase: top survivor only, TURN/DESTINATION or mid confidence.
+  const finalResults = new Map<number, Map<number, Candidate>>();
+  for (const p of planned) {
+    const perCp = new Map<number, Candidate>();
+    finalResults.set(p.index, perCp);
+    for (let k = 0; k < p.kept.length; k++) {
+      perCp.set(k, imageResults.get(p.index)?.get(k) ?? lensFallback(jobId, scout.model, p.cp, p.kept[k], k));
+    }
+  }
+  const videoTasks: Array<() => Promise<void>> = [];
+  for (const p of byPriority) {
+    const perCp = finalResults.get(p.index);
+    if (!perCp || !p.clipBytes || p.survivors.length === 0) continue;
+    // Top survivor by image-phase rank (image-grounded or box-only stand-in).
+    let topK = p.survivors[0];
+    for (const k of p.survivors) {
+      if ((perCp.get(k)?.rank ?? -Infinity) > (perCp.get(topK)?.rank ?? -Infinity)) topK = k;
+    }
+    const top = perCp.get(topK);
+    const conf = top?.samConfidence;
+    const nodeWantsVideo = p.cp.type === "TURN" || p.cp.type === "DESTINATION";
+    const confWantsVideo = conf !== null && conf !== undefined && conf >= 0.5 && conf < 0.85;
+    if (!top || (!nodeWantsVideo && !confWantsVideo)) continue;
+    const sc = p.kept[topK];
+    const estimate = p.cp.clip?.frameCount ?? 0;
+    if (!gov.reserve(estimate)) continue;
+    const hash = await phraseHash(sc.samPhrase);
+    const name = videoStepName(p.cp.nodeId, hash);
+    const evidenceKey = `jobs/${jobId}/sam/${p.cp.nodeId}_${topK}.txt`;
+    const clipBytes = p.clipBytes;
+    const clip = { fps: p.clipFps, heroIdx: p.clipHeroIdx };
+    const phrases = [sc.samPhrase].slice(0, perCall);
+    videoTasks.push(() =>
+      runner(name, async () => {
+        for (const phrase of phrases) {
+          const upgraded = await videoCall(env, jobId, p.cp, sc, topK, clipBytes, phrase, evidenceKey, clip, top, budget.resumeOf, gov, lensOpts);
+          if (upgraded) perCp.set(topK, upgraded);
+        }
+      }),
+    );
+  }
+  await runPool(videoTasks, LENS_CONCURRENCY);
+
+  const checkpoints: JobResult["checkpoints"] = planned.map((p) => {
+    const perCp = finalResults.get(p.index);
+    const candidates = p.kept.map((_, k) => perCp?.get(k) ?? lensFallback(jobId, scout.model, p.cp, p.kept[k], k));
+    candidates.sort((a, b) => b.rank - a.rank || (a.candidateId < b.candidateId ? -1 : 1));
+    return { nodeId: p.cp.nodeId, candidates };
+  });
+
+  for (const c of checkpoints) {
+    await emitJobEvent(env, jobId, {
+      id: newEventId(),
+      type: "checkpoint",
+      nodeId: c.nodeId,
+      status: c.candidates.some((c) => c.source === "AI_GROUNDED") ? "grounded" : "skipped",
+      candidates: c.candidates,
+    });
+  }
+  const usage = {
+    ...(gov.samFrames > 0 ? { samFrames: Math.round(gov.samFrames) } : {}),
+    ...(gov.samMs > 0 ? { samMs: Math.round(gov.samMs) } : {}),
+    samFramesBilled: Math.round(gov.samFramesBilled),
+    budgetExhausted: gov.exhausted,
+  };
+  await emitJobEvent(env, jobId, { id: newEventId(), type: "usage", usage });
+
+  const result = JobResultSchema.parse({
+    jobId,
+    models: { scout: scout.model, ground: "sam-3.1" },
+    checkpoints,
+    usage,
+  });
+  await env.MEDIA.put(`jobs/${jobId}/ground.json`, JSON.stringify(result));
+  return result;
+}
+
+async function imageCall(
+  env: Env,
+  jobId: string,
+  cp: Checkpoint,
+  sc: ScoutCandidate,
+  k: number,
+  media: Uint8Array,
+  fallback: Candidate,
+  evidenceKey: string,
+  resumeOf: string | undefined,
+  gov: Governor,
+  lensOpts: LensOptions,
+): Promise<Candidate> {
+  try {
+    const call = await samCall(env, jobId, media, sc.samPhrase, IMAGE_PARAMS, (b64) => imageBody(sc.samPhrase, b64), resumeOf, lensOpts);
+    if (!call.cached) {
+      gov.samMs += call.samMs;
+      // Single hero frame sent; vendor image billing is unmeasured until
+      // the W11-07 probe (row 3), so sent frames stand in.
+      gov.samFrames += call.reported ?? 1;
+      gov.samFramesBilled += call.reported ?? 0;
+    }
+    await env.MEDIA.put(evidenceKey, call.text);
+    const obs = parseSam(call.text);
+    if (obs.length === 0) return fallback;
+    return toGrounded(cp, sc, k, evidenceKey, obs, { clipB64: "", fps: 0, heroIdx: 0, heroTMs: cp.tMs }, fallback, true);
+  } catch (e) {
+    if (e instanceof NonRetryableError) return fallback;
+    throw e;
+  }
+}
+
+/**
+ * Video escalation for the top candidate. Returns the upgraded candidate,
+ * or null when the clip yields nothing usable (the image result stands —
+ * never a downgrade to box-only).
+ */
+async function videoCall(
+  env: Env,
+  jobId: string,
+  cp: Checkpoint,
+  sc: ScoutCandidate,
+  k: number,
+  media: Uint8Array,
+  phrase: string,
+  evidenceKey: string,
+  clip: { fps: number; heroIdx: number },
+  standIn: Candidate,
+  resumeOf: string | undefined,
+  gov: Governor,
+  lensOpts: LensOptions,
+): Promise<Candidate | null> {
+  try {
+    const call = await samCall(env, jobId, media, phrase, VIDEO_PARAMS, (b64) => videoBody(phrase, b64), resumeOf, lensOpts);
+    if (!call.cached) {
+      gov.samMs += call.samMs;
+      gov.samFrames += call.reported ?? (cp.clip?.frameCount ?? 0);
+      gov.samFramesBilled += call.reported ?? 0;
+    }
+    await env.MEDIA.put(evidenceKey, call.text);
+    const obs = parseSam(call.text);
+    if (obs.length === 0) return null;
+    // Mismatch degrades to the image result, not to box-only: the video
+    // disagreeing never erases grounding the hero frame already earned.
+    const upgraded = toGrounded(
+      cp,
+      sc,
+      k,
+      evidenceKey,
+      obs,
+      { clipB64: "", fps: clip.fps, heroIdx: clip.heroIdx, heroTMs: cp.tMs },
+      { ...standIn, evidenceKey, models: standIn.models },
+      false,
+    );
+    return upgraded.source === "AI_GROUNDED" ? upgraded : null;
+  } catch (e) {
+    if (e instanceof NonRetryableError) return null;
+    throw e;
+  }
+}

@@ -18,6 +18,13 @@ export interface Env {
   ENV?: string;
   META_API_KEY?: string;
   ECHO_APP_TOKEN?: string;
+  /** W11-06: `legacy` keeps the W3-05 per-candidate video-first ground step;
+   * any other value (or unset) runs the SAM lens (ladder + cache +
+   * governor). Removed or recorded in W11-10. */
+  GROUND_MODE?: string;
+  /** W11-06: reserved for the W11-07 multi-phrase probe outcome (default
+   * off; probe TBD in docs/measurements.md, so single-phrase-per-call). */
+  MULTI_PHRASE?: string;
 }
 
 // Kept module-private: workerd treats every named export as a potential

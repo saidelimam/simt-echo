@@ -4,7 +4,9 @@
 // null-degrading to box-only, never crashing — the slice acceptance.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runGround } from "./ground";
+import { inlineRunner, runGround, type StepRunner } from "./ground";
+import { phraseHash } from "./samLens";
+import { readJobEvents } from "./jobs";
 import {
   bestBy,
   heroIndex,
@@ -182,6 +184,13 @@ class FakeR2 {
       text: async () => text,
     };
   }
+  async list({ prefix }: { prefix?: string; cursor?: string }) {
+    const keys = [...this.store.keys()].filter((k) => !prefix || k.startsWith(prefix)).sort();
+    return { objects: keys.map((key) => ({ key })), truncated: false as const, delimitedPrefixes: [] };
+  }
+  async delete(keys: string | string[]): Promise<void> {
+    for (const k of Array.isArray(keys) ? keys : [keys]) this.store.delete(k);
+  }
 }
 
 // A one_bit mask over a 4x3 raster (2x2 block), encoded with the parser's
@@ -252,7 +261,7 @@ function groundedSetup(withClip = true) {
     routeContext: "ctx",
     checkpoints: [cp],
   } as never;
-  const env = { MEDIA: r2, GROUND_ORDER: "sam31,none", META_API_KEY: "k" } as never;
+  const env = { MEDIA: r2, GROUND_MODE: "legacy", GROUND_ORDER: "sam31,none", META_API_KEY: "k" } as never;
   return { r2, manifest, env };
 }
 
@@ -502,5 +511,325 @@ describe("runGround box-only path", () => {
     const result = await runGround(env, "job1", manifest, scout);
 
     expect(result.checkpoints[0].candidates.map((c) => c.title)).toEqual(["Strong", "Weak"]);
+  });
+});
+
+// W11-06 test delta: SAM lens — per-call steps, cache, ladder, governor,
+// aborts, events. The W11-07 probe (docs/measurements.md) is TBD, so every
+// scenario below is single-phrase-per-call with the fake SAM transport.
+
+const STRIP_CLIP = {
+  id: "clip_n2",
+  startMs: 37250,
+  endMs: 40250,
+  frameCount: 12,
+  durationMs: 3000,
+};
+
+function lensSetup(
+  opts: {
+    type?: "TURN" | "CHECKPOINT" | "DESTINATION" | "LEVEL_CHANGE";
+    clip?: boolean;
+    keyframeFlags?: Record<string, unknown>;
+  } = {},
+) {
+  const { type = "CHECKPOINT", clip = true, keyframeFlags = {} } = opts;
+  const r2 = new FakeR2();
+  void r2.put("jobs/job1/in/clip_n2", "clip-bytes");
+  void r2.put("jobs/job1/in/kf_n2_1", "hero-bytes");
+  const cp = {
+    nodeId: "n2",
+    type,
+    ...(type === "TURN" ? { turn: "LEFT" } : {}),
+    atDistanceM: 23.5,
+    tMs: 41250,
+    heroKeyframeId: "kf_n2_1",
+    keyframes: [
+      { id: "kf_n2_0", tMs: 39250 },
+      { id: "kf_n2_1", tMs: 40750, ...keyframeFlags },
+    ],
+    ...(clip ? { clip: STRIP_CLIP } : {}),
+    approach: [{ tMs: 37250, d: 18.9 }],
+  };
+  const manifest = {
+    schema: 1,
+    draftId: "d1",
+    consent: { sendFramesToCloudAi: true, atEpochMs: 1 },
+    routeContext: "ctx",
+    checkpoints: [cp],
+  } as never;
+  // No GROUND_MODE: the lens is the default path under test here.
+  const env = { MEDIA: r2, GROUND_ORDER: "sam31,none", META_API_KEY: "k" } as never;
+  return { r2, manifest, env };
+}
+
+function lensScout(cands = [scoutCandidate()]) {
+  return {
+    model: "scout-model",
+    checkpoints: [{ nodeId: "n2", candidates: cands }],
+  } as never;
+}
+
+const imgLine = (c: number) =>
+  `<0f>1<|box;x1=300;y1=300;x2=420;y2=1100;w=720;h=1280;c=${c}|>${MASK_TOKEN}`;
+const STRIP_VIDEO =
+  `<12f>1<|box;x1=300;y1=300;x2=420;y2=1100;w=720;h=1280;c=0.88|>\n` +
+  `<14f>1<|box;x1=300;y1=300;x2=420;y2=1100;w=720;h=1280;c=0.9|>${MASK_TOKEN}\n`;
+
+function stepRecorder(names: string[]): StepRunner {
+  return async (name, fn) => {
+    names.push(name);
+    return fn();
+  };
+}
+
+describe("runGround SAM lens (W11-06)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("hashes phrases deterministically for per-call step names", async () => {
+    expect(await phraseHash("red pillar")).toMatch(/^[0-9a-f]{12}$/);
+    expect(await phraseHash("red pillar")).toBe(await phraseHash("red pillar"));
+    expect(await phraseHash("red pillar")).not.toBe(await phraseHash("green exit sign"));
+  });
+
+  it("runs one per-call step and skips video when image confidence is high", async () => {
+    const { manifest, env } = lensSetup({ type: "CHECKPOINT" });
+    const calls = stubMeta("", imgLine(0.92));
+    const names: string[] = [];
+    const result = await runGround(env, "job1", manifest, lensScout(), stepRecorder(names));
+
+    expect(calls).toEqual(["image"]);
+    expect(names).toHaveLength(1);
+    expect(names[0]).toMatch(/^ground:n2:[0-9a-f]{12}$/);
+    const c = result.checkpoints[0].candidates[0];
+    expect(c.source).toBe("AI_GROUNDED");
+    expect(c.samConfidence).toBeCloseTo(0.92);
+    // Image-first ladder: single frame, no track, no visibility range.
+    expect(c.trackability).toBeNull();
+    expect(c.visibleFromM).toBeNull();
+    expect(result.usage.samFrames).toBe(1);
+    expect(result.usage.samFramesBilled).toBe(0);
+    expect(result.usage.budgetExhausted).toBe(false);
+  });
+
+  it("escalates to strip video when image confidence is mid", async () => {
+    const { manifest, env } = lensSetup({ type: "CHECKPOINT" });
+    const calls = stubMeta(STRIP_VIDEO, imgLine(0.6));
+    const names: string[] = [];
+    const result = await runGround(env, "job1", manifest, lensScout(), stepRecorder(names));
+
+    expect(calls).toEqual(["image", "video"]);
+    expect(names).toHaveLength(2);
+    expect(names[1]).toBe(`${names[0]}:video`);
+    const top = result.checkpoints[0].candidates[0];
+    expect(top.source).toBe("AI_GROUNDED");
+    // The strip call earned a real track and mask.
+    expect(top.trackability).not.toBeNull();
+    expect(top.maskSvgPath).toMatch(/^M/);
+  });
+
+  it("escalates TURN to video even at high image confidence", async () => {
+    const { manifest, env } = lensSetup({ type: "TURN" });
+    const calls = stubMeta(STRIP_VIDEO, imgLine(0.95));
+    const result = await runGround(env, "job1", manifest, lensScout());
+
+    expect(calls).toEqual(["image", "video"]);
+    expect(result.checkpoints[0].candidates[0].trackability).not.toBeNull();
+  });
+
+  it("keeps the image result when confidence is too low for video to help", async () => {
+    const { manifest, env } = lensSetup({ type: "CHECKPOINT" });
+    const calls = stubMeta(STRIP_VIDEO, imgLine(0.3));
+    const result = await runGround(env, "job1", manifest, lensScout());
+
+    expect(calls).toEqual(["image"]);
+    const c = result.checkpoints[0].candidates[0];
+    expect(c.source).toBe("AI_GROUNDED");
+    expect(c.samConfidence).toBeCloseTo(0.3);
+  });
+
+  it("records billed frames from fixture response.completed", async () => {
+    const { manifest, env } = lensSetup({ type: "TURN" });
+    vi.stubGlobal("fetch", async (_url: string, init: { body: string }) => {
+      // Real elapsed time so the measured samMs is > 0 deterministically.
+      await new Promise((r) => setTimeout(r, 5));
+      const body = JSON.parse(init.body) as {
+        input: Array<{ content: Array<{ type: string }> }>;
+      };
+      const video = body.input[0].content.some((c) => c.type === "input_video");
+      const text = video ? STRIP_VIDEO : imgLine(0.95);
+      const completed = video
+        ? `data: ${JSON.stringify({ type: "response.completed", response: { usage: { video_frames_processed: 12 } } })}\n\n`
+        : "";
+      const events =
+        `data: ${JSON.stringify({ type: "response.output_text.delta", delta: text })}\n\n` +
+        `${completed}data: [DONE]\n\n`;
+      return new Response(events, { status: 200 });
+    });
+    const result = await runGround(env, "job1", manifest, lensScout());
+
+    // 12 vendor-billed strip frames + the 1 sent hero frame.
+    expect(result.usage.samFramesBilled).toBe(12);
+    expect(result.usage.samFrames).toBe(13);
+    expect(result.usage.budgetExhausted).toBe(false);
+    expect(typeof result.usage.samMs).toBe("number");
+  });
+
+  it("refuses video past the budget and records exhaustion", async () => {
+    const { r2, manifest, env } = lensSetup({ type: "TURN" });
+    await r2.put("jobs/job1/budget.json", JSON.stringify({ maxSamFrames: 1 }));
+    const calls = stubMeta(STRIP_VIDEO, imgLine(0.9));
+    const result = await runGround(env, "job1", manifest, lensScout());
+
+    // The 1-frame image call fits; the 12-frame strip does not.
+    expect(calls).toEqual(["image"]);
+    expect(result.usage.budgetExhausted).toBe(true);
+    expect(result.usage.samFrames).toBe(1);
+    // The image grounding stands: the governor refuses spend, never quality.
+    expect(result.checkpoints[0].candidates[0].source).toBe("AI_GROUNDED");
+  });
+
+  it("reserves by node priority: DESTINATION before CHECKPOINT", async () => {
+    const r2 = new FakeR2();
+    void r2.put("jobs/job1/in/kf_n9_1", "hero-bytes");
+    void r2.put("jobs/job1/in/kf_n2_1", "hero-bytes");
+    await r2.put("jobs/job1/budget.json", JSON.stringify({ maxSamFrames: 1 }));
+    const manifest = {
+      schema: 1,
+      draftId: "d1",
+      consent: { sendFramesToCloudAi: true, atEpochMs: 1 },
+      routeContext: "ctx",
+      checkpoints: [
+        {
+          nodeId: "n2",
+          type: "CHECKPOINT",
+          atDistanceM: 10,
+          tMs: 20000,
+          heroKeyframeId: "kf_n2_1",
+          keyframes: [{ id: "kf_n2_1", tMs: 20000 }],
+          approach: [],
+        },
+        {
+          nodeId: "n9",
+          type: "DESTINATION",
+          atDistanceM: 60,
+          tMs: 60000,
+          heroKeyframeId: "kf_n9_1",
+          keyframes: [{ id: "kf_n9_1", tMs: 60000 }],
+          approach: [],
+        },
+      ],
+    } as never;
+    const env = { MEDIA: r2, GROUND_ORDER: "sam31,none", META_API_KEY: "k" } as never;
+    const scout = {
+      model: "scout-model",
+      checkpoints: [
+        { nodeId: "n2", candidates: [scoutCandidate({ imageId: "kf_n2_1" })] },
+        { nodeId: "n9", candidates: [scoutCandidate({ imageId: "kf_n9_1", title: "Doors" })] },
+      ],
+    } as never;
+    const calls = stubMeta("", imgLine(0.92));
+    const result = await runGround(env, "job1", manifest, scout);
+
+    // One frame of budget: DESTINATION spends it, CHECKPOINT is refused.
+    expect(calls).toEqual(["image"]);
+    const byNode = new Map(result.checkpoints.map((c) => [c.nodeId, c]));
+    expect(byNode.get("n9")?.candidates[0].source).toBe("AI_GROUNDED");
+    expect(byNode.get("n2")?.candidates[0].source).toBe("AI_BOX_ONLY");
+    expect(result.usage.budgetExhausted).toBe(true);
+  });
+
+  it("serves a repeat run from cache at zero frames", async () => {
+    const { manifest, env } = lensSetup({ type: "CHECKPOINT" });
+    stubMeta("", imgLine(0.92));
+    const first = await runGround(env, "job1", manifest, lensScout());
+    expect(first.checkpoints[0].candidates[0].source).toBe("AI_GROUNDED");
+
+    let fetches = 0;
+    vi.stubGlobal("fetch", async () => {
+      fetches++;
+      return new Response("must not be called", { status: 500 });
+    });
+    const second = await runGround(env, "job1", manifest, lensScout());
+
+    expect(fetches).toBe(0);
+    expect(second.checkpoints[0].candidates[0].source).toBe("AI_GROUNDED");
+    expect(second.usage.samFrames ?? 0).toBe(0);
+    expect(second.usage.samFramesBilled).toBe(0);
+  });
+
+  it("retries a single billed call from cache at zero re-billed frames", async () => {
+    const { manifest, env } = lensSetup({ type: "CHECKPOINT" });
+    const calls = stubMeta("", imgLine(0.92));
+    const target = `ground:n2:${await phraseHash("red pillar")}`;
+    const seen = new Map<string, number>();
+    const lossy: StepRunner = async (name, fn) => {
+      seen.set(name, (seen.get(name) ?? 0) + 1);
+      const out = await fn();
+      // The first attempt bills, then the step is lost and retried.
+      if (seen.get(name) === 1) throw new Error("simulated step loss after bill");
+      return out;
+    };
+    await expect(runGround(env, "job1", manifest, lensScout(), lossy)).rejects.toThrow(
+      "simulated step loss after bill",
+    );
+    expect(seen.get(target)).toBe(1);
+    expect(calls).toEqual(["image"]);
+
+    // The Workflow retries only the lost step; every other step is untouched
+    // and the lost one replays from cache.
+    const strict: StepRunner = async (name, fn) => {
+      if (name !== target) throw new Error(`must not re-run ${name}`);
+      return fn();
+    };
+    const retried = await runGround(env, "job1", manifest, lensScout(), strict);
+    expect(calls).toEqual(["image"]);
+    expect(retried.checkpoints[0].candidates[0].source).toBe("AI_GROUNDED");
+    expect(retried.usage.samFrames ?? 0).toBe(0);
+    expect(retried.usage.samFramesBilled).toBe(0);
+  });
+
+  it("aborts a hanging SAM call on idle silence", async () => {
+    const { manifest, env } = lensSetup({ type: "CHECKPOINT", clip: false });
+    vi.stubGlobal(
+      "fetch",
+      (_url: string, init: { signal?: AbortSignal }) =>
+        new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () => {
+            reject(init.signal?.reason ?? new Error("aborted"));
+          });
+        }),
+    );
+    await expect(
+      runGround(env, "job1", manifest, lensScout(), inlineRunner, { samIdleMs: 25 }),
+    ).rejects.toThrow();
+  });
+
+  it("drops candidates on failing face flags at zero spend", async () => {
+    // Flags ride the keyframe ref; intake parsing strips unknown fields
+    // until W11-04 lands the flag shape, so this proves the ladder logic on
+    // an unparsed fixture (residual risk recorded in the slice report).
+    const { manifest, env } = lensSetup({ type: "CHECKPOINT", keyframeFlags: { faceFree: false } });
+    const calls = stubMeta(STRIP_VIDEO, imgLine(0.9));
+    const result = await runGround(env, "job1", manifest, lensScout());
+
+    expect(calls).toEqual([]);
+    const c = result.checkpoints[0].candidates[0];
+    expect(c.source).toBe("AI_BOX_ONLY");
+    expect(result.usage.samFrames ?? 0).toBe(0);
+    expect(result.usage.samFramesBilled).toBe(0);
+  });
+
+  it("emits checkpoint and usage events", async () => {
+    const { manifest, env } = lensSetup({ type: "CHECKPOINT" });
+    stubMeta("", imgLine(0.92));
+    await runGround(env, "job1", manifest, lensScout());
+
+    const events = await readJobEvents(env, "job1");
+    expect(events.map((e) => e.type)).toEqual(["checkpoint", "usage"]);
+    const checkpoint = events[0];
+    expect(checkpoint).toMatchObject({ nodeId: "n2", status: "grounded" });
   });
 });

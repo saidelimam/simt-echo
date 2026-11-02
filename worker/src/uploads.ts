@@ -160,7 +160,7 @@ export async function handleCreateJobV11(c: Context<{ Bindings: Env }>): Promise
   if (!parsed.success) {
     return c.json({ ok: false, error: "invalid_request" }, 400);
   }
-  const { manifest, uploadId, idempotencyKey } = parsed.data;
+  const { manifest, uploadId, budget, idempotencyKey, resumeOf } = parsed.data;
   if (!manifest.consent.sendFramesToCloudAi) {
     return c.json({ ok: false, error: "consent_required" }, 400);
   }
@@ -221,6 +221,19 @@ export async function handleCreateJobV11(c: Context<{ Bindings: Env }>): Promise
       await c.env.MEDIA.put(`jobs/${jobId}/in/${name}`, bytes);
     }
     await c.env.MEDIA.put(`jobs/${jobId}/manifest.json`, JSON.stringify(manifest));
+    // W11-06: the SAM lens governor reads this (never the request body —
+    // the Workflow only gets the job id). Absent file means uncapped, the
+    // v1/v1-manifest-only behaviour; resumeOf is the only sanctioned
+    // cross-job SAM-cache reuse (W10-06 scoping).
+    if (budget !== undefined || resumeOf !== undefined) {
+      await c.env.MEDIA.put(
+        `jobs/${jobId}/budget.json`,
+        JSON.stringify({
+          ...(budget !== undefined ? { maxSamFrames: budget.maxSamFrames } : {}),
+          ...(resumeOf !== undefined ? { resumeOf } : {}),
+        }),
+      );
+    }
     await c.env.MEDIA.put(
       `jobs/${jobId}/progress.json`,
       JSON.stringify({ stage: "queued", updatedAt: Date.now() }),
