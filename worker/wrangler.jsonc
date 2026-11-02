@@ -44,6 +44,11 @@
     "WORKERS_AI_MODELS": "@cf/meta/llama-4-scout-17b-16e-instruct,@cf/google/gemma-4-26b-a4b-it",
     "ENV": "dev"
   },
+  // Hourly expiry backstop: sweeps staged uploads past their 1 h TTL and
+  // orphaned idempotency records (see `scheduled` in src/index.ts).
+  "triggers": {
+    "crons": ["0 * * * *"]
+  },
   "observability": {
     "enabled": true
   }

@@ -87,6 +87,12 @@ One-time setup: `npm exec -- wrangler r2 bucket create echo-media`,
 optional). Also: R2 lifecycle rule expiring prefixes `jobs/` and `relay/`
 after 1 day, and an AI Gateway named `echo` (dashboard → AI → AI Gateway).
 
+`npm run deploy` also registers an hourly cron trigger
+(`triggers.crons` in `worker/wrangler.jsonc`) that runs the worker's
+`scheduled()` handler: it sweeps staged uploads older than 1 h and
+orphaned `jobs/idem/*` records, so expiry no longer depends on a later
+upload request arriving.
+
 ## Build notes
 
 - AGP 9: `shared` uses `com.android.kotlin.multiplatform.library` with
