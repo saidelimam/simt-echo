@@ -93,17 +93,17 @@ object NoOpLedgerStore : LedgerStore {
  * hashes but never the luma buffer. The JPEG lambda is invoked only when
  * the frame is kept (never for dropped frames).
  *
- * Allocation: the [FrameQuality] scoring path allocates nothing. [offer]
- * itself appends one sharpness sample and sorts a scratch copy for the
- * route median, and allocates one entry on keep/replace — ledger-thread
- * bookkeeping only, never the analyzer hot path.
+ * Allocation: the [FrameQuality] scoring path allocates nothing, and the
+ * route median is maintained incrementally (binary insertion into a sorted
+ * array that grows geometrically), so [offer] allocates only one entry on
+ * keep/replace — ledger-thread bookkeeping only, never the analyzer hot path.
  */
 class GlimpseLedger(
     val bucketMeters: Double = BUCKET_METERS,
     private val store: LedgerStore = NoOpLedgerStore,
 ) {
     private val buckets = LinkedHashMap<Long, GlimpseEntry>()
-    private val routeSharp = ArrayList<Double>()
+    private val routeSharp = SortedSamples()
     private var lastKeptHash: Long? = null
 
     /**
@@ -111,6 +111,14 @@ class GlimpseLedger(
      * when its bucket is empty or its score strictly beats the incumbent.
      */
     fun offer(sample: FrameSample, odometerM: Double, omegaRadPerSec: Double = 0.0): LedgerOffer {
+        try {
+            return score(sample, odometerM, omegaRadPerSec)
+        } finally {
+            sample.release()
+        }
+    }
+
+    private fun score(sample: FrameSample, odometerM: Double, omegaRadPerSec: Double): LedgerOffer {
         val planeW = sample.width / sample.decimation.coerceAtLeast(1)
         val planeH = sample.height / sample.decimation.coerceAtLeast(1)
         val sharp = FrameQuality.sharpness(sample.luma, planeW, planeH)
@@ -119,14 +127,13 @@ class GlimpseLedger(
         val hash = FrameQuality.dHash(sample.luma, planeW, planeH)
         val nov = FrameQuality.novelty(hash, lastKeptHash)
         routeSharp.add(sharp)
-        val s = FrameQuality.score(sharp, medianOf(routeSharp), exposed, stable, nov)
+        val s = FrameQuality.score(sharp, routeSharp.median(), exposed, stable, nov)
         val bucket = bucketFor(odometerM)
         val incumbent = buckets[bucket]
-        val result: LedgerOffer
-        if (incumbent == null) {
+        val result: LedgerOffer = if (incumbent == null) {
             buckets[bucket] = GlimpseEntry(bucket, sample.tNs, odometerM, s, sharp, hash, persistKept(sample, bucket))
             lastKeptHash = hash
-            result = LedgerOffer.Kept(bucket, s, nov)
+            LedgerOffer.Kept(bucket, s, nov)
         } else if (s > incumbent.score) {
             buckets[bucket] = incumbent.copy(
                 tNs = sample.tNs,
@@ -137,11 +144,10 @@ class GlimpseLedger(
                 jpegPath = persistKept(sample, bucket),
             )
             lastKeptHash = hash
-            result = LedgerOffer.Replaced(bucket, s, nov, incumbent.score)
+            LedgerOffer.Replaced(bucket, s, nov, incumbent.score)
         } else {
-            result = LedgerOffer.Dropped(bucket, s, nov, incumbent.score)
+            LedgerOffer.Dropped(bucket, s, nov, incumbent.score)
         }
-        sample.release()
         return result
     }
 
@@ -160,15 +166,37 @@ class GlimpseLedger(
         return store.persist(bucket, sample.tNs, bytes)
     }
 
-    private fun medianOf(values: List<Double>): Double {
-        if (values.isEmpty()) return 0.0
-        val sorted = values.sorted()
-        val mid = sorted.size / 2
-        return if (sorted.size % 2 == 1) sorted[mid] else (sorted[mid - 1] + sorted[mid]) / 2.0
-    }
-
     companion object {
         /** One ledger bucket per half metre of travel (plan W11-01). */
         const val BUCKET_METERS = 0.5
+    }
+}
+
+/** Sorted sample store with O(log n) search and an allocation-free [median]. */
+private class SortedSamples {
+    private var values = DoubleArray(INITIAL_CAPACITY)
+    private var size = 0
+
+    fun add(v: Double) {
+        if (size == values.size) values = values.copyOf(size * 2)
+        var lo = 0
+        var hi = size
+        while (lo < hi) {
+            val mid = (lo + hi) ushr 1
+            if (values[mid] < v) lo = mid + 1 else hi = mid
+        }
+        values.copyInto(values, lo + 1, lo, size)
+        values[lo] = v
+        size++
+    }
+
+    fun median(): Double = when {
+        size == 0 -> 0.0
+        size % 2 == 1 -> values[size / 2]
+        else -> (values[size / 2 - 1] + values[size / 2]) / 2.0
+    }
+
+    private companion object {
+        const val INITIAL_CAPACITY = 256
     }
 }

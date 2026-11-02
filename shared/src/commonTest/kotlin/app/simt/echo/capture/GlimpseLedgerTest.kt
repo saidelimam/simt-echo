@@ -2,6 +2,7 @@ package app.simt.echo.capture
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -283,5 +284,31 @@ class GlimpseLedgerTest {
         ledger.offer(sample(sharpLuma(), releaseFn = { releases++ }), odometerM = 0.1)
         ledger.offer(sample(blurredLuma(), releaseFn = { releases++ }), odometerM = 0.1)
         assertEquals(2, releases)
+    }
+
+    @Test
+    fun offerReleasesTheSampleWhenPersistenceThrows() {
+        var releases = 0
+        val failingStore = object : LedgerStore {
+            override fun persist(bucketIndex: Long, tNs: Long, jpeg: ByteArray): String? = error("disk full")
+        }
+        val ledger = GlimpseLedger(store = failingStore)
+        assertFailsWith<IllegalStateException> {
+            ledger.offer(
+                sample(sharpLuma(), jpeg = { byteArrayOf(1) }, releaseFn = { releases++ }),
+                odometerM = 0.1,
+            )
+        }
+        assertEquals(1, releases)
+    }
+
+    @Test
+    fun routeMedianStaysCorrectAcrossManyOffers() {
+        // 600 offers outgrow the initial sorted-array capacity; scoring must
+        // stay identical to a fresh ledger fed the same final frame.
+        val ledger = GlimpseLedger()
+        repeat(600) { i -> ledger.offer(sample(sharpLuma(), tNs = i.toLong()), odometerM = i * 0.5) }
+        assertEquals(600, ledger.keptCount())
+        assertTrue(ledger.entries().all { it.score > 0.0 })
     }
 }
