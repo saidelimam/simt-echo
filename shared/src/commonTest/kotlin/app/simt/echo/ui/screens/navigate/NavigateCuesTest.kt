@@ -15,6 +15,10 @@ import app.simt.echo.model.TurnDir
 import app.simt.echo.platform.CueOutput
 import app.simt.echo.platform.HapticPattern
 import app.simt.echo.platform.Haptics
+import app.simt.echo.platform.LiveUpdateDirector
+import app.simt.echo.platform.LiveUpdatePlan
+import app.simt.echo.platform.LiveUpdateSink
+import app.simt.echo.platform.NAV_LIVE_UPDATE_ID
 import app.simt.echo.platform.MotionSource
 import app.simt.echo.platform.MotionUpdate
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -211,6 +215,49 @@ class NavigateCuesTest {
         advanceTimeBy(10_000)
         runCurrent()
         assertEquals(before, ticks(haptics))
+    }
+
+    @Test
+    fun liveUpdatesFollowTheWalkAndAreDismissedWhenTheScreenGoes() = runTest(dispatcher) {
+        val posted = mutableListOf<Pair<Int, LiveUpdatePlan>>()
+        val dismissed = mutableListOf<Int>()
+        val sink = object : LiveUpdateSink {
+            override fun show(notificationId: Int, plan: LiveUpdatePlan) {
+                posted += notificationId to plan
+            }
+            override fun dismiss(notificationId: Int) {
+                dismissed += notificationId
+            }
+        }
+        val motion = ManualMotion()
+        val store = ViewModelStore()
+        val vm = ViewModelProvider.create(
+            store,
+            viewModelFactory {
+                addInitializer(NavigateViewModel::class) {
+                    NavigateViewModel(
+                        Fixtures.L_ROUTE.routeId, routes(), motion, FakeHaptics(),
+                        liveUpdates = LiveUpdateDirector(sink, 34),
+                    ) {}
+                }
+            },
+        )[NavigateViewModel::class]
+        runCurrent()
+        vm.start()
+        motion.at(0.0)
+        vm.align()
+        runCurrent()
+        motion.at(5.0)
+        runCurrent()
+
+        assertTrue(posted.isNotEmpty(), "no live update was posted")
+        assertTrue(posted.all { it.first == NAV_LIVE_UPDATE_ID })
+        assertEquals(Fixtures.L_ROUTE.name, posted.last().second.content.title)
+        assertEquals("Navigating", posted.last().second.content.publicText)
+        assertTrue(dismissed.isEmpty())
+
+        store.clear()
+        assertEquals(listOf(NAV_LIVE_UPDATE_ID), dismissed)
     }
 
     @Test

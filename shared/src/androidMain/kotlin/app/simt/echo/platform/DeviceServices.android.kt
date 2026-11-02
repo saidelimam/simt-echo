@@ -1,7 +1,9 @@
 package app.simt.echo.platform
 
+import android.Manifest
 import android.app.Activity
 import android.content.Context
+import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.os.Build
 import android.os.VibrationEffect
@@ -10,6 +12,8 @@ import android.os.VibratorManager
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -19,6 +23,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -101,6 +106,32 @@ actual fun rememberWearNavSink(): (app.simt.echo.nav.NavWearState) -> Unit {
     val context = LocalContext.current.applicationContext
     return remember(context) { GmsWearNavSender(context)::send }
 }
+
+@Composable
+actual fun rememberNotificationPermissionRequest(): () -> Unit {
+    val context = LocalContext.current
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    return remember(context, launcher) {
+        {
+            val prefs = context.getSharedPreferences(NOTIFICATION_PREFS, Context.MODE_PRIVATE)
+            val decision = notificationPermissionDecision(
+                sdkInt = Build.VERSION.SDK_INT,
+                isGranted = ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.POST_NOTIFICATIONS,
+                ) == PackageManager.PERMISSION_GRANTED,
+                alreadyAsked = prefs.getBoolean(KEY_NOTIFICATIONS_ASKED, false),
+            )
+            if (decision == NotificationPermissionDecision.REQUEST_NOW) {
+                prefs.edit().putBoolean(KEY_NOTIFICATIONS_ASKED, true).apply()
+                launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
+}
+
+private const val NOTIFICATION_PREFS = "echo_notifications"
+private const val KEY_NOTIFICATIONS_ASKED = "post_notifications_asked"
 
 @Composable
 actual fun rememberCueOutput(earconsEnabled: Boolean): CueOutput {

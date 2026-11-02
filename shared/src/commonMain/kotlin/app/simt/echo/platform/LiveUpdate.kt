@@ -1,5 +1,6 @@
 package app.simt.echo.platform
 
+import app.simt.echo.nav.NavPhase
 import app.simt.echo.nav.NavUi
 import app.simt.echo.transfer.JobStage
 import app.simt.echo.ui.screens.processing.ProcessingPhase
@@ -76,7 +77,23 @@ data class LiveUpdateContent(
     /** 0..1 overall progress; null when indeterminate. */
     val progress01: Float?,
     val ongoing: Boolean = true,
+    /**
+     * All a locked screen may show (the notification's public version).
+     * [title] is a route name and [text] a navigation instruction that can
+     * name landmarks, so neither belongs on a lock screen: this is the
+     * only line that does, and it never carries either.
+     */
+    val publicText: String = LIVE_UPDATE_PUBLIC_TEXT,
 )
+
+/** Fallback lock-screen line when a content builder names none. */
+const val LIVE_UPDATE_PUBLIC_TEXT = "ECHO"
+
+/** Lock-screen line for an active walk: says it is navigating, nothing about where. */
+const val LIVE_UPDATE_PUBLIC_NAV_TEXT = "Navigating"
+
+/** Lock-screen line while a walk is processing. */
+const val LIVE_UPDATE_PUBLIC_PROCESSING_TEXT = "Processing a walk"
 
 /** Landmark position in route metres, paired with its title. */
 data class LandmarkMark(
@@ -111,6 +128,7 @@ fun liveUpdateForNav(
         segments = segments,
         points = landmarks.map { LiveUpdatePoint(it.positionM, it.title) },
         progress01 = progress,
+        publicText = LIVE_UPDATE_PUBLIC_NAV_TEXT,
     )
 }
 
@@ -126,6 +144,7 @@ fun liveUpdateForProcessing(phase: ProcessingPhase): LiveUpdateContent? = when (
         segments = emptyList(),
         points = emptyList(),
         progress01 = null,
+        publicText = LIVE_UPDATE_PUBLIC_PROCESSING_TEXT,
     )
     is ProcessingPhase.Working -> {
         val fraction = processingFraction(phase.stage) ?: return null
@@ -135,6 +154,7 @@ fun liveUpdateForProcessing(phase: ProcessingPhase): LiveUpdateContent? = when (
             segments = emptyList(),
             points = emptyList(),
             progress01 = fraction,
+            publicText = LIVE_UPDATE_PUBLIC_PROCESSING_TEXT,
         )
     }
     else -> null
@@ -258,11 +278,18 @@ interface LiveUpdateSink {
  * host tests cover content, style branching, and dismiss rules with a
  * faked SDK int. Screens call `update*` on progress and [dismiss] when
  * navigation ends or processing settles.
+ *
+ * Navigation state changes at motion rate, so the director posts only when
+ * the rendered plan differs from the last one it posted for that id: a
+ * metre of progress is an update, twenty identical frames are not.
+ * Arrival dismisses rather than leaving "0 m" ongoing.
  */
 class LiveUpdateDirector(
     private val sink: LiveUpdateSink,
     private val sdkInt: Int,
 ) {
+    private val lastPlans = mutableMapOf<Int, LiveUpdatePlan>()
+
     fun updateNav(
         notificationId: Int = NAV_LIVE_UPDATE_ID,
         ui: NavUi,
@@ -270,7 +297,11 @@ class LiveUpdateDirector(
         landmarks: List<LandmarkMark>,
         routeName: String,
     ) {
-        sink.show(notificationId, planLiveUpdate(liveUpdateForNav(ui, legLengthsM, landmarks, routeName), sdkInt))
+        if (ui.phase == NavPhase.ARRIVED) {
+            dismiss(notificationId)
+            return
+        }
+        show(notificationId, planLiveUpdate(liveUpdateForNav(ui, legLengthsM, landmarks, routeName), sdkInt))
     }
 
     fun updateProcessing(
@@ -279,11 +310,20 @@ class LiveUpdateDirector(
     ) {
         val content = liveUpdateForProcessing(phase)
         if (content == null) {
-            sink.dismiss(notificationId)
+            dismiss(notificationId)
         } else {
-            sink.show(notificationId, planLiveUpdate(content, sdkInt))
+            show(notificationId, planLiveUpdate(content, sdkInt))
         }
     }
 
-    fun dismiss(notificationId: Int) = sink.dismiss(notificationId)
+    fun dismiss(notificationId: Int) {
+        lastPlans.remove(notificationId)
+        sink.dismiss(notificationId)
+    }
+
+    private fun show(notificationId: Int, plan: LiveUpdatePlan) {
+        if (lastPlans[notificationId] == plan) return
+        lastPlans[notificationId] = plan
+        sink.show(notificationId, plan)
+    }
 }

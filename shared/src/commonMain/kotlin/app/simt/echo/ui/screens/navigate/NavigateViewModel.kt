@@ -22,6 +22,9 @@ import app.simt.echo.platform.CueOutput
 import app.simt.echo.platform.DistanceHeartbeat
 import app.simt.echo.platform.EyesFreeFilter
 import app.simt.echo.platform.HapticPattern
+import app.simt.echo.platform.LandmarkMark
+import app.simt.echo.platform.LiveUpdateDirector
+import app.simt.echo.platform.NAV_LIVE_UPDATE_ID
 import app.simt.echo.platform.Haptics
 import app.simt.echo.platform.NoCueOutput
 import app.simt.echo.platform.MotionSource
@@ -74,6 +77,12 @@ class NavigateViewModel(
      */
     private val cues: CueOutput = NoCueOutput,
     /**
+     * Live Update notification director (W13-10), or null when the
+     * platform posts none. Driven from the same [ui] flow as everything
+     * else; dismissed on arrival and when the screen goes away.
+     */
+    private val liveUpdates: LiveUpdateDirector? = null,
+    /**
      * Ephemeral route (W13-13 practice tour): used directly, never read
      * from nor written to the route store. The tour replays a bundled
      * fixture walk through this same instrument with a null trial sink,
@@ -90,6 +99,14 @@ class NavigateViewModel(
         navigator?.ui ?: MutableStateFlow<NavUi?>(null).asStateFlow()
 
     val legCount: Int = route?.legs?.size ?: 0
+
+    private val legLengthsM: List<Double> = route?.legs?.map { it.lengthM }.orEmpty()
+    private val landmarkMarks: List<LandmarkMark> = route?.let { r ->
+        r.landmarks.mapNotNull { landmark ->
+            r.nodes.firstOrNull { it.id == landmark.nodeId }
+                ?.let { LandmarkMark(it.atDistanceM, landmark.title) }
+        }
+    }.orEmpty()
 
     private var arrivedFired = false
 
@@ -146,6 +163,14 @@ class NavigateViewModel(
                     if (ui != null) {
                         updateHeartbeat(ui)
                         runCatching { wearNav(ui.toWearState()) }
+                        runCatching {
+                            liveUpdates?.updateNav(
+                                ui = ui,
+                                legLengthsM = legLengthsM,
+                                landmarks = landmarkMarks,
+                                routeName = route?.name.orEmpty(),
+                            )
+                        }
                     }
                 }
             }
@@ -290,6 +315,7 @@ class NavigateViewModel(
         stopHeartbeat()
         // Tell the watch the walk is over, so it does not keep an arrow up.
         runCatching { wearNav(endedWearState()) }
+        runCatching { liveUpdates?.dismiss(NAV_LIVE_UPDATE_ID) }
         motion.stop()
     }
 }

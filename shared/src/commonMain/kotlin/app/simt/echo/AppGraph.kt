@@ -5,6 +5,8 @@ import app.simt.echo.data.DraftRepository
 import app.simt.echo.data.FileStore
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.data.TrialRepository
+import app.simt.echo.platform.LiveUpdateDirector
+import app.simt.echo.platform.LiveUpdateSink
 import app.simt.echo.platform.PeerTransport
 import app.simt.echo.platform.Platform
 import app.simt.echo.platform.createHttpClient
@@ -38,6 +40,13 @@ class AppGraph(
     /** On-phone LiteRT model file (W5-01), found by the platform entry
      * point in its models directory; null when none was pushed. */
     val onPhoneModelPath: String? = null,
+    /**
+     * Where Live Update notifications are drawn (W13-10) and the SDK int
+     * that picks their style. Null (previews, tests, iOS) means none are
+     * posted; the Android entry point passes its notification sink.
+     */
+    private val liveUpdateSink: LiveUpdateSink? = null,
+    private val sdkInt: Int = 0,
 ) {
     /** Root of all on-disk state (plan §5.3). Empty only in previews/tests. */
     val fileStore: FileStore by lazy {
@@ -56,6 +65,11 @@ class AppGraph(
      * @return how many routes were purged.
      */
     fun purgeExpiredRoutes(nowMs: Long): Int = routeRepository.purgeExpired(nowMs)
+
+    /** Live Updates director (W13-10), or null when no sink was provided. */
+    val liveUpdates: LiveUpdateDirector? by lazy {
+        liveUpdateSink?.let { LiveUpdateDirector(it, sdkInt) }
+    }
 
     /** Persisted tunables (W4-02): capture, navigation and Settings all
      * read the calibrated step-K from here — never a hard-coded default. */

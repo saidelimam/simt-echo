@@ -41,6 +41,16 @@ object NoCueOutput : CueOutput {
 @Composable
 expect fun rememberWearNavSink(): (app.simt.echo.nav.NavWearState) -> Unit
 
+/**
+ * Asks for the notification permission in context (plan W13-10): returns
+ * the function the screen calls from the user's own start of a walk. It
+ * follows [notificationPermissionDecision] — asked at most once, never at
+ * launch, and a refusal just means no notification. No-op where there is
+ * no such permission (iOS in v1).
+ */
+@Composable
+expect fun rememberNotificationPermissionRequest(): () -> Unit
+
 /** The platform's [CueOutput]; [earconsEnabled] is the Settings opt-in (default off). */
 @Composable
 expect fun rememberCueOutput(earconsEnabled: Boolean): CueOutput

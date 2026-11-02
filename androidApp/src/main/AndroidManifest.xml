@@ -10,6 +10,10 @@
          Processing send; deliberately no FOREGROUND_SERVICE permissions —
          2.0 is screen-on only (decision recorded in LiveUpdate.kt). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Android 16+: lets the navigation notification ask to be promoted
+         ongoing (a Live Update). Normal permission, no prompt; the user can
+         still switch promotion off per app. -->
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.sensor.accelerometer" android:required="false" />

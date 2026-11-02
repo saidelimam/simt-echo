@@ -206,6 +206,56 @@ class LiveUpdateTest {
     }
 
     @Test
+    fun lockScreenTextNamesNeitherTheRouteNorTheInstruction() {
+        val ui = walkUi(instruction = "Turn left at the Red door in 12 m")
+        val content = liveUpdateForNav(
+            ui,
+            legLengthsM = listOf(10.0, 20.0),
+            landmarks = listOf(LandmarkMark(10.0, "Red door")),
+            routeName = "Evening loop",
+        )
+        assertEquals("Navigating", content.publicText)
+        assertTrue(!content.publicText.contains("Evening loop"))
+        assertTrue(!content.publicText.contains("Red door"))
+        // Processing keeps its own, equally generic, line.
+        assertEquals(
+            LIVE_UPDATE_PUBLIC_PROCESSING_TEXT,
+            liveUpdateForProcessing(ProcessingPhase.Uploading)?.publicText,
+        )
+    }
+
+    @Test
+    fun directorPostsAChangeOnceNotEveryFrame() {
+        val sink = FakeSink()
+        val director = LiveUpdateDirector(sink, 36)
+        fun post(ui: NavUi) = director.updateNav(
+            ui = ui, legLengthsM = listOf(10.0, 20.0), landmarks = emptyList(), routeName = "Loop",
+        )
+        repeat(20) { post(walkUi(progress01 = 0.5)) }
+        assertEquals(1, sink.shown.size, "identical frames must not re-post")
+        post(walkUi(progress01 = 0.6, instruction = "Turn left in 8 m"))
+        assertEquals(2, sink.shown.size)
+    }
+
+    @Test
+    fun arrivalDismissesTheOngoingNotification() {
+        val sink = FakeSink()
+        val director = LiveUpdateDirector(sink, 36)
+        director.updateNav(ui = walkUi(), legLengthsM = listOf(10.0), landmarks = emptyList(), routeName = "Loop")
+        director.updateNav(
+            ui = walkUi().copy(phase = NavPhase.ARRIVED),
+            legLengthsM = listOf(10.0),
+            landmarks = emptyList(),
+            routeName = "Loop",
+        )
+        assertEquals(listOf(NAV_LIVE_UPDATE_ID), sink.dismissed)
+        assertEquals(1, sink.shown.size)
+        // A fresh walk posts again after a dismiss.
+        director.updateNav(ui = walkUi(), legLengthsM = listOf(10.0), landmarks = emptyList(), routeName = "Loop")
+        assertEquals(2, sink.shown.size)
+    }
+
+    @Test
     fun permissionPrimingAsksOnceInContext() {
         assertEquals(
             NotificationPermissionDecision.NOT_NEEDED,

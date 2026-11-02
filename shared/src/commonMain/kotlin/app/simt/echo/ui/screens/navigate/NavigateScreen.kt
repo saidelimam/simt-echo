@@ -42,12 +42,14 @@ import app.simt.echo.nav.NavUi
 import app.simt.echo.platform.CameraRecorder
 import app.simt.echo.platform.CaptureScreen
 import app.simt.echo.platform.KeepScreenOn
+import app.simt.echo.platform.LiveUpdateDirector
 import app.simt.echo.platform.MotionSource
 import app.simt.echo.platform.cameraGraphFor
 import app.simt.echo.platform.rememberCameraRecorder
 import app.simt.echo.platform.rememberCueOutput
 import app.simt.echo.platform.rememberHaptics
 import app.simt.echo.platform.rememberMotionSource
+import app.simt.echo.platform.rememberNotificationPermissionRequest
 import app.simt.echo.platform.rememberOnline
 import app.simt.echo.platform.rememberWearNavSink
 import app.simt.echo.ui.components.CosmosBanner
@@ -100,11 +102,14 @@ fun NavigateScreen(
      * must not touch the stored posterior (the practice tour).
      */
     configs: ConfigRepository? = null,
+    /** Live Updates (W13-10); null for walks that post no notification. */
+    liveUpdates: LiveUpdateDirector? = null,
 ) {
     val motion = motionSource ?: rememberMotionSource()
     val haptics = rememberHaptics()
     val cues = rememberCueOutput(earconsEnabled = config.earcons)
     val wearNav = rememberWearNavSink()
+    val requestNotifications = rememberNotificationPermissionRequest()
     val online = rememberOnline()
     KeepScreenOn()
     // Scoped to this navigation back-stack entry, not `remember`: popping
@@ -114,12 +119,15 @@ fun NavigateScreen(
         key = routeId,
         factory = viewModelFactory {
             addInitializer(NavigateViewModel::class) {
-                NavigateViewModel(routeId, routes, motion, haptics, config, trials, device, baselineMode, configs = configs, wearNav = wearNav, cues = cues, onArrived = onArrived, ephemeralRoute = ephemeralRoute)
+                NavigateViewModel(routeId, routes, motion, haptics, config, trials, device, baselineMode, configs = configs, wearNav = wearNav, cues = cues, liveUpdates = liveUpdates, onArrived = onArrived, ephemeralRoute = ephemeralRoute)
             }
         },
     )
     val ui by viewModel.ui.collectAsState()
     LaunchedEffect(Unit) {
+        // Primed in context, from the walk the user is starting: asked at
+        // most once, and a refusal only means no notification.
+        if (liveUpdates != null) requestNotifications()
         viewModel.start()
         viewModel.align()
     }

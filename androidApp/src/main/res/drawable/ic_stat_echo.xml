@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- W13-10: ECHO's own status-bar icon for the navigation Live Update.
+     White on transparent, as the status bar requires: a footfall dot with
+     two echo arcs, the splash mark reduced to what survives at 24 dp. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,14.5m-2.5,0a2.5,2.5 0,1 1,5 0a2.5,2.5 0,1 1,-5 0" />
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:pathData="M7.5,10.5A6,6 0,0 1,16.5 10.5" />
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:pathData="M4.5,7.5A10,10 0,0 1,19.5 7.5" />
+</vector>
