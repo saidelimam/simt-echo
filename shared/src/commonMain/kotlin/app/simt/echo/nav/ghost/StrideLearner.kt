@@ -2,6 +2,7 @@ package app.simt.echo.nav.ghost
 
 import app.simt.echo.capture.STEP_K_MAX
 import app.simt.echo.capture.STEP_K_MIN
+import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.ln
 
@@ -47,13 +48,16 @@ class StrideLearner private constructor(
     /**
      * Folds one anchored leg in. Non-positive or non-finite inputs carry
      * no information and are ignored (legs count unchanged) — a zero
-     * odometer delta is a division-by-zero, never an observation.
+     * odometer delta is a division-by-zero, never an observation. So is an
+     * outlier: `|ln r| >` [OUTLIER_LN_R] (r outside ≈ 0.6..1.65) is a
+     * mis-anchored or partially walked leg, not a gait, and a long one
+     * would otherwise drag the posterior to the clamp.
      */
     fun observe(legLengthM: Double, odoDeltaM: Double) {
         if (!legLengthM.isFinite() || !odoDeltaM.isFinite()) return
         if (legLengthM <= 0.0 || odoDeltaM <= 0.0) return
         val r = legLengthM / odoDeltaM
-        if (!r.isFinite() || r <= 0.0) return
+        if (!r.isFinite() || r <= 0.0 || abs(ln(r)) > OUTLIER_LN_R) return
         val obsVar = OBS_VAR_UNIT / legLengthM
         val priorPrec = 1.0 / variance
         val obsPrec = 1.0 / obsVar
@@ -69,6 +73,9 @@ class StrideLearner private constructor(
 
         /** Observation variance for a 1 m leg; scales as 1/leg length. */
         const val OBS_VAR_UNIT = 0.04
+
+        /** Outlier gate on `|ln r|`: observations beyond it are rejected. */
+        const val OUTLIER_LN_R = 0.5
 
         /**
          * Restores a persisted posterior: the stored mean (minus the

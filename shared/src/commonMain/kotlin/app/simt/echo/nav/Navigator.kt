@@ -90,6 +90,15 @@ class Navigator(
      */
     private var legStartOdo: Double = 0.0
 
+    /**
+     * Whether `dist - legStartOdo` is a whole-leg odometer reading the
+     * stride learner may fold in. False after a relock (the origin is the
+     * found position mid-leg) and after an observation (an anchored leg
+     * is counted once, not again when its turn is detected); true again
+     * at every real leg start.
+     */
+    private var legOdoValid: Boolean = true
+
     private var phase: NavPhase = NavPhase.ALIGN
     private var legIndex: Int = 0
     private var dist: Double = 0.0
@@ -209,6 +218,7 @@ class Navigator(
         legStartDist = dist
         lastAnchorDist = dist
         legStartOdo = dist
+        legOdoValid = true
         lastAnchorLegIndex = 0
         yawOffset = wrapPi(degToRad(leg?.headingRelDeg ?: 0.0) - yaw)
         turnDetector.reset()
@@ -336,7 +346,7 @@ class Navigator(
         if (phase == NavPhase.ALIGN || phase == NavPhase.ARRIVED || phase == NavPhase.RELOCKING) return
         val target = targetNode ?: return
         val currentLeg = leg ?: return
-        strideLearner.observe(currentLeg.lengthM, dist - legStartOdo)
+        learnStride(currentLeg)
         // We are at the node: snap the odometer so progress reads exactly
         // the leg length, and anchor σ here.
         legStartDist = dist - currentLeg.lengthM
@@ -574,6 +584,7 @@ class Navigator(
         legStartDist = geometry.legStartS(legIndex)
         lastAnchorDist = clamped
         legStartOdo = dist
+        legOdoValid = false
         lastAnchorLegIndex = legIndex
         yawOffset = wrapPi(geometry.headingAt(clamped) - yaw)
         tickedLegIndex = -1
@@ -618,6 +629,7 @@ class Navigator(
         legStartDist = dist
         lastAnchorDist = dist
         legStartOdo = dist
+        legOdoValid = true
         lastAnchorLegIndex = legIndex
         yawOffset = wrapPi(degToRad(leg?.headingRelDeg ?: 0.0) - yaw)
         tickedLegIndex = -1
@@ -636,10 +648,16 @@ class Navigator(
         setPhase(NavPhase.WALK)
     }
 
+    /** Folds the finished [leg] into the stride posterior, once per leg. */
+    private fun learnStride(leg: RouteLeg) {
+        if (legOdoValid) strideLearner.observe(leg.lengthM, dist - legStartOdo)
+        legOdoValid = false
+    }
+
     private fun advanceLeg(anchorKind: AnchorKind?) {
         val target = targetNode
         if (anchorKind != null && target != null) {
-            leg?.let { strideLearner.observe(it.lengthM, dist - legStartOdo) }
+            leg?.let { learnStride(it) }
             emit(NavEvent.Anchor(anchorKind, target.id, absoluteS))
             emit(NavEvent.Haptic(HapticPattern.CONFIRM))
         }
@@ -655,6 +673,7 @@ class Navigator(
         legStartDist = dist
         lastAnchorDist = dist
         legStartOdo = dist
+        legOdoValid = true
         ghost?.let {
             // Absolute filter position is continuous across legs; only the
             // leg origin moves, to the new leg's start in route domain.

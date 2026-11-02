@@ -2,6 +2,8 @@ package app.simt.echo.nav
 
 import app.simt.echo.Fixtures
 import app.simt.echo.model.EchoConfig
+import app.simt.echo.model.NavigatorEngine
+import app.simt.echo.nav.ghost.FingerprintHit
 import app.simt.echo.nav.ghost.GhostFilter
 import app.simt.echo.nav.ghost.StrideLearner
 import app.simt.echo.platform.MotionUpdate
@@ -32,13 +34,29 @@ class StrideLearnerTest {
 
     @Test
     fun clampsToPlausibleBand() {
+        // The steepest accepted gait (r = 1.6) on a very long leg still
+        // cannot push the mean past the W4-02 ceiling.
         val high = StrideLearner()
-        repeat(20) { high.observe(100.0, 1.0) }
+        repeat(20) { high.observe(100.0, 100.0 / 1.6) }
         assertTrue(high.meanK <= 1.5, "meanK was ${high.meanK}")
+        assertTrue(high.meanK > 1.45, "meanK was ${high.meanK}")
+    }
 
-        val low = StrideLearner()
-        repeat(20) { low.observe(1.0, 100.0) }
-        assertTrue(low.meanK >= 0.15, "meanK was ${low.meanK}")
+    @Test
+    fun rejectsOutlierRatios() {
+        val learner = StrideLearner()
+        // r = 2.0 and r = 0.5: a mis-anchored or half-walked leg, not a gait.
+        repeat(5) {
+            learner.observe(20.0, 10.0)
+            learner.observe(10.0, 20.0)
+        }
+        assertEquals(0, learner.legs)
+        assertEquals(1.0, learner.meanK, 1e-9)
+
+        // Inside the gate (r = 1.2, 0.8) both still count.
+        learner.observe(20.0, 20.0 / 1.2)
+        learner.observe(20.0, 20.0 / 0.8)
+        assertEquals(2, learner.legs)
     }
 
     @Test
@@ -120,11 +138,57 @@ class StrideLearnerTest {
         }
         walk(0.0)
         nav.onInput(NavInput.Aligned)
-        // Follower odometer reads 10 m for the 20 m opening leg.
-        walk(5.0)
-        walk(10.0)
+        // Follower odometer reads 14 m for the 20 m opening leg (r = 1.43).
+        walk(7.0)
+        walk(14.0)
         nav.onInput(NavInput.SeeLandmark)
         assertEquals(1, nav.learnedStrideLegs)
-        assertTrue(nav.learnedStrideK in 1.5..1.9, "learned K was ${nav.learnedStrideK}")
+        assertTrue(nav.learnedStrideK in 1.2..1.5, "learned K was ${nav.learnedStrideK}")
+    }
+
+    /** Walks at [yawDeg] by raw odometer increments, one update per 0.5 m. */
+    private fun feed(nav: Navigator, fromM: Double, toM: Double, yawDeg: Double) {
+        var d = fromM
+        var t = 1_000_000_000L + (fromM * 1e9).toLong()
+        while (d < toM - 1e-9) {
+            d = minOf(d + 0.5, toM)
+            t += 500_000_000L
+            nav.onInput(NavInput.Motion(MotionUpdate(t, d, deg(yawDeg), 0, true, null, "test")))
+        }
+    }
+
+    @Test
+    fun anchoredTurnLegIsObservedOnceNotAgainWhenTheTurnIsDetected() {
+        val nav = Navigator(Fixtures.L_ROUTE, EchoConfig())
+        feed(nav, 0.0, 0.0, 0.0)
+        nav.onInput(NavInput.Aligned)
+        feed(nav, 0.0, 17.0, 0.0)
+        nav.onInput(NavInput.SeeLandmark)
+        assertEquals(1, nav.learnedStrideLegs)
+        assertEquals(NavPhase.TURNING, nav.ui.value.phase)
+
+        // The turn is then detected: the leg must not be folded in twice.
+        feed(nav, 17.0, 24.0, 90.0)
+        assertEquals(1, nav.ui.value.legIndex)
+        assertEquals(1, nav.learnedStrideLegs)
+    }
+
+    @Test
+    fun relockedLegIsNotObservedFromAMidLegOdometerOrigin() {
+        val nav = Navigator(Fixtures.L_ROUTE, EchoConfig(navigatorEngine = NavigatorEngine.GHOST))
+        feed(nav, 0.0, 0.0, 0.0)
+        nav.onInput(NavInput.Aligned)
+        feed(nav, 0.0, 15.0, 0.0)
+        nav.onInput(NavInput.Lost)
+        nav.onFingerprintHit(FingerprintHit(nodeS = 5.0, similarity01 = 0.95, label = "Start"))
+        nav.confirmFingerprint()
+        assertEquals(NavPhase.WALK, nav.ui.value.phase)
+
+        // 14 m after the lock the walker taps "I see it": r would be
+        // ≈ 1.43 against the full leg length, inside the outlier gate, but
+        // the odometer origin was mid-leg — so nothing is learned.
+        feed(nav, 15.0, 29.0, 0.0)
+        nav.onInput(NavInput.SeeLandmark)
+        assertEquals(0, nav.learnedStrideLegs)
     }
 }
