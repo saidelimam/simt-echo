@@ -118,4 +118,24 @@ data class EchoConfig(
     val turnRecentMaxStdDeg: Double = 12.0,
     /** Quiet period after a detected turn, milliseconds. */
     val turnCooldownMs: Long = 2_000L,
+
+    /**
+     * Navigation progress/σ source (plan W12-02). LINEAR is today's
+     * odometer + linear σ, byte-identical forever; GHOST drives the same
+     * §6.4 state machine from the along-route particle filter. Default
+     * LINEAR until the W14-03 field A/B.
+     */
+    val navigatorEngine: NavigatorEngine = NavigatorEngine.LINEAR,
 )
+
+/**
+ * Navigation progress/σ source (plan W12-02).
+ *
+ * Serialized by name; a stored v1 payload without the key decodes to
+ * [LINEAR], so the flag defaults safely backwards.
+ */
+@Serializable
+enum class NavigatorEngine {
+    LINEAR,
+    GHOST,
+}

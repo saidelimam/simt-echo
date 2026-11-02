@@ -5,10 +5,14 @@ import app.simt.echo.capture.wrapPi
 import app.simt.echo.model.EchoConfig
 import app.simt.echo.model.EchoRoute
 import app.simt.echo.model.Landmark
+import app.simt.echo.model.NavigatorEngine
 import app.simt.echo.model.NodeType
 import app.simt.echo.model.RouteLeg
 import app.simt.echo.model.RouteNode
 import app.simt.echo.model.TurnDir
+import app.simt.echo.nav.ghost.GhostFilter
+import app.simt.echo.nav.ghost.Observation
+import app.simt.echo.nav.ghost.RouteGeometry
 import app.simt.echo.platform.HapticPattern
 import app.simt.echo.platform.MotionUpdate
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -36,8 +40,30 @@ import kotlin.math.sqrt
 class Navigator(
     private val route: EchoRoute,
     private val config: EchoConfig = EchoConfig(),
+    ghostSeed: Long = GhostFilter.DEFAULT_SEED,
 ) {
     private val turnDetector = TurnDetector(config)
+
+    /**
+     * Ghost engine (W12-02): non-null exactly when
+     * [EchoConfig.navigatorEngine] is GHOST. Its posterior mean/σ replace
+     * odometer progress and the linear σ below; every phase rule,
+     * threshold and copy string is shared and unchanged.
+     */
+    private val geometry = RouteGeometry(route)
+    private val ghost: GhostFilter? =
+        if (config.navigatorEngine == NavigatorEngine.GHOST) GhostFilter(route, ghostSeed) else null
+
+    /** Previous raw odometer reading, for Ghost per-update deltas. */
+    private var prevOdoM: Double = 0.0
+
+    /**
+     * Raw odometer value where the current leg began. The overshoot guard
+     * below reads this on both engines: overshoot compares metres actually
+     * walked against the leg length, independent of the position belief
+     * (on LINEAR it always equals [legStartDist]).
+     */
+    private var legStartOdo: Double = 0.0
 
     private var phase: NavPhase = NavPhase.ALIGN
     private var legIndex: Int = 0
@@ -91,10 +117,13 @@ class Navigator(
         get() = leg?.let { l -> route.nodes.firstOrNull { it.id == l.toNode } }
     private val anchorNode: RouteNode?
         get() = route.nodes.getOrNull(lastAnchorLegIndex)
-    private val progress: Double get() = dist - legStartDist
+    /** Absolute route position: raw odometer on LINEAR, filter mean on GHOST. */
+    private val absoluteS: Double get() = ghost?.meanS ?: dist
+    private val progress: Double get() = absoluteS - legStartDist
     private val remaining: Double get() = (leg?.lengthM ?: 0.0) - progress
     private val uncertainty: Double
-        get() = config.navUncertaintyBaseM + config.navUncertaintyPerMetre * (dist - lastAnchorDist)
+        get() = ghost?.sigma
+            ?: (config.navUncertaintyBaseM + config.navUncertaintyPerMetre * (dist - lastAnchorDist))
     private val arrow: Double
         get() = leg?.let { wrapPi(degToRad(it.headingRelDeg) - (yaw + yawOffset)) } ?: 0.0
     private val isLastLeg: Boolean get() = legIndex >= route.legs.lastIndex
@@ -106,11 +135,20 @@ class Navigator(
         if (phase != NavPhase.ALIGN) return
         legStartDist = dist
         lastAnchorDist = dist
+        legStartOdo = dist
         lastAnchorLegIndex = 0
         yawOffset = wrapPi(degToRad(leg?.headingRelDeg ?: 0.0) - yaw)
         turnDetector.reset()
         yawTrail.clear()
         legYaws.clear()
+        prevOdoM = dist
+        ghost?.let {
+            // Route position is known exactly at alignment: odometer
+            // domain (dist) is replaced by route domain (s = 0).
+            legStartDist = 0.0
+            lastAnchorDist = 0.0
+            it.reset(0.0)
+        }
         setPhase(NavPhase.WALK)
     }
 
@@ -123,6 +161,12 @@ class Navigator(
             return
         }
         legYaws += update.yawRad
+        ghost?.let {
+            val delta = dist - prevOdoM
+            prevOdoM = dist
+            if (delta > 0.0) it.predict(delta)
+            it.observe(Observation.Heading(yaw + yawOffset, update.headingQuality))
+        }
         applyCorridorSnapping(update)
         val detected = turnDetector.onSample(update.tNs, update.yawRad)
         if (detected != null) {
@@ -140,7 +184,7 @@ class Navigator(
         when (phase) {
             NavPhase.WALK, NavPhase.APPROACH -> onWalkMotion()
             NavPhase.CONFIRM -> {
-                if (dist - confirmEntryDist >= config.navConfirmAutoAdvanceM) advanceLeg(null)
+                if (absoluteS - confirmEntryDist >= config.navConfirmAutoAdvanceM) advanceLeg(null)
             }
             NavPhase.TURNING -> if (overshot()) enterUncertain(null)
             else -> Unit
@@ -175,6 +219,7 @@ class Navigator(
 
     private fun onTurnDetected(detected: DetectedTurn) {
         val target = targetNode ?: return
+        ghost?.observe(Observation.Turn(detected.dir))
         val expected = target.turn?.takeIf { target.type == NodeType.TURN }
         when {
             expected == null -> enterOffRoute(offRouteCopy())
@@ -193,8 +238,17 @@ class Navigator(
         // the leg length, and anchor σ here.
         legStartDist = dist - currentLeg.lengthM
         lastAnchorDist = dist
+        legStartOdo = dist - currentLeg.lengthM
+        ghost?.let {
+            // Hard anchor: the filter collapses to the node ± 1 m and the
+            // leg origin moves with it in route domain.
+            val nodeS = geometry.nodeS(target.id) ?: it.meanS
+            it.observe(Observation.Anchor(nodeS))
+            legStartDist = nodeS - currentLeg.lengthM
+            lastAnchorDist = it.meanS
+        }
         lastAnchorLegIndex = (legIndex + 1).coerceAtMost(route.legs.lastIndex)
-        emit(NavEvent.Anchor(AnchorKind.LANDMARK, target.id, dist))
+        emit(NavEvent.Anchor(AnchorKind.LANDMARK, target.id, absoluteS))
         confirmAutoAdvanceProgress = null
         when {
             target.type == NodeType.TURN -> {
@@ -233,6 +287,7 @@ class Navigator(
         legIndex = toLegIndex.coerceIn(0, route.legs.lastIndex)
         legStartDist = dist
         lastAnchorDist = dist
+        legStartOdo = dist
         lastAnchorLegIndex = legIndex
         yawOffset = wrapPi(degToRad(leg?.headingRelDeg ?: 0.0) - yaw)
         tickedLegIndex = -1
@@ -240,13 +295,20 @@ class Navigator(
         turnDetector.reset()
         yawTrail.clear()
         legYaws.clear()
+        prevOdoM = dist
+        ghost?.let {
+            val s = geometry.legStartS(legIndex)
+            legStartDist = s
+            lastAnchorDist = s
+            it.reset(s)
+        }
         setPhase(NavPhase.WALK)
     }
 
     private fun advanceLeg(anchorKind: AnchorKind?) {
         val target = targetNode
         if (anchorKind != null && target != null) {
-            emit(NavEvent.Anchor(anchorKind, target.id, dist))
+            emit(NavEvent.Anchor(anchorKind, target.id, absoluteS))
             emit(NavEvent.Haptic(HapticPattern.CONFIRM))
         }
         if (isLastLeg) {
@@ -256,6 +318,14 @@ class Navigator(
         legIndex += 1
         legStartDist = dist
         lastAnchorDist = dist
+        legStartOdo = dist
+        ghost?.let {
+            // Absolute filter position is continuous across legs; only the
+            // leg origin moves, to the new leg's start in route domain.
+            val s = geometry.legStartS(legIndex)
+            legStartDist = s
+            lastAnchorDist = it.meanS
+        }
         lastAnchorLegIndex = legIndex
         confirmAutoAdvanceProgress = null
         legYaws.clear()
@@ -263,7 +333,7 @@ class Navigator(
     }
 
     private fun enterConfirm() {
-        confirmEntryDist = dist
+        confirmEntryDist = absoluteS
         setPhase(NavPhase.CONFIRM)
     }
 
@@ -316,7 +386,7 @@ class Navigator(
 
     private fun overshot(): Boolean {
         val length = leg?.lengthM ?: return false
-        return progress > length + max(
+        return dist - legStartOdo > length + max(
             config.navUncertainOvershootMinM,
             config.navUncertainOvershootFraction * length,
         )
