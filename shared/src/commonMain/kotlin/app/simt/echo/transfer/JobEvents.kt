@@ -3,6 +3,9 @@ package app.simt.echo.transfer
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -115,7 +118,20 @@ sealed interface JobEvent {
         val candidatesRaw: String,
     ) : JobEvent
 
-    data class Usage(override val id: String) : JobEvent
+    /**
+     * Metered cost so far (frozen W10-06 `usage` shape,
+     * `worker/src/types.ts` `UsageEventSchema`). The wire object is
+     * closed but every field is optional — absent when SAM never ran —
+     * so each payload field is nullable here too. The Processing
+     * constellation (W13-06) reads the frame fields for its budget
+     * meter; anything else ignores them.
+     */
+    data class Usage(
+        override val id: String,
+        val samFrames: Int? = null,
+        val samFramesBilled: Int? = null,
+        val budgetExhausted: Boolean = false,
+    ) : JobEvent
 
     data class Complete(override val id: String, val resultRaw: String?) : JobEvent
 
@@ -175,9 +191,26 @@ private fun parseEventData(frameId: String?, data: String): JobEvent? {
             val raw = runCatching { obj["candidates"]?.jsonArray?.toString() }.getOrNull() ?: "[]"
             JobEvent.Checkpoint(id, nodeId, str("status") ?: "", raw)
         }
-        "usage" -> JobEvent.Usage(id)
+        "usage" -> {
+            val uso = obj["usage"]?.jsonObjectOrNull()
+            JobEvent.Usage(
+                id,
+                samFrames = uso?.intOrNull("samFrames"),
+                samFramesBilled = uso?.intOrNull("samFramesBilled"),
+                budgetExhausted = uso?.boolOrNull("budgetExhausted") ?: false,
+            )
+        }
         "complete" -> JobEvent.Complete(id, obj["result"]?.toString())
         "error" -> JobEvent.Error(id, str("error") ?: "unknown")
         else -> JobEvent.Unknown(id)
     }
 }
+
+private fun kotlinx.serialization.json.JsonElement.jsonObjectOrNull(): JsonObject? =
+    runCatching { jsonObject }.getOrNull()
+
+private fun JsonObject.intOrNull(key: String): Int? =
+    runCatching { get(key)?.jsonPrimitive?.intOrNull }.getOrNull()?.takeIf { it >= 0 }
+
+private fun JsonObject.boolOrNull(key: String): Boolean? =
+    runCatching { get(key)?.jsonPrimitive?.booleanOrNull }.getOrNull()

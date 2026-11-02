@@ -153,6 +153,24 @@ class ProcessingViewModel(
     private val _partials = MutableStateFlow<Map<String, List<AiCandidate>>>(emptyMap())
     val partials: StateFlow<Map<String, List<AiCandidate>>> = _partials.asStateFlow()
 
+    /**
+     * Constellation state (plan W13-06): one star per checkpoint, moved
+     * only by `checkpoint` events, plus the frame-budget meter fed only
+     * by `usage` events. Stars reflect the last-seen event and nothing
+     * else — no timers, no stage inference.
+     */
+    private val _constellation = MutableStateFlow(ConstellationUiState())
+    val constellation: StateFlow<ConstellationUiState> = _constellation.asStateFlow()
+
+    /** Last-seen checkpoint status per node id (QUEUED when absent). */
+    private val starStates = mutableMapOf<String, StarState>()
+
+    /** Max-seen billed frames across `usage` events; never decreases. */
+    private var framesUsed: Int = 0
+
+    /** Sticky: the worker's governor refused a call for frame budget. */
+    private var budgetExhausted: Boolean = false
+
     private var counts: ConsentInfo = ConsentInfo(0, 0, false)
 
     /** Route the in-flight upload/watch was built from; feeds partial merges. */
@@ -194,6 +212,13 @@ class ProcessingViewModel(
             }
             val checkpoints = route.nodes.count { it.type != NodeType.START && it.captureTMs != null }
             counts = ConsentInfo(photos, if (sam) checkpoints else 0, sam)
+            // Fresh skeleton for the constellation: the route is known,
+            // no events have been seen in this session yet.
+            lastRoute = route
+            starStates.clear()
+            framesUsed = 0
+            budgetExhausted = false
+            publishConstellation()
             val job = drafts.loadJobRecord(draftId)
             if (job != null && job.status != "complete" && job.status != "errored") {
                 _ui.update { it.copy(phase = ProcessingPhase.Working(JobStage.QUEUED), jobId = job.jobId) }
@@ -486,9 +511,35 @@ class ProcessingViewModel(
                 _ui.update { it.copy(phase = ProcessingPhase.Failed(processingJobErrorCopy())) }
                 return true
             }
-            is JobEvent.Usage, is JobEvent.Unknown -> Unit
+            is JobEvent.Usage -> onUsageEvent(event)
+            is JobEvent.Unknown -> Unit
         }
         return false
+    }
+
+    /**
+     * Records one `usage` event on the budget meter (plan W13-06): the
+     * billed-frames high-water mark only moves up, and the exhausted flag
+     * is sticky. Anything else about the event is ignored — the meter
+     * shows what the worker metered, never an estimate.
+     */
+    private fun onUsageEvent(event: JobEvent.Usage) {
+        val frames = event.samFramesBilled ?: event.samFrames
+        if (frames != null && frames > framesUsed) framesUsed = frames
+        if (event.budgetExhausted) budgetExhausted = true
+        publishConstellation()
+    }
+
+    /** Publishes the constellation from the route + last-seen event state. */
+    private fun publishConstellation() {
+        val route = lastRoute ?: return
+        _constellation.update {
+            ConstellationUiState(
+                stars = constellationStars(route, starStates),
+                framesUsed = framesUsed,
+                budgetExhausted = budgetExhausted,
+            )
+        }
     }
 
     /**
@@ -501,6 +552,10 @@ class ProcessingViewModel(
     private fun onPartialCheckpoint(jobId: String, event: JobEvent.Checkpoint, lastId: String?) {
         val route = lastRoute ?: drafts.loadDraftRoute(draftId) ?: return
         lastRoute = route
+        // The star moves on the event status alone — even when the
+        // candidates below turn out garbled, the checkpoint happened.
+        starStateForStatus(event.status)?.let { starStates[event.nodeId] = it }
+        publishConstellation()
         val candidates = runCatching {
             EchoJson.decodeFromString<List<AiCandidate>>(event.candidatesRaw)
         }.getOrNull() ?: return
@@ -531,6 +586,10 @@ class ProcessingViewModel(
         partialResult = null
         _partials.update { emptyMap() }
         drafts.clearPartialResult(draftId)
+        starStates.clear()
+        framesUsed = 0
+        budgetExhausted = false
+        publishConstellation()
     }
 
     /**
