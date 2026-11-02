@@ -86,3 +86,44 @@ vendor-billed cost, and total latency to this file.
   heading contrast is poor on-device (headings near-unreadable) —
   owned by W8-02's contrast gate; "Start: Start" node-label
   duplication — owned by W8-10. Wave 8 proceeds on this verdict.
+
+## Live AI envelope (W9-02, 2026-11-02) — measured, not claimed
+
+- Job `56a0b9d4-4587-4d55-979f-8c04d8433ccd` on
+  `https://api.echo.simt.app` (deploy `47544eee`, AI Gateway `echo`):
+  POST 202 → scouting (~50 s) → grounding (box-only fallthrough) →
+  `complete`, result fetched (readable), `DELETE` 204 → `GET` 404
+  `job_not_found` (workflow delete is eventual, ~45 s — same as
+  W9-01). Full lifecycle on production code and data.
+- Route honesty: fixture-built, NOT walked — 60.0 m, 7 checkpoints
+  (TURN/CHECKPOINT/LEVEL_CHANGE/DESTINATION) from the
+  `jobs.test.ts validManifest` pattern, keyed 1:1 to checkpoints.
+  All 7 keyframes reuse one real emulator-camera door photo
+  (199,845-byte JPEG that completed two single-checkpoint probes;
+  three UI-screenshot JPEGs were tried first and the live models
+  returned no parseable `response` for them — content-dependent
+  model behavior, recorded, not retried further). What is genuinely
+  measured: the cloud pipeline over 7 checkpoints (scout latency,
+  cost basis, grounding fallthrough). Real-walk proof stays with
+  W9-06.
+- Measured: `scoutMs: 53175` (7 live Llama 4 Scout image calls, no
+  Gemma fallback needed), `samMs/samFrames` absent (no META_API
+  key anywhere — SAM grounding off by config, `ground: none`),
+  end-to-end POST→complete 66 s.
+- Envelope vs §7.4 (~$0.16/route, <2 min): latency 66 s ✓ within;
+  cost is 7 Workers AI Scout image calls on postpaid gateway
+  billing (cents scale — exact invoice cents meter in the
+  dashboard, not the API) ✓ within the cents-scale scout budget;
+  Spark not enabled (not run); SAM path unmeasured by config
+  (recorded, not claimed).
+- Review model-naming: verified against `CandidateMerger.modelsLine`
+  — it renders server-supplied `models.scout/ground` verbatim
+  ("@cf/meta/llama-4-scout-17b-16e-instruct (box-only)"), matching
+  exactly what ran; `consentCopy` matches deployed reality. No
+  copy change needed.
+- Evidence archived: `docs/measurements/w9-02-56a0b9d4-result.json`
+  (live result), `docs/measurements/w9-02-manifest.json` (the exact
+  submitted manifest). Diagnostic/errored jobs (`2f59d100`
+  media_missing arg bug, `69240608` + `a378a2cf` model no-response
+  on UI screenshots, `85dc0c79` known-good probe) were all
+  deleted (204 → 404).
