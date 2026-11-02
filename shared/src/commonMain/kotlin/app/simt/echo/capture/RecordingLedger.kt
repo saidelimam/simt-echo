@@ -18,12 +18,18 @@ import kotlin.math.abs
  * Threading: [onFrame] runs on the analysis thread, [onMotion] on the
  * motion collector. Motion state and the ledger each sit behind their own
  * lock so a JPEG write never stalls the motion collector.
+ *
+ * Every frame's [LedgerOffer] outcome is handed to [onOffer] on the analysis
+ * thread, after the ledger lock is released. The listener must not block:
+ * it is how presentation readers (Record's gold brackets) learn what the
+ * ledger kept without touching the ledger or its lock.
  */
 class RecordingLedger(
     private val drafts: DraftRepository,
     private val draftId: String,
     private val tap: FrameTap,
     bucketMeters: Double = GlimpseLedger.BUCKET_METERS,
+    private val onOffer: (LedgerOffer) -> Unit = {},
 ) : FrameConsumer {
     private val ledger = GlimpseLedger(bucketMeters, DraftLedgerStore())
     private val ledgerLock = PoolLock()
@@ -53,7 +59,8 @@ class RecordingLedger(
 
     override fun onFrame(sample: FrameSample) {
         val (odometer, omega) = motionLock.withLock { odometerM to omegaRadPerSec }
-        ledgerLock.withLock { ledger.offer(sample, odometer, omega) }
+        val offer = ledgerLock.withLock { ledger.offer(sample, odometer, omega) }
+        onOffer(offer)
     }
 
     /**

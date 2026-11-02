@@ -13,9 +13,13 @@ import app.simt.echo.platform.MotionSource
 import app.simt.echo.platform.MotionUpdate
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -72,6 +76,16 @@ class CaptureSession(
 
     private val _hud = MutableStateFlow(CaptureHud())
     val hud: StateFlow<CaptureHud> = _hud.asStateFlow()
+
+    // Hot and lossy on purpose: the analysis thread emits with tryEmit, and a
+    // slow or absent collector costs the oldest offer, never a stalled frame.
+    private val _ledgerOffers = MutableSharedFlow<LedgerOffer>(
+        extraBufferCapacity = LEDGER_OFFER_BUFFER,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+
+    /** Every glimpse-ledger outcome while recording, for presentation readers only. */
+    val ledgerOffers: SharedFlow<LedgerOffer> = _ledgerOffers.asSharedFlow()
 
     private var draftId: String? = null
     private var videoStartNs: Long = 0L
@@ -130,7 +144,7 @@ class CaptureSession(
         // Calibrated geometry in, raw sensors out: the configured step K
         // reaches any calibratable source (W4-02); others ignore it.
         (motion as? StepCalibratable)?.stepK = config.stepK
-        val recordingLedger = RecordingLedger(drafts, id, camera.frameTap)
+        val recordingLedger = RecordingLedger(drafts, id, camera.frameTap, onOffer = { _ledgerOffers.tryEmit(it) })
         ledger = recordingLedger
         // Subscribe before motion starts so no early step is lost.
         collectJob = scope.launch { motion.updates.collect(::onUpdate) }
@@ -253,5 +267,8 @@ class CaptureSession(
         const val START_PHOTO = "start.jpg"
         const val VIDEO_FILE = "video.mp4"
         const val HEARTBEAT_NS = 500_000_000L
+
+        /** Ledger offers buffered for a slow reader (8 Hz frames ≈ 2 s of slack). */
+        const val LEDGER_OFFER_BUFFER = 16
     }
 }

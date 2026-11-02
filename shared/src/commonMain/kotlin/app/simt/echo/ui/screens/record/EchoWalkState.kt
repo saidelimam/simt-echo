@@ -6,6 +6,7 @@ import app.simt.echo.nav.TurnDetector
 import app.simt.echo.platform.MotionUpdate
 import app.simt.echo.platform.currentEpochMs
 import app.simt.echo.ui.atmosphere.CosmosMotionDurations
+import kotlinx.coroutines.flow.Flow
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -25,9 +26,10 @@ import kotlin.math.sin
 //
 // CaptureSession is untouched: the tracker below is a second,
 // presentation-only reader of the same motion flow (PDR multicasts),
-// exactly like the heading tick. The ledger highlight is a nullable
-// consumer seam: the FrameTap→ledger pipeline (W11-02) forwards offers
-// via [EchoWalkTracker.onLedgerOffer]; until then null shows nothing.
+// exactly like the heading tick. The ledger highlight reads
+// CaptureSession.ledgerOffers through [EchoWalkTracker.collectLedgerOffers];
+// with no offers (ledger off, no frames) the highlight stays null and
+// nothing shows.
 // Screenshots are N/A in CI, so the tags above are the V-review hooks.
 
 /** Annotated points on the walked trail. */
@@ -148,6 +150,17 @@ class EchoWalkTracker(
             highlight = LedgerHighlight(score = offer.score, novelty = offer.novelty, atMs = nowMs())
         }
         keptScores += offer.score
+    }
+
+    /**
+     * Feeds [offers] into [onLedgerOffer] until cancelled, calling
+     * [onChanged] after each one so the caller can refresh its snapshot.
+     */
+    suspend fun collectLedgerOffers(offers: Flow<LedgerOffer>, onChanged: () -> Unit) {
+        offers.collect {
+            onLedgerOffer(it)
+            onChanged()
+        }
     }
 
     fun clearHighlight() {

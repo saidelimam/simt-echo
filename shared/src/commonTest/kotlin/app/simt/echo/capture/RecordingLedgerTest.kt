@@ -83,6 +83,19 @@ class RecordingLedgerTest {
     }
 
     @Test
+    fun everyFrameOutcomeIsForwardedToTheListener() {
+        val seen = mutableListOf<LedgerOffer>()
+        val listening = RecordingLedger(drafts, "d1", tap, onOffer = { seen += it })
+
+        // Same bucket, same pixels: first-kept-wins, so the second is Dropped.
+        listening.onFrame(sharp(tNs = 1L))
+        listening.onFrame(sharp(tNs = 2L))
+
+        assertEquals(listOf("Kept", "Dropped"), seen.map { it::class.simpleName })
+        assertEquals(0L, seen.first().bucketIndex)
+    }
+
+    @Test
     fun yawRateIsTheShortWayRoundTheCircle() {
         // A quarter radian in half a second.
         assertEquals(0.5, yawRate(0.0, 0.25, 500_000_000L), 1e-12)

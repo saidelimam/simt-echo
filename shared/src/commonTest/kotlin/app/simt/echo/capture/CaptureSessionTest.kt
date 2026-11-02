@@ -11,6 +11,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import okio.Path
@@ -139,6 +140,34 @@ class CaptureSessionTest {
         assertTrue(log.samples.size >= 2)
         assertEquals(0.7, log.samples.first().d)
         assertEquals("draft-1", drafts.loadCapture("draft-1")?.draftId)
+    }
+
+    @Test
+    fun ledgerOffersReachSubscribersOnlyWhileRecording() = runTest {
+        val drafts = DraftRepository(FileStore(FakeFileSystem(), "/data".toPath()))
+        val camera = FakeCamera()
+        val session = newSession(FakeMotion(), camera, FakeHaptics(), drafts, this)
+        val offers = mutableListOf<LedgerOffer>()
+        val collector = launch { session.ledgerOffers.collect { offers += it } }
+        val frame = FrameSample(
+            tNs = 5L,
+            width = 32,
+            height = 32,
+            decimation = 1,
+            luma = ByteArray(32 * 32) { i -> (if (((i % 32) / 4 + (i / 32) / 4) % 2 == 0) 200 else 40).toByte() },
+            jpeg = { byteArrayOf(7) },
+        )
+
+        session.ready()
+        session.start()
+        runCurrent()
+        camera.tap.consumer?.onFrame(frame)
+        runCurrent()
+        assertEquals(listOf("Kept"), offers.map { it::class.simpleName })
+
+        session.beginFinish()
+        assertNull(camera.tap.consumer, "frames stop with the consumer, so no offer can follow Finish")
+        collector.cancel()
     }
 
     @Test

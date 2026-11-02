@@ -142,6 +142,9 @@ fun RecordScreen(
             walk = walkTracker.snapshot()
         }
     }
+    LaunchedEffect(session) {
+        walkTracker.collectLedgerOffers(session.ledgerOffers) { walk = walkTracker.snapshot() }
+    }
     val markCount = uiState.hud.marks
     LaunchedEffect(markCount) {
         walkTracker.onMarks(markCount)

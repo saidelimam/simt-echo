@@ -25,6 +25,8 @@ import app.simt.echo.platform.MotionUpdate
 import app.simt.echo.ui.atmosphere.CosmosMotionTier
 import app.simt.echo.ui.atmosphere.ProvideCosmosMotionTier
 import app.simt.echo.ui.theme.EchoTheme
+import kotlinx.coroutines.flow.asFlow
+import kotlinx.coroutines.runBlocking
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -276,6 +278,19 @@ class HostRecordEchoWalkTest {
             isTopDecileAndNovel(0.97, 0.5, List(9) { 0.99 }),
             "below 90 % of priors is not top-decile",
         )
+    }
+
+    @Test
+    fun brackets_followTheSessionLedgerFeed() {
+        val tracker = tracker()
+        val offers = (1..9).map { LedgerOffer.Kept(bucketIndex = it.toLong(), score = it / 10.0, novelty = 1.0) } +
+            LedgerOffer.Replaced(bucketIndex = 2, score = 0.97, novelty = 0.5, oldScore = 0.2)
+        var refreshes = 0
+
+        runBlocking { tracker.collectLedgerOffers(offers.asFlow()) { refreshes++ } }
+
+        assertEquals(offers.size, refreshes, "the screen refreshes its snapshot once per offer")
+        assertEquals(0.97, assertNotNull(tracker.snapshot().highlight).score, 1e-9)
     }
 
     @Test
