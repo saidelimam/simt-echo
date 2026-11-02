@@ -44,6 +44,8 @@ data class SettingsUi(
     val exportNote: String? = null,
     /** Result line after Delete all, or null before the first run. */
     val deleteNote: String? = null,
+    /** Anchored legs folded into the learned stride (W12-03). */
+    val strideLearnedLegs: Int = 0,
 )
 
 private const val CALIBRATION_WALK_M = 10.0
@@ -84,6 +86,7 @@ class SettingsViewModel(
                 preferLocalModel = it.preferLocalModel,
                 onPhoneModel = onPhoneModelName,
                 cloudAiConfigured = cloudAiConfigured,
+                strideLearnedLegs = it.learnedStrideLegs,
             )
         },
     )

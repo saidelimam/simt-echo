@@ -13,6 +13,7 @@ import app.simt.echo.model.TurnDir
 import app.simt.echo.nav.ghost.GhostFilter
 import app.simt.echo.nav.ghost.Observation
 import app.simt.echo.nav.ghost.RouteGeometry
+import app.simt.echo.nav.ghost.StrideLearner
 import app.simt.echo.platform.HapticPattern
 import app.simt.echo.platform.MotionUpdate
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -51,8 +52,26 @@ class Navigator(
      * threshold and copy string is shared and unchanged.
      */
     private val geometry = RouteGeometry(route)
+
+    /**
+     * Self-calibrating stride (W12-03): restored from the persisted
+     * per-device posterior, fed one observation per anchored leg. The
+     * Ghost `k` prior seeds from it at construction; phases, geometry
+     * and thresholds are untouched.
+     */
+    private val strideLearner = StrideLearner.fromStored(config.learnedStepK, config.learnedStrideLegs)
     private val ghost: GhostFilter? =
-        if (config.navigatorEngine == NavigatorEngine.GHOST) GhostFilter(route, ghostSeed) else null
+        if (config.navigatorEngine == NavigatorEngine.GHOST) {
+            GhostFilter(route, ghostSeed, kPriorMean = strideLearner.meanK)
+        } else {
+            null
+        }
+
+    /** Posterior mean K learned from anchored legs so far. */
+    val learnedStrideK: Double get() = strideLearner.meanK
+
+    /** Anchored legs folded into [learnedStrideK] so far. */
+    val learnedStrideLegs: Int get() = strideLearner.legs
 
     /** Previous raw odometer reading, for Ghost per-update deltas. */
     private var prevOdoM: Double = 0.0
@@ -234,6 +253,7 @@ class Navigator(
         if (phase == NavPhase.ALIGN || phase == NavPhase.ARRIVED) return
         val target = targetNode ?: return
         val currentLeg = leg ?: return
+        strideLearner.observe(currentLeg.lengthM, dist - legStartOdo)
         // We are at the node: snap the odometer so progress reads exactly
         // the leg length, and anchor σ here.
         legStartDist = dist - currentLeg.lengthM
@@ -308,6 +328,7 @@ class Navigator(
     private fun advanceLeg(anchorKind: AnchorKind?) {
         val target = targetNode
         if (anchorKind != null && target != null) {
+            leg?.let { strideLearner.observe(it.lengthM, dist - legStartOdo) }
             emit(NavEvent.Anchor(anchorKind, target.id, absoluteS))
             emit(NavEvent.Haptic(HapticPattern.CONFIRM))
         }

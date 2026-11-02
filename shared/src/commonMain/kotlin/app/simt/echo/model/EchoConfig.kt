@@ -126,6 +126,16 @@ data class EchoConfig(
      * LINEAR until the W14-03 field A/B.
      */
     val navigatorEngine: NavigatorEngine = NavigatorEngine.LINEAR,
+    /**
+     * Self-calibrated stride (plan W12-03): posterior mean K learned from
+     * anchored legs, per device. Null until the first anchored leg is
+     * folded in; the Ghost filter's `k` prior seeds from it on the next
+     * walk. Sanitised like [stepK] on read — an implausible stored value
+     * degrades to null rather than poisoning the prior.
+     */
+    val learnedStepK: Double? = null,
+    /** Anchored legs folded into [learnedStepK]; Settings reports it. */
+    val learnedStrideLegs: Int = 0,
 )
 
 /**

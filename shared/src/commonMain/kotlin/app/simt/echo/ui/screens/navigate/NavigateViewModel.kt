@@ -2,6 +2,7 @@ package app.simt.echo.ui.screens.navigate
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.simt.echo.data.ConfigRepository
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.data.TrialRepository
 import app.simt.echo.model.DriftMarker
@@ -39,6 +40,12 @@ class NavigateViewModel(
      * Defaults to the persisted config's mode (W4-02 owns the toggle). */
     val baselineMode: Boolean = config.baselineMode,
     private val nowMs: () -> Long = ::currentEpochMs,
+    /**
+     * Persisted stride posterior (W12-03, per device). Optional so older
+     * call sites keep compiling: when absent the Navigator still learns
+     * within the walk, but nothing is stored.
+     */
+    private val configs: ConfigRepository? = null,
     private val onArrived: (String) -> Unit,
 ) : ViewModel() {
 
@@ -77,7 +84,10 @@ class NavigateViewModel(
                 nav.events.collect { event ->
                     when (event) {
                         is NavEvent.Haptic -> haptics.play(event.pattern)
-                        is NavEvent.Anchor -> anchors++
+                        is NavEvent.Anchor -> {
+                            anchors++
+                            configs?.setLearnedStride(nav.learnedStrideK, nav.learnedStrideLegs)
+                        }
                         is NavEvent.Phase -> when (event.to) {
                             NavPhase.UNCERTAIN -> uncertainEpisodes++
                             NavPhase.OFF_ROUTE -> offRouteEpisodes++
