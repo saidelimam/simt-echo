@@ -256,6 +256,8 @@ fun EchoNavHost(
                             configs = graph.configRepository,
                             trials = graph.trialRepository,
                             sharing = sharing,
+                            routes = graph.routeRepository,
+                            drafts = graph.draftRepository,
                             onPhoneModelName = graph.onPhoneModelPath
                                 ?.substringAfterLast('/'),
                             cloudAiConfigured = graph.cloudAiConfigured,
