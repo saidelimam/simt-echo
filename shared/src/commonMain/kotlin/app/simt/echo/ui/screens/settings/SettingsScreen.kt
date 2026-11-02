@@ -7,30 +7,38 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.simt.echo.ui.components.CosmosDestructiveButton
+import app.simt.echo.ui.components.CosmosDialog
 import app.simt.echo.ui.components.CosmosPrimaryButton
+import app.simt.echo.ui.components.CosmosRecordRow
+import app.simt.echo.ui.components.CosmosRecordRows
 import app.simt.echo.ui.components.CosmosSecondaryButton
+import app.simt.echo.ui.components.CosmosTertiaryButton
+import app.simt.echo.ui.components.CosmosTextField
 import app.simt.echo.ui.components.threeDecimals
 import app.simt.echo.ui.copy.cloudAiStatusCopy
 
 /**
- * Settings: step-K calibration + baseline default (plan §8.3, W4-02).
- *
- * One action per group, words few (§8.4 copy style): the taped 10 m walk
- * corrects the step constant for every future capture, and the baseline
- * toggle hides landmark cards for honest sensor-only trials (W4-01).
+ * Settings in Cosmos (plan W8-11, freeze §5/§7): sectioned rows on the
+ * record grammar — dividers, never nested cards. Step length & calibrate,
+ * Trials & baseline & CSV, Navigation, Privacy & data (Delete all behind
+ * a canopy confirm), Landmark AI status (W7-07 wording, untouched) with
+ * the Advanced local-model rows collapsed by default.
  *
  * W8-05: the shell owns the Settings heading and the Close chrome —
  * [onBack] stays for hosts that render this screen outside the shell.
@@ -42,125 +50,225 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
 ) {
     val ui by viewModel.ui.collectAsStateWithLifecycle()
+    var confirmDelete by remember { mutableStateOf(false) }
+    var advancedExpanded by remember { mutableStateOf(false) }
+    if (confirmDelete) {
+        CosmosDialog(
+            title = "Delete everything?",
+            body = "Routes, drafts, trials and exported files leave this phone. This cannot be undone.",
+            primaryLabel = "Delete all",
+            onPrimary = {
+                viewModel.deleteAll()
+                confirmDelete = false
+            },
+            onDismiss = { confirmDelete = false },
+            secondaryLabel = "Keep",
+            onSecondary = { confirmDelete = false },
+            destructive = true,
+        )
+    }
     Column(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(24.dp),
     ) {
-        Text(text = "Step length", style = MaterialTheme.typography.titleMedium)
-        Text(
-            text = "K = ${threeDecimals(ui.stepK)}",
-            style = MaterialTheme.typography.bodyLarge,
-        )
-        Text(
-            text = "Walk 10 m, enter the reading",
-            style = MaterialTheme.typography.bodyMedium,
-        )
-        OutlinedTextField(
-            value = ui.measuredM,
-            onValueChange = viewModel::onMeasuredChange,
-            label = { Text(text = "Measured metres") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CosmosPrimaryButton(label = "Calibrate", onClick = viewModel::calibrate)
-            CosmosSecondaryButton(label = "Reset", onClick = viewModel::resetK)
-        }
-        ui.calibrationNote?.let { Text(text = it) }
-
-        Text(text = "Trials", style = MaterialTheme.typography.titleMedium)
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(
-                text = "Baseline mode",
-                modifier = Modifier.weight(1f),
-            )
-            Switch(
-                checked = ui.baselineMode,
-                onCheckedChange = viewModel::setBaselineMode,
+        SettingsSection(title = "Step length") {
+            CosmosRecordRows(
+                rows = listOf(
+                    {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                        ) {
+                            Text(
+                                text = "K = ${threeDecimals(ui.stepK)}",
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                            Text(
+                                text = "Walk 10 m, enter the reading",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            CosmosTextField(
+                                label = "Measured metres",
+                                value = ui.measuredM,
+                                onValueChange = viewModel::onMeasuredChange,
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                CosmosPrimaryButton(label = "Calibrate", onClick = viewModel::calibrate)
+                                CosmosSecondaryButton(label = "Reset", onClick = viewModel::resetK)
+                            }
+                            ui.calibrationNote?.let { Text(text = it) }
+                        }
+                    },
+                ),
             )
         }
-        Text(
-            text = "Hides landmark cards: turns and distance only.",
-            style = MaterialTheme.typography.bodyMedium,
-        )
-        CosmosPrimaryButton(label = "Export CSV", onClick = viewModel::exportTrials)
-        ui.exportNote?.let { Text(text = it) }
 
-        Text(text = "Navigation", style = MaterialTheme.typography.titleMedium)
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(
-                text = "Camera overlay",
-                modifier = Modifier.weight(1f),
-            )
-            Switch(
-                checked = ui.cameraOverlayEnabled,
-                onCheckedChange = viewModel::setCameraOverlay,
+        SettingsSection(title = "Trials") {
+            CosmosRecordRows(
+                rows = listOf(
+                    {
+                        CosmosRecordRow(
+                            title = "Baseline mode",
+                            subtitle = "Hides landmark cards: turns and distance only.",
+                            trailing = {
+                                Switch(
+                                    checked = ui.baselineMode,
+                                    onCheckedChange = viewModel::setBaselineMode,
+                                )
+                            },
+                        )
+                    },
+                    {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                        ) {
+                            CosmosPrimaryButton(label = "Export CSV", onClick = viewModel::exportTrials)
+                            ui.exportNote?.let { Text(text = it) }
+                        }
+                    },
+                ),
             )
         }
-        Text(
-            text = "Live camera behind the navigation HUD, with the landmark crop and mask.",
-            style = MaterialTheme.typography.bodyMedium,
-        )
 
-        Text(text = "Landmark AI", style = MaterialTheme.typography.titleMedium)
-        Text(
-            text = cloudAiStatusCopy(ui.cloudAiConfigured),
-            style = MaterialTheme.typography.bodyMedium,
-        )
-
-        Text(text = "Advanced", style = MaterialTheme.typography.titleMedium)
-        Text(
-            text = "Local model (optional). A vision server on your own network, " +
-                "or a model file on this phone. Nothing is sent to the cloud when it runs.",
-            style = MaterialTheme.typography.bodyMedium,
-        )
-        OutlinedTextField(
-            value = ui.localModelBaseUrl,
-            onValueChange = viewModel::onLocalModelBaseUrlChange,
-            label = { Text(text = "LAN server URL") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        OutlinedTextField(
-            value = ui.localModelName,
-            onValueChange = viewModel::onLocalModelNameChange,
-            label = { Text(text = "Model name") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(
-                text = "Prefer local model",
-                modifier = Modifier.weight(1f),
-            )
-            Switch(
-                checked = ui.preferLocalModel,
-                onCheckedChange = viewModel::setPreferLocalModel,
+        SettingsSection(title = "Navigation") {
+            CosmosRecordRows(
+                rows = listOf(
+                    {
+                        CosmosRecordRow(
+                            title = "Camera overlay",
+                            subtitle = "Live camera behind the navigation HUD, with the landmark crop and mask.",
+                            trailing = {
+                                Switch(
+                                    checked = ui.cameraOverlayEnabled,
+                                    onCheckedChange = viewModel::setCameraOverlay,
+                                )
+                            },
+                        )
+                    },
+                ),
             )
         }
+
+        SettingsSection(title = "Privacy & data") {
+            CosmosRecordRows(
+                rows = listOf(
+                    {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                        ) {
+                            Text(
+                                text = "Removes routes, drafts, trials and exported files from this phone.",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            CosmosDestructiveButton(
+                                label = "Delete all",
+                                onClick = { confirmDelete = true },
+                            )
+                            ui.deleteNote?.let { Text(text = it) }
+                        }
+                    },
+                ),
+            )
+        }
+
+        SettingsSection(title = "Landmark AI") {
+            CosmosRecordRows(
+                rows = buildList {
+                    add {
+                        CosmosRecordRow(
+                            title = "Cloud status",
+                            subtitle = cloudAiStatusCopy(ui.cloudAiConfigured),
+                        )
+                    }
+                    add {
+                        CosmosRecordRow(
+                            title = "Advanced",
+                            subtitle = "Local model settings",
+                            trailing = {
+                                CosmosTertiaryButton(
+                                    label = if (advancedExpanded) "Hide" else "Show",
+                                    onClick = { advancedExpanded = !advancedExpanded },
+                                )
+                            },
+                        )
+                    }
+                    if (advancedExpanded) {
+                        add {
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                            ) {
+                                Text(
+                                    text = "Local model (optional). A vision server on your own network, " +
+                                        "or a model file on this phone. Nothing is sent to the cloud when it runs.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                CosmosTextField(
+                                    label = "LAN server URL",
+                                    value = ui.localModelBaseUrl,
+                                    onValueChange = viewModel::onLocalModelBaseUrlChange,
+                                )
+                                CosmosTextField(
+                                    label = "Model name",
+                                    value = ui.localModelName,
+                                    onValueChange = viewModel::onLocalModelNameChange,
+                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text(
+                                        text = "Prefer local model",
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    Switch(
+                                        checked = ui.preferLocalModel,
+                                        onCheckedChange = viewModel::setPreferLocalModel,
+                                    )
+                                }
+                                Text(
+                                    text = if (ui.onPhoneModel != null) {
+                                        "On-phone model found: ${ui.onPhoneModel}"
+                                    } else {
+                                        "No on-phone model file found."
+                                    },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                            }
+                        }
+                    }
+                },
+            )
+        }
+    }
+}
+
+/** One settings section: section-title heading over record rows. */
+@Composable
+private fun SettingsSection(
+    title: String,
+    content: @Composable () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-            text = if (ui.onPhoneModel != null) {
-                "On-phone model found: ${ui.onPhoneModel}"
-            } else {
-                "No on-phone model file found."
-            },
-            style = MaterialTheme.typography.bodyMedium,
+            text = title,
+            style = MaterialTheme.typography.headlineSmall,
+            modifier = Modifier.semantics { heading() },
         )
+        content()
     }
 }

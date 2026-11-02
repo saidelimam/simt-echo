@@ -58,6 +58,16 @@ class RouteRepository(private val store: FileStore) {
         store.deleteRecursively("$ROUTES_DIR/$routeId")
     }
 
+    /**
+     * Deletes every saved route (W8-11 Delete all). Returns how many
+     * route directories were removed.
+     */
+    fun deleteAll(): Int {
+        val count = store.list(ROUTES_DIR).size
+        store.deleteRecursively(ROUTES_DIR)
+        return count
+    }
+
     /** Persists the cloud job id for a saved route (post-save delete offer). */
     fun saveRouteJobId(routeId: String, jobId: String) {
         require(isSafeStorageId(routeId)) { "unsafe route id: $routeId" }
