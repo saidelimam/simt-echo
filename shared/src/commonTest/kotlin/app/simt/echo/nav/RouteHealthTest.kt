@@ -139,6 +139,30 @@ class RouteHealthTest {
     }
 
     @Test
+    fun aBareAmbiguousTurnAsksForItsLandmarkOnce() {
+        // Each turn is both bare and a clash (−20 apiece), but the fix is
+        // one landmark per node: four identical-looking lines would bury
+        // the third nudge slot.
+        val r = route(
+            listOf(
+                node("s", NodeType.START, 0.0),
+                node("t1", NodeType.TURN, 10.0, turn = TurnDir.RIGHT),
+                node("t2", NodeType.TURN, 14.0, turn = TurnDir.RIGHT),
+                node("d", NodeType.DESTINATION, 30.0),
+            ),
+        )
+        assertEquals(
+            listOf(
+                "Add a landmark near 30 m",
+                "Add a landmark near 10 m",
+                "Add a landmark near 14 m",
+            ),
+            routeHealth(r).nudges,
+        )
+        assertEquals(60 - 20, routeHealth(r).score)
+    }
+
+    @Test
     fun turnsExactly6mApartAreAmbiguous() {
         val r = route(
             listOf(
@@ -202,6 +226,7 @@ class RouteHealthTest {
             ),
         )
         assertEquals(95, routeHealth(r).score)
+        assertEquals(listOf("Add a cue near 8 m"), routeHealth(r).nudges)
     }
 
     @Test

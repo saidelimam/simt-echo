@@ -21,8 +21,11 @@ import kotlin.math.roundToInt
  * - −5 per LEVEL_CHANGE node with a blank cue.
  * - −20 per DESTINATION node with neither landmark nor (non-blank) label.
  *
- * Nudges: one per penalty ("Add a landmark near 23 m"), sorted by penalty
- * size descending (ties by distance ascending), capped at three.
+ * Nudges: one per distinct fix ("Add a landmark near 23 m", or "Add a
+ * cue near 23 m" for a level change), sorted by penalty size descending
+ * (ties by distance ascending), capped at three. A node that is both a bare
+ * turn and an ambiguous clash costs both penalties but asks for the same
+ * landmark once.
  *
  * NOTE: the plan stores this in `perception.health` on save, but W10-05
  * (the Bundle v2 freeze that introduces `EchoRoute.perception`) is still
@@ -56,7 +59,7 @@ data class HealthResult(
 fun routeHealth(route: EchoRoute): HealthResult {
     val byId = route.nodes.associateBy { it.id }
 
-    data class Hit(val penalty: Int, val atDistanceM: Double)
+    data class Hit(val penalty: Int, val atDistanceM: Double, val fix: String = "landmark")
 
     val hits = mutableListOf<Hit>()
 
@@ -100,7 +103,7 @@ fun routeHealth(route: EchoRoute): HealthResult {
 
     for (node in route.nodes) {
         if (node.type == NodeType.LEVEL_CHANGE && node.cue.isBlank()) {
-            hits += Hit(LEVEL_CUE_PENALTY, node.atDistanceM)
+            hits += Hit(LEVEL_CUE_PENALTY, node.atDistanceM, fix = "cue")
         }
     }
 
@@ -121,7 +124,9 @@ fun routeHealth(route: EchoRoute): HealthResult {
     }
     val nudges = hits
         .sortedWith(compareByDescending<Hit> { it.penalty }.thenBy { it.atDistanceM })
+        .map { it.fix to it.atDistanceM.roundToInt() }
+        .distinct()
         .take(MAX_HEALTH_NUDGES)
-        .map { "Add a landmark near ${it.atDistanceM.roundToInt()} m" }
+        .map { (fix, metres) -> "Add a $fix near $metres m" }
     return HealthResult(score, band, nudges)
 }
