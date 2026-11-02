@@ -25,6 +25,10 @@ android {
 }
 
 dependencies {
+    // Pins the coroutines version the app itself resolves (1.11.0, via Compose
+    // and lifecycle), so the stale 1.3.4/1.7.1 that androidx.test pulls in
+    // transitively is never fetched.
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
     implementation(libs.benchmark.macro.junit4)
     implementation(libs.test.ext.junit)
     implementation(libs.uiautomator)

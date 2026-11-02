@@ -210,3 +210,28 @@ Fixtures are public-domain NASA/ESA images at ledger scale (960 px class,
   once, off the main thread, before bytes leave the phone.
 - Not measured: a face on a printed page or screen in a live camera frame,
   turned or covered faces, a second phone, APK size delta.
+
+## Macrobenchmarks on device (W10-04, 2026-11-02)
+
+Pixel 8a (SDK 37), `benchmarkRelease` build (non-debuggable, debug-signed),
+screen on and unlocked, battery 80%, not in airplane mode, one phone. Driven by
+`am instrument` (see `docs/perf.md` for why not Gradle).
+
+| Scenario (`EchoBenchmarks`) | Iterations | Result |
+|---|---|---|
+| `coldStart`, uncompiled (`CompilationMode.None`) | 5 | time to initial display: min 517 ms, **median 562 ms**, max 653 ms |
+| `homeScroll`, partial profile | 5 | 84 frames median; CPU frame time P50 6.9 / P90 10.7 / P95 12.0 / **P99 28.2 ms**; overrun P50 0.2 / P90 6.9 / P95 10.8 / **P99 31.5 ms** |
+| `record30s`, camera granted, take started | 2 | ~2,015 frames; CPU frame time P50 5.3 / P90 7.8 / P95 9.1 / **P99 12.5 ms**; overrun P50 -7.3 / P90 -4.2 / P95 -2.6 / **P99 4.4 ms** |
+| `navigateSimulate60s` = Home dwell, **not Navigate** | 2 | ~3,595 frames; CPU frame time P50 8.2 / P90 10.9 / P95 11.9 / **P99 13.5 ms**; overrun P50 1.5 / P90 8.0 / P95 11.1 / **P99 14.4 ms** |
+
+Reading:
+- Record holds its frame budget: P99 overrun is 4.4 ms while the camera and the
+  Frame Tap run. Home scroll's P99 (28 / 32 ms) is the fling's first frames, a
+  few janky frames out of ~84, and is the one jank number worth a closer look.
+- The 60 s run measures Home's animated backdrop (3,595 frames is 60 fps), not
+  Navigate-Simulate, because a benchmark cannot seed a saved route yet. G-PERF-05
+  for Navigate and G-PERF-08 (battery) remain unmeasured.
+- These are single-device numbers with no pre-2.0 baseline run on the same phone,
+  so they are evidence the harness works and a first data point, not a pass/fail
+  against a baseline. Frame Tap <= 6 ms, StrictMode and the 2 MB upload check
+  have no probe in this harness and are still unmeasured.

@@ -52,7 +52,7 @@ adb logcat -s EchoJank
 | Role | Device | Status |
 |---|---|---|
 | Low-end | TBD (named phone, cf. W10-01) | TBD |
-| Mid/flagship | TBD (named phone, cf. W10-01) | TBD |
+| Mid/flagship | Pixel 8a (SDK 37) | First run 2026-11-02, see `docs/measurements.md` |
 
 Record the device + build SHA with every run; W14-01 fills the results log.
 
@@ -72,6 +72,16 @@ baselines" notes where applicable):
 ```sh
 # 1. Benchmarks: writes macrobenchmark JSON to the device output dir.
 ./gradlew :benchmark:connectedBenchmarkReleaseAndroidTest
+# 1b. If Gradle cannot resolve the connected task's dependencies (behind a
+#     TLS-intercepting proxy it 403s Compose desktop POMs), build the two
+#     APKs and drive the instrumentation with adb. This is how the
+#     2026-11-02 Pixel 8a run was done:
+./gradlew :benchmark:assembleBenchmarkRelease :androidApp:assembleBenchmarkRelease
+adb install -r -t androidApp/build/outputs/apk/benchmarkRelease/androidApp-benchmarkRelease.apk
+adb install -r -t benchmark/build/outputs/apk/benchmarkRelease/benchmark-benchmarkRelease.apk
+adb shell pm grant app.simt.echo android.permission.CAMERA
+adb shell am instrument -w -e class app.simt.echo.benchmark.EchoBenchmarks \
+  app.simt.echo.benchmark/androidx.test.runner.AndroidJUnitRunner
 # 2. Profile: run the generator, then collect into the app module.
 ./gradlew :benchmark:connectedNonMinifiedReleaseAndroidTest
 ./gradlew :benchmark:collectNonMinifiedReleaseBaselineProfile

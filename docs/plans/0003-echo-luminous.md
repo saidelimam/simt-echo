@@ -921,7 +921,7 @@ remainder is owed:
 
 | Row | Still owed |
 |---|---|
-| W10-02/03/04, W11-03 | StrictMode, Frame Tap ≤ 6 ms, jank and 2 MB upload device evidence; `:benchmark` not compiled on the build machine; Navigate-Simulate benchmark needs a seeded fixture route |
+| W10-02/03/04, W11-03 | `:benchmark` now builds and ran on a Pixel 8a (cold start median 562 ms; Record P99 overrun 4.4 ms; `docs/measurements.md`). Still owed: StrictMode, Frame Tap ≤ 6 ms and 2 MB upload probes; a second device; Navigate-Simulate benchmark needs a seeded fixture route; no pre-2.0 baseline on the same phone |
 | W11-04 | Android scans ledger frames with bundled ML Kit (`MlKitFaceScanner`, wired through `AppGraph.faceDetectorFor`). Device evidence (Pixel 8a, `docs/measurements.md`): 7/7, a 2.5% face found, about 0.3 s per scan. Owed: an iOS Vision `FaceScanner` (iOS runs unfiltered, and its consent copy says nothing of a filter), face scans of cut video clips, a live-camera printed-face check, and the APK size delta |
 | W11-07 | Live probe table (no `META_API_KEY`) |
 | W11-09 | `ReadyUploader` has no caller, and wiring one is deliberately held: it fails closed without a `FaceDetector`. Android now has one (W11-04), so the gate can be met there; iOS cannot until its scanner lands. Owed in order: a production `NetworkGate`, the Record consent sheet and window trigger, Finish-manifest coordination, then device evidence (ready ≤ 15 s after Finish on a 60 m walk) |
