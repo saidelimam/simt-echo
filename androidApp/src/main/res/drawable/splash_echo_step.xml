@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- W10-07: animated splash (luminous-freeze §2 "Animated forms"): the foot
+     is present from the first frame (the system may dismiss the splash as
+     soon as the app draws), and three outline echoes expand from it and
+     fade — one breath, under 1000 ms. API 31+ only (values-v31/themes.xml). -->
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt">
+    <aapt:attr name="android:drawable">
+        <vector
+            android:width="108dp"
+            android:height="108dp"
+            android:viewportWidth="108"
+            android:viewportHeight="108">
+            <group
+                android:translateX="54"
+                android:translateY="54"
+                android:scaleX="0.62"
+                android:scaleY="0.62"
+                android:rotation="18">
+                <group android:name="echo3">
+                    <path
+                        android:name="echo3Path"
+                        android:pathData="@string/echo_step_foot_path"
+                        android:strokeColor="#C9A0FF"
+                        android:strokeWidth="1.4"
+                        android:strokeAlpha="0" />
+                </group>
+                <group android:name="echo2">
+                    <path
+                        android:name="echo2Path"
+                        android:pathData="@string/echo_step_foot_path"
+                        android:strokeColor="#FF7E8A"
+                        android:strokeWidth="1.6"
+                        android:strokeAlpha="0" />
+                </group>
+                <group android:name="echo1">
+                    <path
+                        android:name="echo1Path"
+                        android:pathData="@string/echo_step_foot_path"
+                        android:strokeColor="#FF8C42"
+                        android:strokeWidth="1.8"
+                        android:strokeAlpha="0" />
+                </group>
+                <path
+                    android:name="foot"
+                    android:pathData="@string/echo_step_foot_path"
+                    android:fillAlpha="1">
+                    <aapt:attr name="android:fillColor">
+                        <gradient
+                            android:type="linear"
+                            android:startX="0"
+                            android:startY="-22"
+                            android:endX="0"
+                            android:endY="21">
+                            <item android:offset="0" android:color="#FFFFF8F2" />
+                            <item android:offset="1" android:color="#FFFFC766" />
+                        </gradient>
+                    </aapt:attr>
+                </path>
+            </group>
+        </vector>
+    </aapt:attr>
+    <target android:name="echo1">
+        <aapt:attr name="android:animation">
+            <set>
+                <objectAnimator android:startOffset="0" android:duration="620" android:propertyName="scaleX" android:valueFrom="1" android:valueTo="1.9" android:interpolator="@android:interpolator/decelerate_cubic" />
+                <objectAnimator android:startOffset="0" android:duration="620" android:propertyName="scaleY" android:valueFrom="1" android:valueTo="1.9" android:interpolator="@android:interpolator/decelerate_cubic" />
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="echo1Path">
+        <aapt:attr name="android:animation">
+            <objectAnimator android:startOffset="0" android:duration="620" android:propertyName="strokeAlpha" android:valueFrom="1" android:valueTo="0" />
+        </aapt:attr>
+    </target>
+    <target android:name="echo2">
+        <aapt:attr name="android:animation">
+            <set>
+                <objectAnimator android:startOffset="140" android:duration="620" android:propertyName="scaleX" android:valueFrom="1" android:valueTo="1.9" android:interpolator="@android:interpolator/decelerate_cubic" />
+                <objectAnimator android:startOffset="140" android:duration="620" android:propertyName="scaleY" android:valueFrom="1" android:valueTo="1.9" android:interpolator="@android:interpolator/decelerate_cubic" />
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="echo2Path">
+        <aapt:attr name="android:animation">
+            <objectAnimator android:startOffset="140" android:duration="620" android:propertyName="strokeAlpha" android:valueFrom="0.8" android:valueTo="0" />
+        </aapt:attr>
+    </target>
+    <target android:name="echo3">
+        <aapt:attr name="android:animation">
+            <set>
+                <objectAnimator android:startOffset="280" android:duration="560" android:propertyName="scaleX" android:valueFrom="1" android:valueTo="1.9" android:interpolator="@android:interpolator/decelerate_cubic" />
+                <objectAnimator android:startOffset="280" android:duration="560" android:propertyName="scaleY" android:valueFrom="1" android:valueTo="1.9" android:interpolator="@android:interpolator/decelerate_cubic" />
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="echo3Path">
+        <aapt:attr name="android:animation">
+            <objectAnimator android:startOffset="280" android:duration="560" android:propertyName="strokeAlpha" android:valueFrom="0.6" android:valueTo="0" />
+        </aapt:attr>
+    </target>
+</animated-vector>

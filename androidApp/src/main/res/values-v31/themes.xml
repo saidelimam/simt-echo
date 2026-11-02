@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- W10-07: Android 12+ system splash plays the Echo Step breath
+         (drawable/splash_echo_step.xml) on the void, then hands over to the
+         shared Compose UI. Below 31 the base theme's void window stays. -->
+    <style name="Theme.Echo" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/echo_launcher_bg</item>
+        <item name="android:statusBarColor">@color/echo_launcher_bg</item>
+        <item name="android:navigationBarColor">@color/echo_launcher_bg</item>
+        <item name="android:windowSplashScreenBackground">@color/echo_launcher_bg</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_echo_step</item>
+        <item name="android:windowSplashScreenAnimationDuration">1000</item>
+    </style>
+</resources>
