@@ -63,10 +63,10 @@ class RecordViewModel(private val session: CaptureSession) : ViewModel() {
         }
     }
 
-    fun finish(routeName: String, destinationLabel: String, onSaved: () -> Unit) {
+    fun finish(routeName: String, destinationLabel: String, onSaved: (String) -> Unit) {
         viewModelScope.launch {
             runCatching { session.save(routeName, destinationLabel) }
-                .onSuccess { onSaved() }
+                .onSuccess { onSaved(it.draftId) }
                 .onFailure { error.value = "Could not save the draft: ${it.message ?: "unknown"}" }
         }
     }

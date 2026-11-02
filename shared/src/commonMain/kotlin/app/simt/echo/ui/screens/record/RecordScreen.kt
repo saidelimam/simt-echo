@@ -64,7 +64,7 @@ import kotlin.random.Random
 @Composable
 fun RecordScreen(
     drafts: DraftRepository,
-    onSaved: () -> Unit,
+    onSaved: (String) -> Unit,
     modifier: Modifier = Modifier,
     config: EchoConfig = EchoConfig(),
     resumeDraftId: String? = null,

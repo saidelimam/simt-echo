@@ -68,7 +68,7 @@ fun EchoNavHost(
             val route = entry.toRoute<EchoRoute.Record>()
             RecordScreen(
                 drafts = graph.draftRepository,
-                onSaved = { navController.popBackStack() },
+                onSaved = { draftId -> navController.navigateTo(reviewAfterRecord(draftId)) },
                 config = graph.configRepository.get(),
                 resumeDraftId = route.resumeDraftId,
             )

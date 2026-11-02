@@ -64,3 +64,12 @@ fun alignForRoute(routeId: String, simulate: Boolean): EchoRoute.Align =
  */
 fun navigateAfterAlign(align: EchoRoute.Align): EchoRoute.Navigate =
     EchoRoute.Navigate(align.routeId, align.simulate)
+
+/**
+ * Record → Review handoff (plan W7-05): the finish sheet's save lands
+ * directly on Review for the just-saved draft — never a pop-to-Home.
+ * A named function (not an inline literal in the host) so the handoff
+ * test pins the draftId flow against mutation.
+ */
+fun reviewAfterRecord(draftId: String): EchoRoute.Review =
+    EchoRoute.Review(draftId)
