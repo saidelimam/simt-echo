@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import app.simt.echo.capture.calibrateK
 import app.simt.echo.capture.calibrationWalkError
 import app.simt.echo.data.ConfigRepository
+import app.simt.echo.data.DraftRepository
+import app.simt.echo.data.RouteRepository
 import app.simt.echo.data.TrialRepository
 import app.simt.echo.platform.CSV_MIME
 import app.simt.echo.platform.FileSharing
@@ -40,6 +42,8 @@ data class SettingsUi(
     val calibrationNote: String? = null,
     /** Result line after exporting the trials CSV, or null before any. */
     val exportNote: String? = null,
+    /** Result line after Delete all, or null before the first run. */
+    val deleteNote: String? = null,
 )
 
 private const val CALIBRATION_WALK_M = 10.0
@@ -60,6 +64,13 @@ class SettingsViewModel(
     private val onPhoneModelName: String? = null,
     /** Cloud AI configured on this build (plan W7-07: AppGraph status). */
     private val cloudAiConfigured: Boolean = true,
+    /**
+     * Saved routes and drafts for Delete all (W8-11). Optional so older
+     * call sites keep compiling: when absent, trials and exports are
+     * still cleared and the note says exactly what was removed.
+     */
+    private val routes: RouteRepository? = null,
+    private val drafts: DraftRepository? = null,
 ) : ViewModel() {
 
     private val _ui = MutableStateFlow(
@@ -162,7 +173,31 @@ class SettingsViewModel(
         configs.update { it.copy(preferLocalModel = enabled) }
         _ui.update { it.copy(preferLocalModel = enabled) }
     }
+
+    /**
+     * Deletes every route, draft, trial and exported file (W8-11 Privacy
+     * & data). The canopy confirm lives in the screen; this reports what
+     * was removed so the note never claims more than happened.
+     */
+    fun deleteAll() {
+        val routesRemoved = routes?.deleteAll() ?: 0
+        val draftsRemoved = drafts?.deleteAll() ?: 0
+        val trialsRemoved = trials.deleteAll()
+        val exportsRemoved = trials.clearExports()
+        val note =
+            if (routesRemoved == 0 && draftsRemoved == 0 && trialsRemoved == 0 && exportsRemoved == 0) {
+                "Nothing to delete."
+            } else {
+                "Removed ${plural(routesRemoved, "route")}, ${plural(draftsRemoved, "draft")}, " +
+                    "${plural(trialsRemoved, "trial")} and ${plural(exportsRemoved, "exported file")}."
+            }
+        _ui.update { it.copy(deleteNote = note) }
+    }
 }
+
+/** Count with a human singular/plural noun (W7-06 copy discipline). */
+private fun plural(count: Int, singular: String): String =
+    if (count == 1) "1 $singular" else "$count ${singular}s"
 
 /** Signed percent with one decimal, multiplatform-safe (no String.format). */
 private fun oneDecimalPct(fraction: Double): String {

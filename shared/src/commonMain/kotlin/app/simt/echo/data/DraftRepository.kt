@@ -70,6 +70,16 @@ class DraftRepository(private val store: FileStore) {
         store.deleteRecursively("$DRAFTS_DIR/$draftId")
     }
 
+    /**
+     * Deletes every draft (W8-11 Delete all). Returns how many
+     * draft directories were removed.
+     */
+    fun deleteAll(): Int {
+        val count = store.list(DRAFTS_DIR).size
+        store.deleteRecursively(DRAFTS_DIR)
+        return count
+    }
+
     private fun captureFile(draftId: String) = "$DRAFTS_DIR/$draftId/capture.json"
 
     private fun draftRouteFile(routeId: String) = "$DRAFTS_DIR/$routeId/route.draft.json"

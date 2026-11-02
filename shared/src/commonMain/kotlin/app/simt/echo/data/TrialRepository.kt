@@ -38,6 +38,25 @@ class TrialRepository(private val store: FileStore) {
     }
 
     /**
+     * Deletes every trial (W8-11 Delete all). Returns how many were removed.
+     */
+    fun deleteAll(): Int {
+        val count = list().size
+        store.deleteRecursively(TRIALS_DIR)
+        return count
+    }
+
+    /**
+     * Deletes every file under `exports/` (W8-11 Delete all: the trials
+     * CSV plus share-sheet `.echo` copies). Returns files removed.
+     */
+    fun clearExports(): Int {
+        val count = store.list(FileStore.EXPORTS_DIR).size
+        store.deleteRecursively(FileStore.EXPORTS_DIR)
+        return count
+    }
+
+    /**
      * One parseable CSV for the whole protocol: one header, one row per
      * run, every §11 field a column. Per-marker drift rows stay in the
      * trial JSON (they are per-marker, not per-run); the CSV carries

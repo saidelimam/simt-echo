@@ -1,13 +1,19 @@
 package app.simt.echo.ui.screens.settings
 
+import app.simt.echo.Fixtures
 import app.simt.echo.data.ConfigRepository
+import app.simt.echo.data.DraftRepository
 import app.simt.echo.data.FileStore
+import app.simt.echo.data.RouteRepository
 import app.simt.echo.data.TrialRepository
+import app.simt.echo.model.CaptureLog
 import app.simt.echo.model.DriftMarker
 import app.simt.echo.model.Trial
 import app.simt.echo.model.TrialMode
 import app.simt.echo.platform.CSV_MIME
 import app.simt.echo.platform.FileSharing
+import app.simt.echo.ui.copy.aiUnavailableCopy
+import app.simt.echo.ui.copy.cloudAiStatusCopy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -35,6 +41,8 @@ class SettingsViewModelTest {
     private val store = FileStore(FakeFileSystem(), "/data".toPath())
     private val configs = ConfigRepository(store)
     private val trials = TrialRepository(store)
+    private val routes = RouteRepository(store)
+    private val drafts = DraftRepository(store)
     private val sharing = FakeFileSharing()
     private val dispatcher = StandardTestDispatcher()
 
@@ -49,6 +57,8 @@ class SettingsViewModelTest {
     }
 
     private fun vm() = SettingsViewModel(configs, trials, sharing)
+
+    private fun fullVm() = SettingsViewModel(configs, trials, sharing, routes = routes, drafts = drafts)
 
     private fun trial(id: String) = Trial(
         trialId = id,
@@ -143,6 +153,63 @@ class SettingsViewModelTest {
             cloudAiConfigured = false,
         )
         assertFalse(unconfigured.ui.value.cloudAiConfigured)
+    }
+
+    @Test
+    fun aiStatusWordingMatchesW707() {
+        // W8-11 preserves the W7-07 status copy verbatim.
+        assertEquals("Landmark AI is ready.", cloudAiStatusCopy(fullVm().ui.value.cloudAiConfigured))
+        val unconfigured = SettingsViewModel(
+            configs,
+            trials,
+            sharing,
+            routes = routes,
+            drafts = drafts,
+            cloudAiConfigured = false,
+        )
+        assertEquals(aiUnavailableCopy(), cloudAiStatusCopy(unconfigured.ui.value.cloudAiConfigured))
+    }
+
+    @Test
+    fun deleteAllRemovesRoutesDraftsTrialsAndExportsAndSaysWhatItDid() {
+        routes.save(Fixtures.L_ROUTE.copy(routeId = "r1"))
+        routes.save(Fixtures.L_ROUTE.copy(routeId = "r2"))
+        drafts.saveCapture(
+            CaptureLog(
+                draftId = "d1",
+                startedAtEpochMs = 1L,
+                motionSource = "echo_builtin_pdr",
+                videoStartNs = 2L,
+                samples = emptyList(),
+                marks = emptyList(),
+                startPhoto = "start.jpg",
+            ),
+        )
+        trials.save(trial("t1"))
+        trials.save(trial("t2"))
+        store.writeText("exports/trials.csv", "a")
+        store.writeText("exports/r1.echo", "b")
+        val vm = fullVm()
+
+        vm.deleteAll()
+
+        assertTrue(routes.list().isEmpty())
+        assertTrue(drafts.listDraftIds().isEmpty())
+        assertTrue(trials.list().isEmpty())
+        assertTrue(store.list("exports").isEmpty())
+        assertEquals(
+            "Removed 2 routes, 1 draft, 2 trials and 2 exported files.",
+            vm.ui.value.deleteNote,
+        )
+    }
+
+    @Test
+    fun deleteAllOnEmptyStoreIsAnHonestNoOp() {
+        val vm = fullVm()
+
+        vm.deleteAll()
+
+        assertEquals("Nothing to delete.", vm.ui.value.deleteNote)
     }
 
     /** Records every shareFile call; the result is configurable. */
