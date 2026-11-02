@@ -36,7 +36,7 @@ class TransferService(
     private val transport: PeerTransport,
     private val routes: RouteRepository,
     private val store: FileStore,
-    private val randomBytes: (Int) -> ByteArray = ::secureRandomBytes,
+    private val randomBytes: (Int) -> ByteArray = DEFAULT_RANDOM_BYTES,
     private val nowMs: () -> Long = { 0L },
     /** Internet relay (W4-05); null until W3-02 supplies Worker config. */
     private val relay: RelayClient? = null,
@@ -235,7 +235,10 @@ class TransferService(
         return (if (cleaned.isEmpty()) "route" else cleaned) + ".echo"
     }
 
-    private companion object {
+    internal companion object {
+        /** Offer-token source: the platform CSPRNG (audit 0007 R1). */
+        val DEFAULT_RANDOM_BYTES: (Int) -> ByteArray = ::secureRandomBytes
+
         /** Hard cap for a picked `.echo` file, enforced pre-decode (R1). */
         const val MAX_ECHO_FILE_BYTES = 50_000_000
         val PATH_HOSTILE = setOf('/', '\\', ':', '*', '?', '"', '<', '>', '|', ' ')

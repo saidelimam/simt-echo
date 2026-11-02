@@ -46,10 +46,15 @@ class SecureRandomTest {
     }
 
     /**
-     * The production default ([TransferService] with no `randomBytes`
-     * override) mints distinct offer tokens: regression pin against a
-     * return to the seeded `Random` default.
+     * Provenance pin: the production default token source is the platform
+     * CSPRNG. Distinctness alone cannot tell it from `kotlin.random.Random`,
+     * so the test names the function the service defaults to.
      */
+    @Test
+    fun serviceDefaultsToThePlatformCsprng() {
+        assertEquals<Any>(::secureRandomBytes, TransferService.DEFAULT_RANDOM_BYTES)
+    }
+
     @Test
     fun defaultOfferTokensAreUnique() = runTest {
         val fileSystem = FakeFileSystem()
