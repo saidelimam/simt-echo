@@ -32,6 +32,7 @@ import app.simt.echo.transfer.JobRecord
 import app.simt.echo.transfer.JobStage
 import app.simt.echo.transfer.UploadFile
 import app.simt.echo.transfer.UploadFileRef
+import app.simt.echo.transfer.UploadRecord
 import app.simt.echo.transfer.CreatedUpload
 import app.simt.echo.transfer.V11CloudApi
 import app.simt.echo.transfer.uploadTimeoutMs
@@ -210,12 +211,13 @@ class ProcessingViewModelTest {
             aiConfigured: Boolean = true,
             faceDetector: FaceDetector? = null,
             media: MediaTools = this.media,
+            nowMs: () -> Long = { 1_762_000_100_000L },
         ) = ProcessingViewModel(
             draftId = draftId,
             drafts = drafts,
             media = media,
             api = api,
-            nowMs = { 1_762_000_100_000L },
+            nowMs = nowMs,
             pollIntervalMs = pollIntervalMs,
             maxPolls = maxPolls,
             aiConfigured = aiConfigured,
@@ -787,6 +789,55 @@ class ProcessingViewModelTest {
         assertEquals(api.jobCreates[0].third, api.jobCreates[1].third)
         val (manifest, _, key) = api.jobCreates[0]
         assertEquals(sha256Hex(manifest.encodeToByteArray()), key)
+    }
+
+    @Test
+    fun resumedSendReusesTheStoredManifestAndKeyDespiteATickingClock() = runTest(dispatcher) {
+        val h = harness()
+        var clock = 1_762_000_100_000L
+        // The job create is lost (a dropped 202): the session record stays.
+        val api = FakeCloudApi(
+            polls = ArrayDeque(listOf(complete())),
+            submitError = EchoApiError.Network(RuntimeException("lost 202")),
+        )
+        val vm = h.vm(api, nowMs = { clock += 1_000L; clock })
+        advanceUntilIdle()
+        vm.send()
+        advanceUntilIdle()
+        assertIs<ProcessingPhase.Failed>(vm.ui.value.phase)
+        val stored = checkNotNull(h.drafts.loadUploadRecord("draft-1"))
+
+        api.submitError = null
+        vm.retry()
+        advanceUntilIdle()
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
+        // The session resumed: no second declaration, and the create carries
+        // the stored manifest bytes and sha, not a rebuild with a newer clock.
+        assertEquals(1, api.uploadCreates.size)
+        val (manifest, uploadId, key) = api.jobCreates.single()
+        assertEquals(stored.uploadId, uploadId)
+        assertEquals(stored.manifestJson, manifest)
+        assertEquals(stored.manifestSha256, key)
+        assertEquals(sha256Hex(manifest.encodeToByteArray()), key)
+    }
+
+    @Test
+    fun aTamperedSessionRecordIsNotResumed() = runTest(dispatcher) {
+        val h = harness()
+        val api = FakeCloudApi(polls = ArrayDeque(listOf(complete())))
+        val vm = h.vm(api)
+        advanceUntilIdle()
+        // A record whose manifest no longer hashes to its stored sha is invalid.
+        h.drafts.saveUploadRecord("draft-1", UploadRecord("upload-old", "{}", "0".repeat(64), 0L))
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
+        assertEquals(1, api.uploadCreates.size)
+        assertEquals("upload-1", api.jobCreates.single().second)
     }
 
     @Test

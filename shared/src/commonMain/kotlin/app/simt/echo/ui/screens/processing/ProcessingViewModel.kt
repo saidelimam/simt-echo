@@ -335,18 +335,20 @@ class ProcessingViewModel(
      * Hash-first v1.1 send (plan W11-08): declare hashes, PUT only the
      * files the server still needs, then create the job with
      * `idempotencyKey = sha256(manifest)` so a retry never grounds twice.
-     * A persisted session for the identical manifest resumes instead of
-     * re-uploading; a stale session (reforged bytes, expiry) restarts
-     * once from a fresh declaration.
+     * A persisted session for the same upload resumes instead of
+     * re-uploading, and resumes with its *stored* manifest and hash: the
+     * manifest embeds the consent clock, so a rebuilt one would never match
+     * and a lost `202` would create a second billed job. A stale session
+     * (reforged bytes, expiry) restarts once from a fresh declaration.
      */
     private suspend fun sendV11(v11: V11CloudApi, restarted: Boolean = false) {
         val prepared = prepareUpload()
         lastRoute = prepared.route
         if (!restarted) clearPartials()
-        val manifestJson = prepared.manifestJson
-        val manifestSha = sha256Hex(manifestJson.encodeToByteArray())
-        val stored = drafts.loadUploadRecord(draftId)
-        val resume = stored != null && stored.manifestSha256 == manifestSha
+        val stored = resumableRecord(drafts.loadUploadRecord(draftId), prepared.manifestJson)
+        val resume = stored != null
+        val manifestJson = stored?.manifestJson ?: prepared.manifestJson
+        val manifestSha = stored?.manifestSha256 ?: sha256Hex(manifestJson.encodeToByteArray())
         val uploadId: String
         var missing: List<String>
         if (resume) {
@@ -380,6 +382,26 @@ class ProcessingViewModel(
         _ui.update { it.copy(phase = ProcessingPhase.Working(JobStage.QUEUED), jobId = jobId) }
         watchOrPoll(jobId, lastEventId = null)
     }
+
+    /**
+     * The persisted upload session when it is intact (its manifest still
+     * hashes to the stored sha) and describes the same upload as the
+     * freshly built [freshManifestJson] — identical but for the consent
+     * clock, which is the only field that differs between two builds of
+     * the same draft. Null means build and declare a new session.
+     */
+    private fun resumableRecord(stored: UploadRecord?, freshManifestJson: String): UploadRecord? {
+        if (stored == null) return null
+        if (sha256Hex(stored.manifestJson.encodeToByteArray()) != stored.manifestSha256) return null
+        val storedManifest = decodeManifestOrNull(stored.manifestJson) ?: return null
+        val freshManifest = decodeManifestOrNull(freshManifestJson) ?: return null
+        return stored.takeIf { storedManifest.withoutConsentClock() == freshManifest.withoutConsentClock() }
+    }
+
+    private fun decodeManifestOrNull(json: String): Manifest? =
+        runCatching { EchoJson.decodeFromString<Manifest>(json) }.getOrNull()
+
+    private fun Manifest.withoutConsentClock(): Manifest = copy(consent = consent.copy(atEpochMs = 0L))
 
     /** Clears a stale session and runs the v1.1 send once more, fresh. */
     private suspend fun restartUpload(v11: V11CloudApi, alreadyRestarted: Boolean) {
