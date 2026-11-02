@@ -250,4 +250,65 @@ class ReceiveViewModelTest {
         assertNull(vm.ui.value.preview)
         assertNotNull(vm.ui.value.error)
     }
+
+    @Test
+    fun previewCarriesModelCountsAndExpiry() = runTest(dispatcher) {
+        val setup = setup()
+        val offer = setup.serviceA.offer(Fixtures.L_ROUTE.routeId)
+        val vm = ReceiveViewModel(setup.serviceB, FakeFileSharing())
+        vm.onScanned(offer.qrUri)
+        advanceUntilIdle()
+
+        val preview = vm.ui.value.preview
+        assertNotNull(preview)
+        assertEquals(Fixtures.L_ROUTE.name, preview.name)
+        assertEquals(Fixtures.L_ROUTE.totalLengthM, preview.lengthM)
+        assertEquals(2, preview.turns)
+        assertEquals(Fixtures.L_ROUTE.landmarks.size, preview.landmarkCount)
+        assertEquals(Fixtures.L_ROUTE.creatorLabel, preview.creatorLabel)
+        assertEquals(Fixtures.L_ROUTE.privacy.expiresAtEpochMs, preview.expiresAtEpochMs)
+    }
+
+    @Test
+    fun rescanFromPreviewResetsCleanly() = runTest(dispatcher) {
+        val setup = setup()
+        val offer = setup.serviceA.offer(Fixtures.L_ROUTE.routeId)
+        val vm = ReceiveViewModel(setup.serviceB, FakeFileSharing())
+        vm.onScanned(offer.qrUri)
+        advanceUntilIdle()
+        assertNotNull(vm.ui.value.preview)
+        val generation = vm.ui.value.generation
+
+        vm.rescan()
+
+        assertNull(vm.ui.value.preview)
+        assertNull(vm.ui.value.error)
+        assertEquals(generation + 1, vm.ui.value.generation)
+
+        // The scanner re-arms: the same QR scans again into a fresh preview.
+        vm.onScanned(offer.qrUri)
+        advanceUntilIdle()
+        assertNotNull(vm.ui.value.preview)
+        assertNull(vm.ui.value.error)
+    }
+
+    @Test
+    fun rescanAfterSaveClearsSavedState() = runTest(dispatcher) {
+        val setup = setup()
+        val offer = setup.serviceA.offer(Fixtures.L_ROUTE.routeId)
+        val vm = ReceiveViewModel(setup.serviceB, FakeFileSharing())
+        vm.onScanned(offer.qrUri)
+        advanceUntilIdle()
+        var saved: String? = null
+        vm.save { saved = it }
+        advanceUntilIdle()
+        assertEquals(Fixtures.L_ROUTE.routeId, saved)
+        assertNotNull(vm.ui.value.savedRouteId)
+
+        vm.rescan()
+
+        assertNull(vm.ui.value.savedRouteId)
+        assertNull(vm.ui.value.preview)
+        assertNull(vm.ui.value.error)
+    }
 }

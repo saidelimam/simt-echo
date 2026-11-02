@@ -180,7 +180,50 @@ class ShareViewModel(
         _ui.update { it.copy(fileWarning = false, error = null) }
     }
 
-    override fun onCleared() {
+    /**
+     * Retries a failed offer (W7-08): an offer failure (no route, no
+     * Wi-Fi IP, transport error) is a recoverable state with Retry, never
+     * a stuck "Starting offer…". Re-uses the current selection (a failed
+     * re-offer already stored it); a live QR needs no retry.
+     */
+    fun retryOffer() {
+        if (_ui.value.qrUri != null) return
+        _ui.update { it.copy(error = null, sent = false) }
+        viewModelScope.launch {
+            try {
+                val selection = _ui.value.selection
+                val items = service.describeExport(routeId)
+                val summary = service.summaryFor(routeId, selection)
+                val offer = service.offer(
+                    routeId,
+                    useRelay = _ui.value.relayOffered,
+                    selection = selection,
+                )
+                _ui.update {
+                    it.copy(
+                        qrUri = offer.qrUri,
+                        relayAvailable = service.relayAvailable,
+                        exportItems = items,
+                        selection = selection,
+                        summary = summary,
+                        error = null,
+                    )
+                }
+            } catch (e: Exception) {
+                _ui.update { it.copy(error = shareErrorCopy(e)) }
+            }
+        }
+    }
+
+    /**
+     * Stops the live offer. The screen calls this on dispose and
+     * [onCleared] calls it too — leaving Share always stops serving.
+     */
+    fun stop() {
         service.stopOffer()
+    }
+
+    override fun onCleared() {
+        stop()
     }
 }

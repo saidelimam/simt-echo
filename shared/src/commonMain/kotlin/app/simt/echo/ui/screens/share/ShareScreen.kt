@@ -57,8 +57,8 @@ fun ShareScreen(
         ShareViewModel(routeId, service, haptics, sharing)
     }
     val ui by viewModel.ui.collectAsState()
-    DisposableEffect(service) {
-        onDispose { service.stopOffer() }
+    DisposableEffect(viewModel) {
+        onDispose { viewModel.stop() }
     }
 
     Column(
@@ -98,6 +98,13 @@ fun ShareScreen(
             ui.sent -> StatusChip(text = "Sent ✓")
             qrUri != null -> StatusChip(text = "Waiting for the other phone…")
             else -> StatusChip(text = "Starting offer…")
+        }
+        if (error != null && qrUri == null) {
+            EchoButton(
+                text = "Try again",
+                onClick = viewModel::retryOffer,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
         if (ui.relayAvailable && !ui.relayOffered && qrUri != null) {
             EchoButton(

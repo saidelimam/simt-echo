@@ -100,11 +100,23 @@ class ReceiveViewModel(
         }
     }
 
-    /** Clears a failure and re-arms the scanner for another attempt. */
+    /**
+     * Clears a failure — or a finished sheet — and re-arms the scanner
+     * for another attempt (W7-08): preview, save state and error are all
+     * dropped, the scanner generation bumps so the view restarts cleanly.
+     */
     fun rescan() {
         handledUri = null
         previewBody = null
-        _ui.update { it.copy(generation = it.generation + 1, error = null) }
+        _ui.update {
+            it.copy(
+                generation = it.generation + 1,
+                fetching = false,
+                preview = null,
+                savedRouteId = null,
+                error = null,
+            )
+        }
     }
 
     private fun summarize(body: BundleBody): ImportPreview {
