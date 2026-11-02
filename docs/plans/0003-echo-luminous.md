@@ -226,7 +226,7 @@ No slice is Complete on a partial pass or on unit evidence for a device claim.
 | W10-07 | Complete | Luminous design freeze (motion, motifs, haptic/sonic grammar) | S (V) | E | — | 88d2a75 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.brand.EchoMarkTest" --tests "app.simt.echo.ui.shell.EchoShellTest" |
 | W10-08 | Complete | Turn haptics emitted (LEFT/RIGHT/U_TURN) | T (S) | C | — | 3d4cb54584a6f3712368799dcbb1d67ce8852e42 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.nav.NavigatorTest" --tests "app.simt.echo.ui.screens.navigate.NavigateViewModelTest" |
 | W11-01 | Complete | Glimpse ledger: on-device frame quality per 0.5 m | L (T) | B | W10-03 | 5919d24ef85a89bacc523b4e52adfd771fe27b8f |
-| W11-02 | Queued | Approach strips + ledger keyframes (no video seeking) | T (S) | B | W11-01 | — |
+| W11-02 | Complete | Approach strips + ledger keyframes (no video seeking) | T (S) | B | W11-01 | 0d4985cebc70e9c90bdacf858e1ff35627f87bb3 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.capture.ApproachStripTest" --tests "app.simt.echo.media.MediaToolsTest" |
 | W11-03 | Queued | Clip forge: 12-frame 480 p strips, exact frame↔distance map | F (T) | B | W11-02 | — |
 | W11-04 | Queued | On-device privacy pre-filter (faces, blur) before upload | T (S) | B | W11-02 | — |
 | W11-05 | Complete | Worker intake v1.1: content-addressed resumable uploads | F (S) | D | W10-06 | b74143be9eb7030b20667f25fe1e47397bdb0faa |
@@ -237,16 +237,16 @@ No slice is Complete on a partial pass or on unit evidence for a device claim.
 | W11-10 | Queued | Live SAM envelope v2 on a walked route | T (S) | F | W11-08, W11-04 | — |
 | W12-01 | Complete | Heading quality: stillness, gyro-bias, quality score | S | C | W10-02 | 44cb4fd3fb25ac23b721146a323313827852be13 |
 | W12-02 | Complete | Ghost filter: along-route particle filter behind a flag | S | C | W12-01, W10-08, W10-05 | 5fa18caece1cead41ce6a0bc8b27811dac21f2b1 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.nav.*" |
-| W12-03 | Queued | Self-calibrating stride from anchored legs | T (S) | C | W12-02 | — |
+| W12-03 | Complete | Self-calibrating stride from anchored legs | T (S) | C | W12-02 | 037139c25ebbb8b8ace828500eb950745570955f · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.nav.StrideLearnerTest" --tests "app.simt.echo.data.ConfigRepositoryTest" |
 | W12-04 | Queued | Magnetic signature capture + DTW observation (P1) | T (S) | C | W12-02 | — |
 | W12-05 | Queued | Visual fingerprints: capture, match, "That's it?" | T (S) | C | W12-02, W11-02 | — |
 | W12-06 | Queued | Lost → Relock (global re-spread, turn-signature DTW) | T (S) | C | W12-05 | — |
 | W12-07 | Complete | Route Health score + nudges (pure) | L (T) | C | W10-05 | 75e44eaa179938655397ebf919ac3bbe2f7061f3 |
-| W12-08 | Queued | Live level awareness (barometer, stairs vs lift) | T (S) | C | W12-02 | — |
+| W12-08 | Complete | Live level awareness (barometer, stairs vs lift) | T (S) | C | W12-02 | 83993aea57a0880855773ad68c7bccc56df1874f · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.nav.LevelAwarenessTest" --tests "app.simt.echo.nav.NavigatorTest" |
 | W13-01 | Complete | Echo field: AGSL atmosphere, tilt parallax, ripple uniforms | T (V) | E | W10-07 | 6c2daf8 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.atmosphere.*" --tests "app.simt.echo.ui.shell.EchoShellTest" --tests "app.simt.echo.ui.components.*" |
 | W13-02 | Complete | Motion system: springs, shared elements, predictive back, morph kit | F (T, V) | A | W10-07 | 4fc3fe3 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.motion.*" --tests "app.simt.echo.ui.shell.*" --tests "app.simt.echo.ui.screens.*" |
 | W13-03 | Complete | Route sigils: generative glyph from route geometry | T (V) | E | W10-05, W10-07 | 9178aad · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.sigil.*" --tests "app.simt.echo.ui.screens.*" |
-| W13-04 | Queued | Record "Echo walk": ripples, trail ribbon, blooms, brackets | T (V) | B | W13-01, W13-02, W11-01 | — |
+| W13-04 | Complete | Record "Echo walk": ripples, trail ribbon, blooms, brackets | T (V) | B | W13-01, W13-02, W11-01 | 26d2f4f292cc24e9ac6f0b52ef8c95315f3c0373 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.screens.record.HostRecordEchoWalkTest" --tests "app.simt.echo.ui.screens.record.HostRecordInstrumentTest" --tests "app.simt.echo.capture.GlimpseLedgerTest" |
 | W13-05 | Queued | Review "Route story": film strip, mask trace, health | T (S, V) | E | W13-02, W11-02, W12-07, W11-08 | — |
 | W13-06 | Queued | Processing "Constellation" from live events | F (T, V) | E | W13-02, W11-08 | — |
 | W13-07 | Complete | Share/Receive "Handshake": sigil QR, beacon, unfold (flow split to W13-14) | F (T, V) | E | W13-02, W13-03 | e73ba91 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.ui.screens.share.*" --tests "app.simt.echo.ui.screens.receive.*" --tests "app.simt.echo.ui.sigil.*" |
