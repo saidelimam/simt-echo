@@ -35,6 +35,9 @@ import kotlin.test.assertTrue
 /**
  * Settings state: the W5-02 camera toggle persists, and the W6-01 trials
  * CSV export writes `exports/trials.csv` and hands it to the share sheet.
+ *
+ * W9-07: the Advanced local-model section is removed for v1 (never verified
+ * on a device here), so a fresh install carries no local-model UI surface.
  */
 class SettingsViewModelTest {
 
@@ -168,6 +171,20 @@ class SettingsViewModelTest {
             cloudAiConfigured = false,
         )
         assertEquals(aiUnavailableCopy(), cloudAiStatusCopy(unconfigured.ui.value.cloudAiConfigured))
+    }
+
+    @Test
+    fun v1ShipsWithNoLocalModelConfiguration() {
+        // W9-07: the Advanced local-model section is removed for v1 because
+        // local inference was never verified here (no ≥8 GB device, no
+        // .litertlm, no LAN server). The provider seam (EchoConfig/AppGraph)
+        // stays for a future slice, but a fresh install surfaces nothing
+        // that implies local availability.
+        val ui = vm().ui.value
+        assertEquals("", ui.localModelBaseUrl)
+        assertEquals("", ui.localModelName)
+        assertFalse(ui.preferLocalModel)
+        assertNull(vm().ui.value.onPhoneModel)
     }
 
     @Test

@@ -16,7 +16,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -28,7 +27,6 @@ import app.simt.echo.ui.components.CosmosPrimaryButton
 import app.simt.echo.ui.components.CosmosRecordRow
 import app.simt.echo.ui.components.CosmosRecordRows
 import app.simt.echo.ui.components.CosmosSecondaryButton
-import app.simt.echo.ui.components.CosmosTertiaryButton
 import app.simt.echo.ui.components.CosmosTextField
 import app.simt.echo.ui.components.threeDecimals
 import app.simt.echo.ui.copy.cloudAiStatusCopy
@@ -37,8 +35,12 @@ import app.simt.echo.ui.copy.cloudAiStatusCopy
  * Settings in Cosmos (plan W8-11, freeze §5/§7): sectioned rows on the
  * record grammar — dividers, never nested cards. Step length & calibrate,
  * Trials & baseline & CSV, Navigation, Privacy & data (Delete all behind
- * a canopy confirm), Landmark AI status (W7-07 wording, untouched) with
- * the Advanced local-model rows collapsed by default.
+ * a canopy confirm), Landmark AI status (W7-07 wording, untouched).
+ *
+ * W9-07: the Advanced local-model section is removed for v1 — local
+ * inference (on-phone `.litertlm`, LAN server) was never verified on a
+ * device here, so no UI may imply its availability. The provider seam
+ * (`EchoConfig`/`AppGraph`) stays for a future slice.
  *
  * W8-05: the shell owns the Settings heading and the Close chrome —
  * [onBack] stays for hosts that render this screen outside the shell.
@@ -51,7 +53,6 @@ fun SettingsScreen(
 ) {
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     var confirmDelete by remember { mutableStateOf(false) }
-    var advancedExpanded by remember { mutableStateOf(false) }
     if (confirmDelete) {
         CosmosDialog(
             title = "Delete everything?",
@@ -184,74 +185,14 @@ fun SettingsScreen(
 
         SettingsSection(title = "Landmark AI") {
             CosmosRecordRows(
-                rows = buildList {
-                    add {
+                rows = listOf(
+                    {
                         CosmosRecordRow(
                             title = "Cloud status",
                             subtitle = cloudAiStatusCopy(ui.cloudAiConfigured),
                         )
-                    }
-                    add {
-                        CosmosRecordRow(
-                            title = "Advanced",
-                            subtitle = "Local model settings",
-                            trailing = {
-                                CosmosTertiaryButton(
-                                    label = if (advancedExpanded) "Hide" else "Show",
-                                    onClick = { advancedExpanded = !advancedExpanded },
-                                )
-                            },
-                        )
-                    }
-                    if (advancedExpanded) {
-                        add {
-                            Column(
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                            ) {
-                                Text(
-                                    text = "Local model (optional). A vision server on your own network, " +
-                                        "or a model file on this phone. Nothing is sent to the cloud when it runs.",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                )
-                                CosmosTextField(
-                                    label = "LAN server URL",
-                                    value = ui.localModelBaseUrl,
-                                    onValueChange = viewModel::onLocalModelBaseUrlChange,
-                                )
-                                CosmosTextField(
-                                    label = "Model name",
-                                    value = ui.localModelName,
-                                    onValueChange = viewModel::onLocalModelNameChange,
-                                )
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) {
-                                    Text(
-                                        text = "Prefer local model",
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                    Switch(
-                                        checked = ui.preferLocalModel,
-                                        onCheckedChange = viewModel::setPreferLocalModel,
-                                    )
-                                }
-                                Text(
-                                    text = if (ui.onPhoneModel != null) {
-                                        "On-phone model found: ${ui.onPhoneModel}"
-                                    } else {
-                                        "No on-phone model file found."
-                                    },
-                                    style = MaterialTheme.typography.bodyMedium,
-                                )
-                            }
-                        }
-                    }
-                },
+                    },
+                ),
             )
         }
     }
