@@ -6,12 +6,15 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -25,12 +28,14 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.data.TrialRepository
 import app.simt.echo.model.EchoConfig
 import app.simt.echo.model.shouldShowLandmarkCards
-import app.simt.echo.nav.NavPhase
 import app.simt.echo.nav.NavUi
 import app.simt.echo.platform.KeepScreenOn
 import app.simt.echo.platform.MotionSource
@@ -39,6 +44,7 @@ import app.simt.echo.platform.rememberHaptics
 import app.simt.echo.platform.rememberMotionSource
 import app.simt.echo.platform.rememberOnline
 import app.simt.echo.ui.components.CameraNavigateOverlay
+import app.simt.echo.ui.components.CosmosBanner
 import app.simt.echo.ui.components.CropImage
 import app.simt.echo.ui.components.DirectionArrow
 import app.simt.echo.ui.components.DistanceReadout
@@ -46,18 +52,29 @@ import app.simt.echo.ui.components.CosmosPrimaryButton
 import app.simt.echo.ui.components.CosmosEmptyState
 import app.simt.echo.ui.components.LandmarkCard
 import app.simt.echo.ui.components.CosmosSecondaryButton
+import app.simt.echo.ui.components.CosmosTertiaryButton
 import app.simt.echo.ui.components.StatusChip
 import app.simt.echo.ui.components.oneDecimal
 import app.simt.echo.ui.components.overlayScrimAlpha
 import app.simt.echo.ui.copy.MISSING_ROUTE_ERROR
+import app.simt.echo.ui.theme.EchoSpace12
+import app.simt.echo.ui.theme.EchoSpace24
+
+const val NavigateReticleTag = "NavigateReticle"
 
 /**
- * Navigate screen (plan §8.3 / W2-06): arrow, instruction + distance,
- * landmark card, progress, contextual actions. Renders [NavUi] directly —
- * the 1:1 phase mapping (especially UNCERTAIN) is structural, not asserted
- * per branch. Drives [motionSource] when injected (W7-04 Simulate replay),
- * else the live motion source; replay coverage lives in the engine tests
- * (W2-05) and the ViewModel gate below.
+ * Navigate screen (plan §8.3 / W2-06, Cosmos W8-10): reticle-framed arrow,
+ * instruction + tabular distance, σ/offline chips (mark + text, never
+ * hue-only), landmark card, progress with node dots, contextual actions.
+ * Renders [NavUi] directly — the 1:1 phase mapping (especially UNCERTAIN)
+ * is structural ([navigatePhasePresentation], asserted per branch), not
+ * per-branch UI code. Drives [motionSource] when injected (W7-04 Simulate
+ * replay), else the live motion source; replay coverage lives in the engine
+ * tests (W2-05) and the ViewModel gate below.
+ *
+ * @param researchMode gates the "At marker" trial tap (Settings/research,
+ * W8-11 wires it). Defaults off: product UI never shows trial
+ * instrumentation; the tap still saves via `NavigateViewModel.atMarker`.
  */
 @Composable
 fun NavigateScreen(
@@ -70,6 +87,7 @@ fun NavigateScreen(
     trials: TrialRepository? = null,
     device: String = "unknown",
     baselineMode: Boolean = config.baselineMode,
+    researchMode: Boolean = false,
     /** Injected source (W7-04 Simulate); null selects the live source. */
     motionSource: MotionSource? = null,
 ) {
@@ -113,33 +131,80 @@ fun NavigateScreen(
             routeId = routeId,
             online = online,
             legCount = viewModel.legCount,
+            researchMode = researchMode,
             viewModel = viewModel,
             modifier = modifier,
         )
         return
     }
 
+    NavigateBody(
+        nav = nav,
+        routes = routes,
+        routeId = routeId,
+        online = online,
+        legCount = viewModel.legCount,
+        researchMode = researchMode,
+        viewModel = viewModel,
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun NavigateBody(
+    nav: NavUi,
+    routes: RouteRepository,
+    routeId: String,
+    online: Boolean,
+    legCount: Int,
+    researchMode: Boolean,
+    viewModel: NavigateViewModel,
+    modifier: Modifier = Modifier,
+) {
+    val showCards = shouldShowLandmarkCards(viewModel.baselineMode)
+    val presentation = navigatePhasePresentation(
+        phase = nav.phase,
+        hasLandmark = nav.landmark != null,
+        isLastLeg = viewModel.isLastLeg(nav),
+        showCards = showCards,
+        researchMode = researchMode,
+    )
     Column(
         modifier = modifier
             .fillMaxSize()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+            .padding(EchoSpace24),
+        verticalArrangement = Arrangement.spacedBy(EchoSpace12),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (!online) StatusChip(text = "Offline ✓")
-            StatusChip(text = "±${oneDecimal(nav.uncertaintyM)} m")
+            if (!online) StatusChip(text = "⚠ Offline · sensors only")
+            StatusChip(text = "σ ±${oneDecimal(nav.uncertaintyM)} m")
         }
-        // Decorative here: the instruction Text below carries the semantics.
-        DirectionArrow(angleRad = nav.arrowRad.toFloat(), contentDescription = null)
+        if (presentation.bannerKind != null) {
+            CosmosBanner(message = nav.instruction, kind = presentation.bannerKind)
+        }
+        // Reticle frame keeps the 200 dp chevron legible in motion and
+        // outdoors; the instruction Text below carries the semantics.
+        Box(
+            modifier = Modifier
+                .border(2.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(24.dp))
+                .padding(8.dp)
+                .testTag(NavigateReticleTag),
+        ) {
+            DirectionArrow(angleRad = nav.arrowRad.toFloat(), contentDescription = null)
+        }
         AnimatedContent(targetState = nav.instruction, label = "instruction") { instruction ->
-            Text(text = instruction, style = MaterialTheme.typography.titleLarge)
+            Text(
+                text = instruction,
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.semantics { heading() },
+            )
         }
         DistanceReadout(text = "${oneDecimal(maxOf(0.0, nav.distanceToNextM))} m")
         // Baseline (SENSOR_ONLY) runs show no landmark cards: turns and
         // distance only, so the comparison against ECHO stays honest.
         // Generic enter/exit only — no per-screen animation system.
-        val landmark = if (shouldShowLandmarkCards(viewModel.baselineMode)) nav.landmark else null
+        val landmark = if (showCards) nav.landmark else null
         AnimatedVisibility(
             visible = landmark != null,
             enter = fadeIn() + expandVertically(),
@@ -160,15 +225,47 @@ fun NavigateScreen(
                 )
             }
         }
+        NavigateProgress(legIndex = nav.legIndex, legCount = legCount)
+        NavigateActions(presentation = presentation, viewModel = viewModel)
+    }
+}
+
+/**
+ * Progress with node dots: one mark per leg (● passed/current, ○ ahead —
+ * shape, never hue-only) plus the "Leg i of n" line for screen readers.
+ */
+@Composable
+private fun NavigateProgress(
+    legIndex: Int,
+    legCount: Int,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = modifier.fillMaxWidth(),
+    ) {
         LinearProgressIndicator(
-            progress = { nav.progress01.toFloat() },
+            progress = { if (legCount > 0) (legIndex + 1).toFloat() / legCount else 0f },
             modifier = Modifier.fillMaxWidth(),
         )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            for (leg in 0 until legCount) {
+                Text(
+                    text = if (leg <= legIndex) "●" else "○",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (leg <= legIndex) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.outline
+                    },
+                )
+            }
+        }
         Text(
-            text = "Leg ${nav.legIndex + 1} of ${viewModel.legCount}",
+            text = "Leg ${legIndex + 1} of $legCount",
             style = MaterialTheme.typography.bodyMedium,
         )
-        NavigateActions(nav = nav, viewModel = viewModel)
     }
 }
 
@@ -179,6 +276,7 @@ private fun NavigateOverlayBody(
     routeId: String,
     online: Boolean,
     legCount: Int,
+    researchMode: Boolean,
     viewModel: NavigateViewModel,
     modifier: Modifier = Modifier,
 ) {
@@ -190,11 +288,18 @@ private fun NavigateOverlayBody(
         landmark?.cropAssetId?.let { routes.readAsset(routeId, it) }
     }
     val distanceM = maxOf(0.0, nav.distanceToNextM)
+    val presentation = navigatePhasePresentation(
+        phase = nav.phase,
+        hasLandmark = nav.landmark != null,
+        isLastLeg = viewModel.isLastLeg(nav),
+        showCards = shouldShowLandmarkCards(viewModel.baselineMode),
+        researchMode = researchMode,
+    )
     CameraNavigateOverlay(
         arrowRad = nav.arrowRad.toFloat(),
         instruction = nav.instruction,
         distanceText = "${oneDecimal(distanceM)} m",
-        uncertaintyText = "±${oneDecimal(nav.uncertaintyM)} m",
+        uncertaintyText = "σ ±${oneDecimal(nav.uncertaintyM)} m",
         offline = !online,
         landmarkTitle = landmark?.title,
         landmarkCue = landmark?.cue,
@@ -216,14 +321,14 @@ private fun NavigateOverlayBody(
                 camera.Preview(modifier = Modifier.fillMaxSize())
             }
         },
-        actions = { NavigateActions(nav = nav, viewModel = viewModel) },
+        actions = { NavigateActions(presentation = presentation, viewModel = viewModel) },
         modifier = modifier,
     )
 }
 
 @Composable
 private fun NavigateActions(
-    nav: NavUi,
+    presentation: NavigatePhasePresentation,
     viewModel: NavigateViewModel,
     modifier: Modifier = Modifier,
 ) {
@@ -231,39 +336,55 @@ private fun NavigateActions(
         verticalArrangement = Arrangement.spacedBy(8.dp),
         modifier = modifier.fillMaxWidth(),
     ) {
-        val showCards = shouldShowLandmarkCards(viewModel.baselineMode)
-        when (nav.phase) {
-            NavPhase.CONFIRM -> {
-                if (showCards) {
-                    CosmosPrimaryButton(label = "I see it", onClick = viewModel::seeLandmark, modifier = Modifier.fillMaxWidth())
-                }
-                CosmosSecondaryButton(label = "Not yet", onClick = viewModel::notYet, modifier = Modifier.fillMaxWidth())
-            }
-
-            NavPhase.UNCERTAIN -> {
-                if (showCards) {
-                    CosmosPrimaryButton(label = "I see it", onClick = viewModel::seeLandmark, modifier = Modifier.fillMaxWidth())
-                }
-                CosmosSecondaryButton(label = "Lost", onClick = viewModel::lost, modifier = Modifier.fillMaxWidth())
-            }
-
-            NavPhase.OFF_ROUTE -> {
-                CosmosPrimaryButton(label = "Go back to last", onClick = viewModel::restartFromLast, modifier = Modifier.fillMaxWidth())
-                CosmosSecondaryButton(label = "Restart from start", onClick = viewModel::restartFromStart, modifier = Modifier.fillMaxWidth())
-            }
-
-            NavPhase.WALK, NavPhase.APPROACH, NavPhase.TURNING -> {
-                if (showCards && nav.landmark != null) {
-                    CosmosPrimaryButton(label = "I see it", onClick = viewModel::seeLandmark, modifier = Modifier.fillMaxWidth())
-                }
-                if (nav.phase == NavPhase.WALK && viewModel.isLastLeg(nav)) {
-                    CosmosPrimaryButton(label = "I'm here", onClick = viewModel::imHere, modifier = Modifier.fillMaxWidth())
-                }
-                CosmosSecondaryButton(label = "At marker", onClick = viewModel::atMarker, modifier = Modifier.fillMaxWidth())
-                CosmosSecondaryButton(label = "Lost", onClick = viewModel::lost, modifier = Modifier.fillMaxWidth())
-            }
-
-            NavPhase.ALIGN, NavPhase.ARRIVED -> Unit
+        // Phase honesty is decided in [navigatePhasePresentation]; here each
+        // action only wires to the ViewModel input of the same name. The
+        // head of the list is the primary command (never two primaries).
+        val primary = presentation.actions.firstOrNull()
+        val secondaries = presentation.actions.drop(1)
+        if (primary != null) {
+            CosmosPrimaryButton(
+                label = actionLabel(primary),
+                onClick = { viewModel.navigate(primary) },
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
+        for (action in secondaries) {
+            when (action) {
+                NavigateAction.AT_MARKER ->
+                    CosmosTertiaryButton(
+                        label = actionLabel(action),
+                        onClick = { viewModel.navigate(action) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                else -> CosmosSecondaryButton(
+                    label = actionLabel(action),
+                    onClick = { viewModel.navigate(action) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+    }
+}
+
+private fun actionLabel(action: NavigateAction): String = when (action) {
+    NavigateAction.SEE_LANDMARK -> "I see it"
+    NavigateAction.NOT_YET -> "Not yet"
+    NavigateAction.LOST -> "Lost"
+    NavigateAction.GO_BACK_TO_LAST -> "Go back to last"
+    NavigateAction.RESTART_FROM_START -> "Restart from start"
+    NavigateAction.IM_HERE -> "I'm here"
+    NavigateAction.AT_MARKER -> "At marker (trial)"
+}
+
+/** Single wiring point from a presented action to its ViewModel input. */
+private fun NavigateViewModel.navigate(action: NavigateAction) {
+    when (action) {
+        NavigateAction.SEE_LANDMARK -> seeLandmark()
+        NavigateAction.NOT_YET -> notYet()
+        NavigateAction.LOST -> lost()
+        NavigateAction.GO_BACK_TO_LAST -> restartFromLast()
+        NavigateAction.RESTART_FROM_START -> restartFromStart()
+        NavigateAction.IM_HERE -> imHere()
+        NavigateAction.AT_MARKER -> atMarker()
     }
 }

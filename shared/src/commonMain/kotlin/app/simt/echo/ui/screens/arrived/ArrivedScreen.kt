@@ -1,5 +1,10 @@
 package app.simt.echo.ui.screens.arrived
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -21,16 +26,19 @@ import androidx.compose.ui.unit.dp
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.data.TrialRepository
 import app.simt.echo.model.NodeType
-import app.simt.echo.ui.components.CosmosPrimaryButton
+import app.simt.echo.model.Trial
 import app.simt.echo.ui.components.CosmosSecondaryButton
+import app.simt.echo.ui.components.CosmosSuccessState
+import app.simt.echo.ui.components.CosmosTertiaryButton
 import app.simt.echo.ui.components.oneDecimal
 import app.simt.echo.ui.copy.UNTITLED_WALK
 
 /**
- * Arrived screen (plan §8.3 / W2-06): check mark, destination, summary,
- * Done. The run's stats were written by Navigate on arrival (W4-01);
- * this form completes the §11 fields the sensors cannot know (lighting,
- * holding style, mistaken confirmations, notes) and re-saves the trial.
+ * Arrived screen (plan §8.3 / W2-06, Cosmos W8-10): a Cosmos success state
+ * — destination, time, distance, confirmations — with Done. The run's
+ * stats were written by Navigate on arrival (W4-01); the §11 field-trial
+ * form lives behind the "Field trial details" disclosure: still saved,
+ * no longer the screen (M4).
  */
 @Composable
 fun ArrivedScreen(
@@ -44,6 +52,20 @@ fun ArrivedScreen(
     val trial = remember(routeId, trials) {
         trials?.list()?.filter { it.routeId == routeId }?.maxByOrNull { it.startedAtEpochMs }
     }
+    var showTrialDetails by remember(trial?.trialId) { mutableStateOf(false) }
+
+    val destination = remember(route) {
+        route?.nodes?.lastOrNull { it.type == NodeType.DESTINATION }
+            ?.label?.takeIf { it.isNotEmpty() }
+            ?: route?.name?.ifEmpty { UNTITLED_WALK }
+            ?: "Arrived"
+    }
+    // Route facts only when no trial ran: this screen observes no
+    // confirmations, so it must not claim any (review 0001 R2).
+    val summary = trial?.let { arrivedSummary(it) }
+        ?: route?.let {
+            "${oneDecimal(it.totalLengthM)} m · ${it.landmarks.size} landmarks on route"
+        }
 
     Column(
         modifier = modifier
@@ -53,26 +75,36 @@ fun ArrivedScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(text = "✓", style = MaterialTheme.typography.displayLarge)
-        if (route == null) {
-            Text(text = "Arrived", style = MaterialTheme.typography.titleLarge)
-        } else {
-            val destination = route.nodes.lastOrNull { it.type == NodeType.DESTINATION }
-                ?.label?.takeIf { it.isNotEmpty() } ?: route.name.ifEmpty { UNTITLED_WALK }
-            Text(text = destination, style = MaterialTheme.typography.titleLarge)
-            // Route facts only: this screen observes no confirmations, so it
-            // must not claim any (review 0001 R2).
-            Text(
-                text = "${oneDecimal(route.totalLengthM)} m · " +
-                    "${route.landmarks.size} landmarks on route",
-                style = MaterialTheme.typography.bodyLarge,
-            )
-        }
+        CosmosSuccessState(
+            title = destination,
+            body = summary,
+            actionLabel = "Done",
+            onAction = onDone,
+            modifier = Modifier.fillMaxWidth(),
+        )
         if (trial != null && trials != null) {
-            TrialForm(trialId = trial.trialId, trials = trials)
+            CosmosTertiaryButton(
+                label = if (showTrialDetails) "Hide field trial details" else "Field trial details",
+                onClick = { showTrialDetails = !showTrialDetails },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            AnimatedVisibility(
+                visible = showTrialDetails,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically(),
+                label = "trial-details",
+            ) {
+                TrialForm(trialId = trial.trialId, trials = trials)
+            }
         }
-        CosmosPrimaryButton(label = "Done", onClick = onDone, modifier = Modifier.fillMaxWidth())
     }
+}
+
+/** Success copy from the saved run: time, distance, confirmations. */
+fun arrivedSummary(trial: Trial): String {
+    val totalS = trial.durationS.toLong()
+    val time = if (totalS >= 60) "${totalS / 60} min ${totalS % 60} s" else "$totalS s"
+    return "$time · ${oneDecimal(trial.distanceM)} m · ${trial.confirmations} confirmations"
 }
 
 /** §11 completion form for the trial Navigate just wrote. */
@@ -85,44 +117,50 @@ private fun TrialForm(trialId: String, trials: TrialRepository) {
     var notes by remember(trialId) { mutableStateOf(existing.notes) }
     var saved by remember(trialId) { mutableStateOf(false) }
 
-    Text(text = "Field trial (${existing.mode})", style = MaterialTheme.typography.titleMedium)
-    OutlinedTextField(
-        value = lighting,
-        onValueChange = { lighting = it; saved = false },
-        label = { Text("Lighting") },
+    Column(
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier.fillMaxWidth(),
-    )
-    OutlinedTextField(
-        value = holding,
-        onValueChange = { holding = it; saved = false },
-        label = { Text("Holding style") },
-        modifier = Modifier.fillMaxWidth(),
-    )
-    OutlinedTextField(
-        value = mistaken,
-        onValueChange = { mistaken = it.filter(Char::isDigit); saved = false },
-        label = { Text("Mistaken confirmations") },
-        modifier = Modifier.fillMaxWidth(),
-    )
-    OutlinedTextField(
-        value = notes,
-        onValueChange = { notes = it; saved = false },
-        label = { Text("Notes") },
-        modifier = Modifier.fillMaxWidth(),
-    )
-    CosmosSecondaryButton(
-        label = if (saved) "Trial saved" else "Save trial",
-        onClick = {
-            trials.save(
-                existing.copy(
-                    lighting = lighting,
-                    holdingStyle = holding,
-                    mistakenConfirmations = mistaken.toIntOrNull() ?: 0,
-                    notes = notes,
-                ),
-            )
-            saved = true
-        },
-        modifier = Modifier.fillMaxWidth(),
-    )
+    ) {
+        Text(text = "Field trial (${existing.mode})", style = MaterialTheme.typography.titleMedium)
+        OutlinedTextField(
+            value = lighting,
+            onValueChange = { lighting = it; saved = false },
+            label = { Text("Lighting") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = holding,
+            onValueChange = { holding = it; saved = false },
+            label = { Text("Holding style") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = mistaken,
+            onValueChange = { mistaken = it.filter(Char::isDigit); saved = false },
+            label = { Text("Mistaken confirmations") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = notes,
+            onValueChange = { notes = it; saved = false },
+            label = { Text("Notes") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        CosmosSecondaryButton(
+            label = if (saved) "Trial saved" else "Save trial",
+            onClick = {
+                trials.save(
+                    existing.copy(
+                        lighting = lighting,
+                        holdingStyle = holding,
+                        mistakenConfirmations = mistaken.toIntOrNull() ?: 0,
+                        notes = notes,
+                    ),
+                )
+                saved = true
+            },
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
 }
