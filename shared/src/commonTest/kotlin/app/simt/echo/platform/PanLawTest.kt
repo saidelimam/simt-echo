@@ -79,6 +79,18 @@ class PanLawTest {
     }
 
     @Test
+    fun interleavedIsTheStereoPcmBufferLayout() {
+        val pcm = EarconPcm(
+            left = shortArrayOf(1, 2, 3),
+            right = shortArrayOf(-1, -2, -3),
+            sampleRateHz = EarconSynth.DEFAULT_SAMPLE_RATE_HZ,
+        )
+        assertEquals(listOf<Short>(1, -1, 2, -2, 3, -3), pcm.interleaved().toList())
+        val arrive = EarconSynth.synthesize(HapticPattern.ARRIVE, arrowRadians = 0.0)
+        assertEquals(arrive.left.size * 2, arrive.interleaved().size)
+    }
+
+    @Test
     fun tickHasNoEarcon() {
         val pcm = EarconSynth.synthesize(HapticPattern.TICK, arrowRadians = 0.0)
         assertEquals(0, pcm.left.size)

@@ -74,6 +74,16 @@ data class EarconPcm(
             right.contentEquals(other.right)
     override fun hashCode(): Int =
         31 * (31 * sampleRateHz + left.contentHashCode()) + right.contentHashCode()
+
+    /** Frames interleaved L, R, L, R… — the layout of a stereo 16-bit PCM buffer. */
+    fun interleaved(): ShortArray {
+        val out = ShortArray(left.size * 2)
+        for (i in left.indices) {
+            out[2 * i] = left[i]
+            out[2 * i + 1] = right[i]
+        }
+        return out
+    }
 }
 
 /**

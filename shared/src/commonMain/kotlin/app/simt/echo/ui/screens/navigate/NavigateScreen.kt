@@ -102,7 +102,7 @@ fun NavigateScreen(
 ) {
     val motion = motionSource ?: rememberMotionSource()
     val haptics = rememberHaptics()
-    val cues = rememberCueOutput(earconsEnabled = false)
+    val cues = rememberCueOutput(earconsEnabled = config.earcons)
     val online = rememberOnline()
     KeepScreenOn()
     // Scoped to this navigation back-stack entry, not `remember`: popping

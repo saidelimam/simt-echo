@@ -20,7 +20,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import java.util.concurrent.ConcurrentHashMap
 
 @Composable
 actual fun rememberMotionSource(): MotionSource {
@@ -94,17 +99,38 @@ actual fun KeepScreenOn() {
 actual fun rememberCueOutput(earconsEnabled: Boolean): CueOutput {
     val context = LocalContext.current.applicationContext
     val view = LocalView.current
-    return remember(context, view, earconsEnabled) { AndroidCueOutput(context, view) }
+    // Owns every in-flight clip: cancelling it releases their AudioTracks.
+    val scope = remember { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
+    DisposableEffect(scope) { onDispose { scope.cancel() } }
+    return remember(context, view, earconsEnabled, scope) {
+        AndroidCueOutput(context, view, earconsEnabled, AudioTrackEarcons(scope))
+    }
 }
 
-/** Android [CueOutput]: announcements through the view; earcons arrive with the player. */
+/**
+ * Android [CueOutput]: announcements through the view, earcons through an
+ * [AudioTrack][AudioTrackEarcons] behind the [EarconGate]. Earcons are
+ * opt-in ([earconsEnabled] is the Settings switch, default off): the gate's
+ * explicit opt-in is that switch, and headphones alone never turn sound on.
+ */
 private class AndroidCueOutput(
     private val context: Context,
     private val view: View,
+    private val earconsEnabled: Boolean,
+    private val player: AudioTrackEarcons,
 ) : CueOutput {
     override val eyesFree: Boolean get() = context.isScreenReaderActive()
 
-    override fun earcon(pattern: HapticPattern, arrowRad: Double) = Unit
+    override fun earcon(pattern: HapticPattern, arrowRad: Double) {
+        if (!earconsEnabled) return
+        val allowed = EarconGate.shouldPlay(
+            explicitOptIn = true,
+            headphonesConnected = context.headphonesConnected(),
+            talkBackSpeaking = context.isScreenReaderActive(),
+        )
+        if (!allowed) return
+        player.play(EarconSynth.synthesize(pattern, arrowRad))
+    }
 
     override fun announce(text: String) {
         view.announceForAccessibility(text)
@@ -155,13 +181,22 @@ private class AndroidHaptics(context: Context) : Haptics {
             context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
         }
 
+    /**
+     * `areAllPrimitivesSupported` is a binder call to the vibrator service,
+     * and the answer cannot change for a given pattern: ask once per
+     * pattern, not on every cue (and every heartbeat tick).
+     */
+    private val compositionSupport = ConcurrentHashMap<HapticPattern, Boolean>()
+
     override fun play(pattern: HapticPattern) {
         val device = vibrator ?: return
         if (!device.hasVibrator()) return
         val useComposition = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-            runCatching {
-                device.areAllPrimitivesSupported(*primitiveIds(pattern))
-            }.getOrDefault(false)
+            compositionSupport.getOrPut(pattern) {
+                runCatching {
+                    device.areAllPrimitivesSupported(*primitiveIds(pattern))
+                }.getOrDefault(false)
+            }
         when (val effect = HapticCueMap.effectFor(pattern, useComposition)) {
             is HapticEffect.Composition -> device.vibrate(compose(effect))
             is HapticEffect.Waveform -> device.vibrate(VibrationEffect.createWaveform(effect.timings, -1))

@@ -111,6 +111,16 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun earconsAreOptInAndPersist() {
+        val vm = vm()
+        assertFalse(vm.ui.value.earcons, "sound cues must be off by default")
+        assertFalse(configs.get().earcons)
+        vm.setEarcons(true)
+        assertTrue(vm.ui.value.earcons)
+        assertTrue(configs.get().earcons)
+    }
+
+    @Test
     fun strideLearnedLabelPluralises() {
         assertEquals("Stride learned from 0 legs", strideLearnedLabel(0))
         assertEquals("Stride learned from 1 leg", strideLearnedLabel(1))

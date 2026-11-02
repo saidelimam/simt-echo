@@ -170,6 +170,18 @@ fun SettingsScreen(
                             },
                         )
                     },
+                    {
+                        CosmosRecordRow(
+                            title = "Sound cues",
+                            subtitle = "Short tones at turns, panned to the arrow. Silent while a screen reader is on.",
+                            trailing = {
+                                Switch(
+                                    checked = ui.earcons,
+                                    onCheckedChange = viewModel::setEarcons,
+                                )
+                            },
+                        )
+                    },
                 ),
             )
         }

@@ -29,6 +29,8 @@ data class SettingsUi(
     val cameraOverlayEnabled: Boolean = false,
     /** Distance heartbeat while closing on a turn (W13-09), persisted. */
     val turnHeartbeat: Boolean = true,
+    /** Opt-in earcons at turns (W13-09), persisted. */
+    val earcons: Boolean = false,
     /** LAN local-model base URL (W5-01), persisted. Empty = none. */
     val localModelBaseUrl: String = "",
     /** LAN local-model id (W5-01), persisted. Empty = none. */
@@ -85,6 +87,7 @@ class SettingsViewModel(
                 baselineMode = it.baselineMode,
                 cameraOverlayEnabled = it.cameraOverlayEnabled,
                 turnHeartbeat = it.turnHeartbeat,
+                earcons = it.earcons,
                 localModelBaseUrl = it.localModelBaseUrl,
                 localModelName = it.localModelName,
                 preferLocalModel = it.preferLocalModel,
@@ -136,6 +139,11 @@ class SettingsViewModel(
     fun setTurnHeartbeat(enabled: Boolean) {
         configs.update { it.copy(turnHeartbeat = enabled) }
         _ui.update { it.copy(turnHeartbeat = enabled) }
+    }
+
+    fun setEarcons(enabled: Boolean) {
+        configs.update { it.copy(earcons = enabled) }
+        _ui.update { it.copy(earcons = enabled) }
     }
 
     fun setCameraOverlay(enabled: Boolean) {

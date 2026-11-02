@@ -36,6 +36,12 @@ data class EchoConfig(
      * default; Settings can turn it off.
      */
     val turnHeartbeat: Boolean = true,
+    /**
+     * Earcons (W13-09, freeze §8): 80 ms synthesised tones at turns,
+     * panned to the arrow. Opt-in, default off; even when on they stay
+     * silent while a screen reader is active.
+     */
+    val earcons: Boolean = false,
 
     // Local model (plan §7.5 / W5-01), Settings → Advanced. All defaults
     // are "nothing configured": with these unset the app behaves exactly
