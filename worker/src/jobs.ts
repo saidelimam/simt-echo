@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { Env } from "./index";
+import { handleCreateJobV11 } from "./uploads";
 import {
   JobResultSchema,
   ManifestSchema,
@@ -52,6 +53,11 @@ export function registerJobsRoutes(app: Hono<{ Bindings: Env }>): void {
   app.post("/v1/jobs", async (c) => {
     if (!c.env.PIPELINE) {
       return c.json({ ok: false, error: "server_misconfigured" }, 500);
+    }
+    // W11-05: JSON bodies are v1.1 creates (uploadId/budget/idempotencyKey);
+    // the frozen v1 multipart path below is untouched for v1 clients.
+    if ((c.req.header("content-type") ?? "").includes("application/json")) {
+      return handleCreateJobV11(c);
     }
     let manifest: Manifest;
     let allowed: Set<string>;

@@ -3,6 +3,7 @@ import type { WorkflowStep as RuntimeWorkflowStep } from "cloudflare:workers";
 import { app } from "./index";
 import { EchoPipeline } from "./pipeline";
 import { JobResultSchema } from "./types";
+import { STAGING_TTL_MS, sweepExpiredUploads } from "./uploads";
 import {
   CheckpointEventSchema,
   CompleteEventSchema,
@@ -558,8 +559,325 @@ describe("v1.1 contract freeze (W10-06)", () => {
   });
 });
 
-describe("EchoPipeline skeleton", () => {
-  it("runs load → scout → ground → assemble and seals a valid empty result", async () => {
+describe("v1.1 resumable uploads (W11-05)", () => {
+  const auth = { Authorization: `Bearer ${TOKEN}` };
+  const jsonAuth = { ...auth, "Content-Type": "application/json" };
+
+  async function shaHexOf(data: number[]): Promise<string> {
+    const bytes = new Uint8Array(data);
+    const digest = await crypto.subtle.digest("SHA-256", bytes);
+    return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  function stagedFiles() {
+    return [
+      { name: "kf_n2_0", data: [1, 2, 3] },
+      { name: "kf_n2_1", data: [4, 5, 6] },
+      { name: "clip_n2", data: [7, 8, 9] },
+    ];
+  }
+
+  async function createUpload(
+    env: never,
+    files: Array<{ name: string; sha256: string; bytes: number }>,
+  ) {
+    return app.request(
+      "/v1/uploads",
+      { method: "POST", headers: jsonAuth, body: JSON.stringify({ files }) },
+      env,
+    );
+  }
+
+  async function createUploadFor(env: never, files = stagedFiles()) {
+    const refs = await Promise.all(
+      files.map(async (f) => ({ name: f.name, sha256: await shaHexOf(f.data), bytes: f.data.length })),
+    );
+    const res = await createUpload(env, refs);
+    expect(res.status).toBe(200);
+    return ((await res.json()) as { uploadId: string; missing: string[] }).uploadId;
+  }
+
+  function putBlob(env: never, uploadId: string, name: string, data: number[]) {
+    return app.request(
+      `/v1/uploads/${uploadId}/${name}`,
+      {
+        method: "PUT",
+        headers: { ...auth, "Content-Type": "application/octet-stream" },
+        body: new Blob([new Uint8Array(data)]),
+      },
+      env,
+    );
+  }
+
+  function postJobJson(env: never, payload: unknown) {
+    return app.request(
+      "/v1/jobs",
+      { method: "POST", headers: jsonAuth, body: JSON.stringify(payload) },
+      env,
+    );
+  }
+
+  function readMeta(media: FakeR2, uploadId: string) {
+    const entry = media.store.get(`jobs/staging/${uploadId}/meta.json`);
+    expect(entry).toBeDefined();
+    return JSON.parse(new TextDecoder().decode(entry!.body)) as { createdAt: number };
+  }
+
+  it("resumes: missing[] shrinks as sha-verified blobs arrive", async () => {
+    const media = new FakeR2();
+    const env = envFor(media, new FakePipeline());
+    const files = stagedFiles();
+    const uploadId = await createUploadFor(env, files);
+
+    // Create reports everything missing: a fresh client PUTs all three.
+    const created = (await (
+      await createUpload(
+        env,
+        await Promise.all(
+          files.map(async (f) => ({ name: f.name, sha256: await shaHexOf(f.data), bytes: f.data.length })),
+        ),
+      )
+    ).json()) as { missing: string[] };
+    expect(created.missing).toEqual(["kf_n2_0", "kf_n2_1", "clip_n2"]);
+
+    expect((await putBlob(env, uploadId, "kf_n2_0", [1, 2, 3])).status).toBe(200);
+    expect(media.store.has(`jobs/staging/${uploadId}/kf_n2_0`)).toBe(true);
+    const mid = (await (
+      await app.request(`/v1/uploads/${uploadId}`, { headers: auth }, env)
+    ).json()) as { uploadId: string; missing: string[] };
+    expect(mid).toEqual({ ok: true, uploadId, missing: ["kf_n2_1", "clip_n2"] });
+
+    expect((await putBlob(env, uploadId, "kf_n2_1", [4, 5, 6])).status).toBe(200);
+    expect((await putBlob(env, uploadId, "clip_n2", [7, 8, 9])).status).toBe(200);
+    const done = (await (
+      await app.request(`/v1/uploads/${uploadId}`, { headers: auth }, env)
+    ).json()) as { missing: string[] };
+    expect(done.missing).toEqual([]);
+  });
+
+  it("rejects sha mismatches with 400 and stores nothing", async () => {
+    const media = new FakeR2();
+    const env = envFor(media, new FakePipeline());
+    const uploadId = await createUploadFor(env);
+
+    const res = await putBlob(env, uploadId, "kf_n2_0", [9, 9, 9]);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ ok: false, error: "sha_mismatch" });
+    expect(media.store.has(`jobs/staging/${uploadId}/kf_n2_0`)).toBe(false);
+
+    const status = (await (
+      await app.request(`/v1/uploads/${uploadId}`, { headers: auth }, env)
+    ).json()) as { missing: string[] };
+    expect(status.missing).toContain("kf_n2_0");
+  });
+
+  it("rejects unknown files, bad names, and unknown uploads", async () => {
+    const media = new FakeR2();
+    const env = envFor(media, new FakePipeline());
+    const uploadId = await createUploadFor(env);
+
+    const unknown = await putBlob(env, uploadId, "kf_n9_9", [1]);
+    expect(unknown.status).toBe(400);
+    expect(await unknown.json()).toEqual({ ok: false, error: "unknown_file" });
+
+    const badName = await app.request(
+      `/v1/uploads/${uploadId}/EVIL!`,
+      {
+        method: "PUT",
+        headers: { ...auth, "Content-Type": "application/octet-stream" },
+        body: new Blob([new Uint8Array([1])]),
+      },
+      env,
+    );
+    expect(badName.status).toBe(400);
+
+    const ghost = await putBlob(env, "00000000-0000-0000-0000-000000000000", "kf_n2_0", [1, 2, 3]);
+    expect(ghost.status).toBe(404);
+    expect(await ghost.json()).toEqual({ ok: false, error: "upload_not_found" });
+
+    const ghostGet = await app.request("/v1/uploads/00000000-0000-0000-0000-000000000000", {
+      headers: auth,
+    }, env);
+    expect(ghostGet.status).toBe(404);
+  });
+
+  it("creates a job by moving staged blobs under it, then consumes staging", async () => {
+    const media = new FakeR2();
+    const pipeline = new FakePipeline();
+    const env = envFor(media, pipeline);
+    const files = stagedFiles();
+    const uploadId = await createUploadFor(env, files);
+    for (const f of files) {
+      expect((await putBlob(env, uploadId, f.name, f.data)).status).toBe(200);
+    }
+
+    const res = await postJobJson(env, { manifest: validManifest(), uploadId });
+    expect(res.status).toBe(202);
+    const { jobId } = (await res.json()) as { jobId: string };
+    expect(pipeline.instances.has(jobId)).toBe(true);
+
+    for (const f of files) {
+      const stored = media.store.get(`jobs/${jobId}/in/${f.name}`);
+      expect(stored).toBeDefined();
+      expect([...new Uint8Array(stored!.body)]).toEqual(f.data);
+    }
+    expect(media.store.has(`jobs/${jobId}/manifest.json`)).toBe(true);
+    // Single-use staging: the move consumes it, so a resumed GET is gone.
+    expect([...media.store.keys()].filter((k) => k.startsWith(`jobs/staging/${uploadId}/`))).toEqual(
+      [],
+    );
+    expect((await app.request(`/v1/uploads/${uploadId}`, { headers: auth }, env)).status).toBe(404);
+  });
+
+  it("returns the same job id for an idempotent double-create", async () => {
+    const media = new FakeR2();
+    const pipeline = new FakePipeline();
+    const env = envFor(media, pipeline);
+    const files = stagedFiles();
+    const uploadId = await createUploadFor(env, files);
+    for (const f of files) {
+      await putBlob(env, uploadId, f.name, f.data);
+    }
+    const payload = {
+      manifest: validManifest(),
+      uploadId,
+      budget: { maxSamFrames: 120 },
+      idempotencyKey: "idempotent-client-key-1",
+    };
+
+    const first = await postJobJson(env, payload);
+    expect(first.status).toBe(202);
+    const { jobId: firstId } = (await first.json()) as { jobId: string };
+
+    // Staging was consumed, yet the replay returns the same job id.
+    const second = await postJobJson(env, payload);
+    expect(second.status).toBe(202);
+    const { jobId: secondId } = (await second.json()) as { jobId: string };
+    expect(secondId).toBe(firstId);
+    expect(pipeline.instances.size).toBe(1);
+  });
+
+  it("refuses to create from an incomplete upload, naming what is missing", async () => {
+    const media = new FakeR2();
+    const pipeline = new FakePipeline();
+    const env = envFor(media, pipeline);
+    const uploadId = await createUploadFor(env);
+    expect((await putBlob(env, uploadId, "kf_n2_0", [1, 2, 3])).status).toBe(200);
+
+    const res = await postJobJson(env, { manifest: validManifest(), uploadId });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      ok: false,
+      error: "upload_incomplete",
+      missing: ["kf_n2_1", "clip_n2"],
+    });
+    expect(pipeline.instances.size).toBe(0);
+  });
+
+  it("expires staged uploads after 1h on every endpoint and sweeps them", async () => {
+    const media = new FakeR2();
+    const env = envFor(media, new FakePipeline());
+    const uploadId = await createUploadFor(env);
+    await putBlob(env, uploadId, "kf_n2_0", [1, 2, 3]);
+
+    // Backdate past the TTL: deterministic without waiting an hour.
+    const backdated = {
+      files: [
+        { name: "kf_n2_0", sha256: await shaHexOf([1, 2, 3]), bytes: 3 },
+        { name: "kf_n2_1", sha256: await shaHexOf([4, 5, 6]), bytes: 3 },
+        { name: "clip_n2", sha256: await shaHexOf([7, 8, 9]), bytes: 3 },
+      ],
+      createdAt: Date.now() - STAGING_TTL_MS - 1,
+    };
+    await media.put(`jobs/staging/${uploadId}/meta.json`, JSON.stringify(backdated));
+    expect(readMeta(media, uploadId).createdAt).toBe(backdated.createdAt);
+
+    const get = await app.request(`/v1/uploads/${uploadId}`, { headers: auth }, env);
+    expect(get.status).toBe(410);
+    expect(await get.json()).toEqual({ ok: false, error: "upload_expired" });
+    // The expired read sweeps its own staging area.
+    expect([...media.store.keys()].filter((k) => k.startsWith("jobs/staging/"))).toEqual([]);
+
+    // PUT and job create agree once a second upload ages out.
+    const uploadId2 = await createUploadFor(env);
+    await media.put(
+      `jobs/staging/${uploadId2}/meta.json`,
+      JSON.stringify({ ...backdated, createdAt: Date.now() - STAGING_TTL_MS - 1 }),
+    );
+    const put = await putBlob(env, uploadId2, "kf_n2_1", [4, 5, 6]);
+    expect(put.status).toBe(410);
+
+    const uploadId3 = await createUploadFor(env);
+    await media.put(
+      `jobs/staging/${uploadId3}/meta.json`,
+      JSON.stringify({ ...backdated, createdAt: Date.now() - STAGING_TTL_MS - 1 }),
+    );
+    const job = await postJobJson(env, { manifest: validManifest(), uploadId: uploadId3 });
+    expect(job.status).toBe(410);
+    expect(await job.json()).toEqual({ ok: false, error: "upload_expired" });
+
+    // The sweep removes aged uploads (and orphans) but keeps fresh ones.
+    // Note: backdate only after every create, since each create sweeps.
+    const fresh = await createUploadFor(env);
+    const stale = await createUploadFor(env);
+    await media.put(
+      `jobs/staging/${stale}/meta.json`,
+      JSON.stringify({ ...backdated, createdAt: Date.now() - STAGING_TTL_MS - 1 }),
+    );
+    await media.put(`jobs/staging/${stale}/kf_n2_0`, new Uint8Array([1, 2, 3]).buffer as ArrayBuffer);
+    const swept = await sweepExpiredUploads(env as never);
+    expect(swept).toBe(1);
+    expect([...media.store.keys()].filter((k) => k.startsWith(`jobs/staging/${stale}/`))).toEqual([]);
+    expect((await app.request(`/v1/uploads/${fresh}`, { headers: auth }, env)).status).toBe(200);
+  });
+
+  it("holds the 60-file / 80 MB caps on the new endpoints", async () => {
+    const media = new FakeR2();
+    const env = envFor(media, new FakePipeline());
+    const sha = await shaHexOf([1]);
+
+    const tooBig = await createUpload(env, [
+      { name: "kf_n2_0", sha256: sha, bytes: 80 * 1024 * 1024 + 1 },
+    ]);
+    expect(tooBig.status).toBe(413);
+    expect(await tooBig.json()).toEqual({ ok: false, error: "payload_too_large" });
+
+    const tooMany = await createUpload(
+      env,
+      Array.from({ length: 61 }, (_, i) => ({
+        name: `kf_${i.toString().padStart(2, "0")}`,
+        sha256: sha,
+        bytes: 10,
+      })),
+    );
+    expect(tooMany.status).toBe(400);
+    expect(await tooMany.json()).toEqual({ ok: false, error: "invalid_request" });
+  });
+
+  it("creates manifest-only v1.1 jobs and rejects bad v1.1 bodies", async () => {
+    const media = new FakeR2();
+    const pipeline = new FakePipeline();
+    const env = envFor(media, pipeline);
+
+    const res = await postJobJson(env, { manifest: validManifest() });
+    expect(res.status).toBe(202);
+    const { jobId } = (await res.json()) as { jobId: string };
+    expect(pipeline.instances.has(jobId)).toBe(true);
+    expect(media.store.has(`jobs/${jobId}/manifest.json`)).toBe(true);
+
+    const empty = await postJobJson(env, {});
+    expect(empty.status).toBe(400);
+    expect(await empty.json()).toEqual({ ok: false, error: "invalid_request" });
+
+    const noConsent = await postJobJson(env, {
+      manifest: { ...validManifest(), consent: { sendFramesToCloudAi: false, atEpochMs: 0 } },
+    });
+    expect(noConsent.status).toBe(400);
+    expect(await noConsent.json()).toEqual({ ok: false, error: "consent_required" });
+  });
+});
+
+describe("EchoPipeline skeleton", () => {  it("runs load → scout → ground → assemble and seals a valid empty result", async () => {
     const media = new FakeR2();
     const jobId = crypto.randomUUID();
     await media.put(`jobs/${jobId}/manifest.json`, JSON.stringify(validManifest()));
