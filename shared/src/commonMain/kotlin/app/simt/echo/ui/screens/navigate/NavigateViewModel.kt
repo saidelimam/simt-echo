@@ -17,12 +17,20 @@ import app.simt.echo.nav.NavUi
 import app.simt.echo.nav.NavWearState
 import app.simt.echo.nav.Navigator
 import app.simt.echo.nav.toWearState
+import app.simt.echo.platform.CueOutput
+import app.simt.echo.platform.DistanceHeartbeat
+import app.simt.echo.platform.EyesFreeFilter
+import app.simt.echo.platform.HapticPattern
 import app.simt.echo.platform.Haptics
+import app.simt.echo.platform.NoCueOutput
 import app.simt.echo.platform.MotionSource
 import app.simt.echo.platform.currentEpochMs
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -59,6 +67,12 @@ class NavigateViewModel(
      */
     private val wearNav: (NavWearState) -> Unit = {},
     /**
+     * Earcon + announcement output (plan W13-09). Defaults to silence so
+     * every existing call site keeps compiling; the screen passes the
+     * platform output ([rememberCueOutput]).
+     */
+    private val cues: CueOutput = NoCueOutput,
+    /**
      * Ephemeral route (W13-13 practice tour): used directly, never read
      * from nor written to the route store. The tour replays a bundled
      * fixture walk through this same instrument with a null trial sink,
@@ -77,6 +91,11 @@ class NavigateViewModel(
     val legCount: Int = route?.legs?.size ?: 0
 
     private var arrivedFired = false
+
+    // ── Distance heartbeat (W13-09) ─────────────────────────────────────
+    private val heartbeatEnabled = config.turnHeartbeat
+    private var heartbeat: Job? = null
+    private var heartbeatRemainingM = 0.0
 
     // ── Trial session stats (plan §11 / W4-01 writer) ──────────────────
     // Counted from the Navigator's own events, never retold: anchors are
@@ -102,7 +121,7 @@ class NavigateViewModel(
             viewModelScope.launch {
                 nav.events.collect { event ->
                     when (event) {
-                        is NavEvent.Haptic -> haptics.play(event.pattern)
+                        is NavEvent.Haptic -> onCue(event.pattern)
                         is NavEvent.Anchor -> {
                             anchors++
                             configs?.setLearnedStride(nav.learnedStrideK, nav.learnedStrideLegs)
@@ -123,10 +142,52 @@ class NavigateViewModel(
             }
             viewModelScope.launch {
                 nav.ui.collect { ui ->
-                    if (ui != null) runCatching { wearNav(ui.toWearState()) }
+                    if (ui != null) {
+                        updateHeartbeat(ui)
+                        runCatching { wearNav(ui.toWearState()) }
+                    }
                 }
             }
         }
+    }
+
+    /**
+     * One navigation cue: felt (haptics, mirrored to the watch), heard (the
+     * opt-in earcon, gated by the platform output) and, when the walker may
+     * be eyes-free, announced — decision points only ([EyesFreeFilter]):
+     * confirmations and heartbeat ticks are felt, never spoken.
+     */
+    private fun onCue(pattern: HapticPattern) {
+        haptics.play(pattern)
+        val nav = ui.value ?: return
+        cues.earcon(pattern, nav.arrowRad)
+        if (cues.eyesFree && EyesFreeFilter.isDecisionPoint(pattern)) cues.announce(nav.instruction)
+    }
+
+    /**
+     * Replays TICK on the [DistanceHeartbeat] schedule while a turn is
+     * within 8 m (APPROACH on a turn node), quickening as the remaining
+     * distance shrinks. Runs from the nav state alone, so any phase change
+     * (TURNING, UNCERTAIN, OFF_ROUTE, ARRIVED…) cancels it.
+     */
+    private fun updateHeartbeat(ui: NavUi) {
+        if (!heartbeatEnabled || heartbeatIntervalMs(ui) == null) {
+            stopHeartbeat()
+            return
+        }
+        heartbeatRemainingM = ui.distanceToNextM
+        if (heartbeat != null) return
+        heartbeat = viewModelScope.launch {
+            while (isActive) {
+                delay(DistanceHeartbeat.intervalMs(heartbeatRemainingM))
+                haptics.play(HapticPattern.TICK)
+            }
+        }
+    }
+
+    private fun stopHeartbeat() {
+        heartbeat?.cancel()
+        heartbeat = null
     }
 
     /** Arrival writes the run (W4-01): Arrived's form completes §11 fields. */
@@ -225,6 +286,20 @@ class NavigateViewModel(
     }
 
     override fun onCleared() {
+        stopHeartbeat()
         motion.stop()
     }
 }
+
+/**
+ * Heartbeat interval for [ui], or null when no heartbeat is due: only
+ * while approaching a turn that is within [DistanceHeartbeat.RANGE_M].
+ */
+internal fun heartbeatIntervalMs(ui: NavUi): Long? =
+    if (ui.phase == NavPhase.APPROACH && ui.nextTurn != null &&
+        ui.distanceToNextM <= DistanceHeartbeat.RANGE_M
+    ) {
+        DistanceHeartbeat.intervalMs(ui.distanceToNextM)
+    } else {
+        null
+    }

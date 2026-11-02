@@ -27,6 +27,8 @@ data class SettingsUi(
     val baselineMode: Boolean = false,
     /** Camera HUD on Navigate (W5-02), persisted. */
     val cameraOverlayEnabled: Boolean = false,
+    /** Distance heartbeat while closing on a turn (W13-09), persisted. */
+    val turnHeartbeat: Boolean = true,
     /** LAN local-model base URL (W5-01), persisted. Empty = none. */
     val localModelBaseUrl: String = "",
     /** LAN local-model id (W5-01), persisted. Empty = none. */
@@ -82,6 +84,7 @@ class SettingsViewModel(
                 stepK = it.stepK,
                 baselineMode = it.baselineMode,
                 cameraOverlayEnabled = it.cameraOverlayEnabled,
+                turnHeartbeat = it.turnHeartbeat,
                 localModelBaseUrl = it.localModelBaseUrl,
                 localModelName = it.localModelName,
                 preferLocalModel = it.preferLocalModel,
@@ -128,6 +131,11 @@ class SettingsViewModel(
     fun setBaselineMode(enabled: Boolean) {
         configs.update { it.copy(baselineMode = enabled) }
         _ui.update { it.copy(baselineMode = enabled) }
+    }
+
+    fun setTurnHeartbeat(enabled: Boolean) {
+        configs.update { it.copy(turnHeartbeat = enabled) }
+        _ui.update { it.copy(turnHeartbeat = enabled) }
     }
 
     fun setCameraOverlay(enabled: Boolean) {

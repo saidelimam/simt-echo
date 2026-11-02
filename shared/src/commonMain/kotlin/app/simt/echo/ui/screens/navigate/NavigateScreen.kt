@@ -45,6 +45,7 @@ import app.simt.echo.platform.KeepScreenOn
 import app.simt.echo.platform.MotionSource
 import app.simt.echo.platform.cameraGraphFor
 import app.simt.echo.platform.rememberCameraRecorder
+import app.simt.echo.platform.rememberCueOutput
 import app.simt.echo.platform.rememberHaptics
 import app.simt.echo.platform.rememberMotionSource
 import app.simt.echo.platform.rememberOnline
@@ -101,6 +102,7 @@ fun NavigateScreen(
 ) {
     val motion = motionSource ?: rememberMotionSource()
     val haptics = rememberHaptics()
+    val cues = rememberCueOutput(earconsEnabled = false)
     val online = rememberOnline()
     KeepScreenOn()
     // Scoped to this navigation back-stack entry, not `remember`: popping
@@ -110,7 +112,7 @@ fun NavigateScreen(
         key = routeId,
         factory = viewModelFactory {
             addInitializer(NavigateViewModel::class) {
-                NavigateViewModel(routeId, routes, motion, haptics, config, trials, device, baselineMode, configs = configs, onArrived = onArrived, ephemeralRoute = ephemeralRoute)
+                NavigateViewModel(routeId, routes, motion, haptics, config, trials, device, baselineMode, configs = configs, cues = cues, onArrived = onArrived, ephemeralRoute = ephemeralRoute)
             }
         },
     )

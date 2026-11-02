@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityManager
 import androidx.compose.runtime.Composable
@@ -17,6 +18,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.delay
 
@@ -89,6 +91,27 @@ actual fun KeepScreenOn() {
 }
 
 @Composable
+actual fun rememberCueOutput(earconsEnabled: Boolean): CueOutput {
+    val context = LocalContext.current.applicationContext
+    val view = LocalView.current
+    return remember(context, view, earconsEnabled) { AndroidCueOutput(context, view) }
+}
+
+/** Android [CueOutput]: announcements through the view; earcons arrive with the player. */
+private class AndroidCueOutput(
+    private val context: Context,
+    private val view: View,
+) : CueOutput {
+    override val eyesFree: Boolean get() = context.isScreenReaderActive()
+
+    override fun earcon(pattern: HapticPattern, arrowRad: Double) = Unit
+
+    override fun announce(text: String) {
+        view.announceForAccessibility(text)
+    }
+}
+
+@Composable
 actual fun rememberHaptics(): Haptics {
     val context = LocalContext.current.applicationContext
     return remember(context) {
@@ -100,9 +123,11 @@ actual fun rememberHaptics(): Haptics {
 
 /**
  * TalkBack-aware mute hook for the [EarconGate] (plan W13-09): true while a
- * screen reader is likely speaking over our output — touch exploration or
- * any enabled accessibility service. The earcon player passes this as the
- * gate's `talkBackSpeaking` input so earcons never play over speech.
+ * screen reader is enabled — touch exploration on, or any accessibility
+ * service with spoken feedback. This is deliberately conservative: Android
+ * exposes whether a screen reader is *enabled*, not whether it is speaking
+ * this instant, so the earcon player treats "enabled" as "may be speaking"
+ * and stays silent rather than talk over it.
  */
 fun Context.isScreenReaderActive(): Boolean {
     val manager = runCatching {

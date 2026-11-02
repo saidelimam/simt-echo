@@ -59,6 +59,9 @@ actual fun rememberHaptics(): Haptics = remember {
 }
 
 @Composable
+actual fun rememberCueOutput(earconsEnabled: Boolean): CueOutput = NoCueOutput
+
+@Composable
 actual fun rememberOnline(pollMs: Long): Boolean = false
 
 /** iOS is out of v1 scope: never claim an unmetered path (fail closed). */

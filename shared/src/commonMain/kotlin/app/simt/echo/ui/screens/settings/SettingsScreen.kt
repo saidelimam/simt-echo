@@ -158,6 +158,18 @@ fun SettingsScreen(
                             },
                         )
                     },
+                    {
+                        CosmosRecordRow(
+                            title = "Turn heartbeat",
+                            subtitle = "A tick that quickens over the last 8 m to a turn.",
+                            trailing = {
+                                Switch(
+                                    checked = ui.turnHeartbeat,
+                                    onCheckedChange = viewModel::setTurnHeartbeat,
+                                )
+                            },
+                        )
+                    },
                 ),
             )
         }

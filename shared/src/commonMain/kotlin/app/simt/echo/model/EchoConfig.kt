@@ -30,6 +30,12 @@ data class EchoConfig(
      * pose or tracking exists in this app (review 0004 R4).
      */
     val cameraOverlayEnabled: Boolean = false,
+    /**
+     * Distance heartbeat (W13-09, freeze §7): a TICK that quickens from
+     * 1.2 s to 0.4 s over the last 8 m to a turn. Haptic only, so on by
+     * default; Settings can turn it off.
+     */
+    val turnHeartbeat: Boolean = true,
 
     // Local model (plan §7.5 / W5-01), Settings → Advanced. All defaults
     // are "nothing configured": with these unset the app behaves exactly

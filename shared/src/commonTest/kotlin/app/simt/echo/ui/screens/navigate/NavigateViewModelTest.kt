@@ -95,7 +95,8 @@ class NavigateViewModelTest {
         // The acceptance criterion is the sequence, not its members. This
         // walk turns twice (0° → 90° → 0°): each turn is approached with
         // its direction cue (RIGHT, then LEFT — W10-08 turn language, once
-        // per leg) and anchored (CONFIRM), then ARRIVE — nothing else.
+        // per leg) and anchored (CONFIRM), then ARRIVE — nothing else but
+        // the heartbeat TICKs filtered out below.
         assertEquals(
             listOf(
                 HapticPattern.RIGHT,
@@ -104,8 +105,10 @@ class NavigateViewModelTest {
                 HapticPattern.CONFIRM,
                 HapticPattern.ARRIVE,
             ),
-            haptics.played,
+            haptics.played.filter { it != HapticPattern.TICK },
         )
+        // W13-09: the distance heartbeat ticks (and only ticks) in between.
+        assertTrue(haptics.played.any { it == HapticPattern.TICK }, "no heartbeat ticks in ${haptics.played}")
     }
 
     @Test

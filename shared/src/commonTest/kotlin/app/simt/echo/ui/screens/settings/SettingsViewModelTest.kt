@@ -102,6 +102,15 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun turnHeartbeatDefaultsOnAndPersistsWhenSwitchedOff() {
+        val vm = vm()
+        assertTrue(vm.ui.value.turnHeartbeat)
+        vm.setTurnHeartbeat(false)
+        assertFalse(vm.ui.value.turnHeartbeat)
+        assertFalse(configs.get().turnHeartbeat)
+    }
+
+    @Test
     fun strideLearnedLabelPluralises() {
         assertEquals("Stride learned from 0 legs", strideLearnedLabel(0))
         assertEquals("Stride learned from 1 leg", strideLearnedLabel(1))
