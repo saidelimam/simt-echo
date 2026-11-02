@@ -9,6 +9,7 @@ import app.simt.echo.platform.FileSharing
 import app.simt.echo.platform.HapticPattern
 import app.simt.echo.platform.Haptics
 import app.simt.echo.platform.PeerTransport
+import app.simt.echo.platform.TransferProgress
 import app.simt.echo.transfer.ExpiryOption
 import app.simt.echo.transfer.QrPayload
 import app.simt.echo.transfer.RelayClient
@@ -58,6 +59,9 @@ class ShareViewModelTest {
     private class FakeTransport(val downloads: MutableSharedFlow<Unit>) : PeerTransport {
         var stopCalls = 0
         var offerFails = false
+        val progressFlow = MutableSharedFlow<TransferProgress>(extraBufferCapacity = 64)
+
+        override val progress: Flow<TransferProgress> get() = progressFlow
 
         override suspend fun offer(payload: ByteArray, token: String): Endpoint {
             if (offerFails) error("no Wi-Fi IP")
@@ -401,5 +405,54 @@ class ShareViewModelTest {
 
         vm.stop()
         assertEquals(1, transport.stopCalls)
+    }
+
+    @Test
+    fun progressSurfacesFractionAndMeasuredRate() = runTest(dispatcher) {
+        val (service, transport) = serviceWithRoute()
+        var now = 1_000L
+        val vm = ShareViewModel(
+            Fixtures.L_ROUTE.routeId,
+            service,
+            FakeHaptics(),
+            FakeFileSharing(),
+            nowMs = { now },
+        )
+        advanceUntilIdle()
+        assertNull(vm.ui.value.progress)
+
+        // First sighting: fraction known, but no interval yet — rate 0.
+        now = 2_000L
+        transport.progressFlow.emit(TransferProgress(50L, 100L))
+        advanceUntilIdle()
+        assertEquals(0.5f, vm.ui.value.progress?.fraction)
+        assertEquals(0.0, vm.ui.value.bytesPerSecond)
+
+        // 50 bytes in 1000 ms: the particle flow runs at 50 B/s.
+        now = 3_000L
+        transport.progressFlow.emit(TransferProgress(100L, 100L))
+        advanceUntilIdle()
+        assertEquals(1.0f, vm.ui.value.progress?.fraction)
+        assertEquals(50.0, vm.ui.value.bytesPerSecond)
+        assertEquals(true, vm.ui.value.progress?.isComplete)
+    }
+
+    @Test
+    fun reofferClearsStaleProgress() = runTest(dispatcher) {
+        val (service, transport) = serviceWithRoute()
+        val vm = ShareViewModel(Fixtures.L_ROUTE.routeId, service, FakeHaptics(), FakeFileSharing())
+        advanceUntilIdle()
+        transport.progressFlow.emit(TransferProgress(100L, 100L))
+        advanceUntilIdle()
+        assertNotNull(vm.ui.value.progress)
+
+        vm.toggleAsset("start", false)
+        // Synchronously cleared with the stale QR: frozen until bytes move.
+        assertNull(vm.ui.value.progress)
+        assertEquals(0.0, vm.ui.value.bytesPerSecond)
+
+        advanceUntilIdle()
+        assertNotNull(vm.ui.value.qrUri)
+        assertNull(vm.ui.value.progress)
     }
 }

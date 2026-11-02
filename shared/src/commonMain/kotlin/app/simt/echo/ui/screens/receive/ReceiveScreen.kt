@@ -38,6 +38,7 @@ import app.simt.echo.ui.components.CosmosErrorState
 import app.simt.echo.ui.components.CosmosPrimaryButton
 import app.simt.echo.ui.components.CosmosSecondaryButton
 import app.simt.echo.ui.components.CosmosSuccessState
+import app.simt.echo.ui.components.TransferParticles
 import app.simt.echo.ui.components.oneDecimal
 import app.simt.echo.ui.copy.UNTITLED_WALK
 import app.simt.echo.ui.copy.expiryCopy
@@ -122,6 +123,16 @@ fun ReceiveScreen(
                 if (ui.fetching) {
                     CircularProgressIndicator()
                     Text(text = "Fetching…", style = MaterialTheme.typography.bodyLarge)
+                    // W13-14: particle flow between the two phones, driven
+                    // only by measured bytes — frozen until bytes arrive.
+                    val progress = ui.progress
+                    if (progress != null) {
+                        TransferParticles(
+                            progress = progress,
+                            bytesPerSecond = ui.bytesPerSecond,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                 }
                 val error = ui.error
                 if (error != null) {

@@ -5,11 +5,15 @@ import androidx.lifecycle.viewModelScope
 import app.simt.echo.model.BundleBody
 import app.simt.echo.model.NodeType
 import app.simt.echo.platform.FileSharing
+import app.simt.echo.platform.TransferProgress
+import app.simt.echo.platform.bytesPerSecond
+import app.simt.echo.platform.currentEpochMs
 import app.simt.echo.transfer.TransferService
 import app.simt.echo.ui.copy.receiveFileErrorCopy
 import app.simt.echo.ui.copy.receiveSaveErrorCopy
 import app.simt.echo.ui.sigil.SigilGeometry
 import app.simt.echo.ui.sigil.routeSigil
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,6 +39,13 @@ data class ReceiveUiState(
     val preview: ImportPreview? = null,
     val savedRouteId: String? = null,
     val error: String? = null,
+    /**
+     * Live byte progress of the fetch in flight (W13-14); null before any
+     * byte moves. Drives the particle flow — never synthesised.
+     */
+    val progress: TransferProgress? = null,
+    /** Measured bytes/s behind [progress]; 0 means frozen light. */
+    val bytesPerSecond: Double = 0.0,
 )
 
 /** Plan copy for an unreachable peer (venue Wi-Fi often isolates clients). */
@@ -43,6 +54,7 @@ const val UNREACHABLE_COPY = "Can't reach the other phone. Join its hotspot and 
 class ReceiveViewModel(
     private val service: TransferService,
     private val sharing: FileSharing,
+    private val nowMs: () -> Long = { currentEpochMs() },
 ) : ViewModel() {
 
     private val _ui = MutableStateFlow(ReceiveUiState())
@@ -51,11 +63,30 @@ class ReceiveViewModel(
     private var handledUri: String? = null
     private var previewBody: BundleBody? = null
 
+    private var lastProgress: TransferProgress? = null
+    private var lastProgressMs: Long = 0L
+
+    init {
+        // Subscribed from construction — long before any scan can move
+        // bytes — so no fetch emission is missed, however fast. Undispatched
+        // so even a transport that emits without suspending loses nothing.
+        viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            service.progress.collect { emitted ->
+                val now = nowMs()
+                val rate = lastProgress?.let { bytesPerSecond(it, lastProgressMs, emitted, now) } ?: 0.0
+                lastProgress = emitted
+                lastProgressMs = now
+                _ui.update { it.copy(progress = emitted, bytesPerSecond = rate) }
+            }
+        }
+    }
+
     fun onScanned(uri: String) {
         if (handledUri != null || _ui.value.fetching || _ui.value.preview != null) return
         if (!uri.startsWith(ECHO_QR_SCHEME)) return
         handledUri = uri
-        _ui.update { it.copy(fetching = true, error = null) }
+        clearProgress()
+        _ui.update { it.copy(fetching = true, error = null, progress = null, bytesPerSecond = 0.0) }
         viewModelScope.launch {
             try {
                 val body = service.fetchPreview(uri)
@@ -112,6 +143,7 @@ class ReceiveViewModel(
     fun rescan() {
         handledUri = null
         previewBody = null
+        clearProgress()
         _ui.update {
             it.copy(
                 generation = it.generation + 1,
@@ -119,8 +151,16 @@ class ReceiveViewModel(
                 preview = null,
                 savedRouteId = null,
                 error = null,
+                progress = null,
+                bytesPerSecond = 0.0,
             )
         }
+    }
+
+    /** Drops measured progress so a new scan starts from frozen light. */
+    private fun clearProgress() {
+        lastProgress = null
+        lastProgressMs = 0L
     }
 
     private fun summarize(body: BundleBody): ImportPreview {
