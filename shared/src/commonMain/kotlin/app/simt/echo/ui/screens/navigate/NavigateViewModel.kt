@@ -13,7 +13,9 @@ import app.simt.echo.nav.NavEvent
 import app.simt.echo.nav.NavInput
 import app.simt.echo.nav.NavPhase
 import app.simt.echo.nav.NavUi
+import app.simt.echo.nav.NavWearState
 import app.simt.echo.nav.Navigator
+import app.simt.echo.nav.toWearState
 import app.simt.echo.platform.Haptics
 import app.simt.echo.platform.MotionSource
 import app.simt.echo.platform.currentEpochMs
@@ -46,6 +48,15 @@ class NavigateViewModel(
      * within the walk, but nothing is stored.
      */
     private val configs: ConfigRepository? = null,
+    /**
+     * Watch nav mirror sink (plan W13-12). Defaults to a no-op so every
+     * existing call site and platform keeps compiling; the Android app
+     * passes `GmsWearNavSender::send`, whose own gate holds the ≤ 1 Hz
+     * rule — this collector forwards every snapshot and never filters.
+     * Declared before [onArrived] (not after) so existing trailing-lambda
+     * call sites keep binding their lambda to `onArrived`.
+     */
+    private val wearNav: (NavWearState) -> Unit = {},
     private val onArrived: (String) -> Unit,
 ) : ViewModel() {
 
@@ -100,6 +111,11 @@ class NavigateViewModel(
                                 onArrived(routeId)
                             }
                     }
+                }
+            }
+            viewModelScope.launch {
+                nav.ui.collect { ui ->
+                    if (ui != null) runCatching { wearNav(ui.toWearState()) }
                 }
             }
         }

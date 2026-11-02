@@ -21,6 +21,14 @@ object EchoWearPaths {
 
     /** Watch advertises this capability when its ECHO listener is installed. */
     const val CAPABILITY_WEAR_APP = "echo_wear_app"
+
+    /**
+     * Change-driven nav mirror (plan W13-12): phone → watch snapshots of
+     * arrow, distance, next cue and phase, at most once per second.
+     * Haptic cues ride the existing [MESSAGE_PATH_HAPTICS] mirror; this
+     * path carries no waveforms.
+     */
+    const val MESSAGE_PATH_NAV = "/echo/nav"
 }
 
 /**

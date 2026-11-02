@@ -9,20 +9,44 @@ import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.WearableListenerService
 
 /**
- * Watch-side receiver for the phone's haptic mirror (plan W5-04).
+ * Watch-side receiver for the phone's mirrors (plan W5-04 haptics, plan
+ * W13-12 nav).
  *
  * The phone sends the `HapticPattern` name to `/echo/haptics` (see the
- * shared `WearHapticCodec`); this service vibrates the §8.4 waveform and
- * ignores anything else. Best-effort throughout: a missing vibrator or a
- * malformed payload is logged, never thrown — the watch must not crash on
- * a background callback.
+ * shared `WearHapticCodec`) and nav snapshots to `/echo/nav` (see the
+ * shared `WearNavSync` and this module's [EchoNavCodec] mirror); this
+ * service vibrates the §8.4 waveform, stores the latest nav snapshot for
+ * [MainActivity], and ignores anything else. Best-effort throughout: a
+ * missing vibrator or a malformed payload is logged, never thrown — the
+ * watch must not crash on a background callback.
  */
 class EchoHapticListenerService : WearableListenerService() {
 
     override fun onMessageReceived(event: MessageEvent) {
-        if (event.path != MESSAGE_PATH_HAPTICS) return
+        when (event.path) {
+            MESSAGE_PATH_HAPTICS -> onHaptic(event.data)
+            MESSAGE_PATH_NAV -> onNav(event.data)
+            else -> return
+        }
+    }
+
+    private fun onNav(data: ByteArray) {
+        val state = try {
+            EchoNavCodec.decode(data)
+        } catch (e: Exception) {
+            Log.d(TAG, "unreadable nav payload", e)
+            return
+        }
+        if (state == null) {
+            Log.d(TAG, "unknown nav payload")
+            return
+        }
+        EchoNavStore.update(state)
+    }
+
+    private fun onHaptic(data: ByteArray) {
         val name = try {
-            event.data.decodeToString()
+            data.decodeToString()
         } catch (e: Exception) {
             Log.d(TAG, "unreadable haptic payload", e)
             return
@@ -55,5 +79,6 @@ class EchoHapticListenerService : WearableListenerService() {
     private companion object {
         const val TAG = "EchoHapticMirror"
         const val MESSAGE_PATH_HAPTICS = "/echo/haptics"
+        const val MESSAGE_PATH_NAV = "/echo/nav"
     }
 }
