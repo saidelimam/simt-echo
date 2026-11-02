@@ -1,8 +1,12 @@
 package app.simt.echo.ui
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
@@ -23,6 +27,11 @@ import app.simt.echo.platform.rememberFileSharing
 import app.simt.echo.platform.rememberHaptics
 import app.simt.echo.platform.rememberMediaTools
 import app.simt.echo.platform.rememberMotionSource
+import app.simt.echo.ui.shell.EchoShell
+import app.simt.echo.ui.shell.echoEnterTransition
+import app.simt.echo.ui.shell.echoExitTransition
+import app.simt.echo.ui.shell.shellConfigFor
+import app.simt.echo.ui.atmosphere.cosmosMotionTier
 import app.simt.echo.ui.screens.HomeScreen
 import app.simt.echo.ui.screens.align.AlignScreen
 import app.simt.echo.ui.screens.arrived.ArrivedScreen
@@ -49,12 +58,35 @@ fun EchoNavHost(
     modifier: Modifier = Modifier,
     navController: NavHostController = rememberNavController(),
 ) {
+    // Current destination drives the shell chrome (W8-05). Each destination
+    // reports its own route — no back-stack introspection, no versioned
+    // NavDestination APIs — so the chrome always matches the visible body.
+    var currentRoute by remember { mutableStateOf<EchoRoute>(EchoRoute.Home) }
+    val tier = cosmosMotionTier()
+    EchoShell(
+        config = shellConfigFor(currentRoute),
+        onBack = { navController.popBackStack() },
+        onClose = { navController.popBackStack() },
+        onSettings = { navController.navigate(EchoRoute.Settings) },
+        onRecord = { if (currentRoute !is EchoRoute.Record) navController.navigate(EchoRoute.Record()) },
+        onReceive = { if (currentRoute !is EchoRoute.Receive) navController.navigate(EchoRoute.Receive) },
+        recordEnabled = currentRoute !is EchoRoute.Record,
+        receiveEnabled = currentRoute !is EchoRoute.Receive,
+        modifier = modifier,
+    ) {
     NavHost(
         navController = navController,
         startDestination = EchoRoute.Home,
-        modifier = modifier,
+        modifier = Modifier,
+        // Route-change motif (Cosmos §4.5, freeze §7 durations): the tier
+        // is read once per composition; STATIC settles with no motion.
+        enterTransition = { echoEnterTransition(tier) },
+        exitTransition = { echoExitTransition(tier) },
+        popEnterTransition = { echoEnterTransition(tier) },
+        popExitTransition = { echoExitTransition(tier) },
     ) {
         composable<EchoRoute.Home> {
+            LaunchedEffect(Unit) { currentRoute = EchoRoute.Home }
             val draftIds = graph.draftRepository.listDraftIds()
             HomeScreen(
                 draftIds = draftIds,
@@ -66,6 +98,7 @@ fun EchoNavHost(
         }
         composable<EchoRoute.Record> { entry ->
             val route = entry.toRoute<EchoRoute.Record>()
+            LaunchedEffect(route) { currentRoute = route }
             RecordScreen(
                 drafts = graph.draftRepository,
                 onSaved = { draftId -> navController.navigateTo(reviewAfterRecord(draftId)) },
@@ -75,6 +108,7 @@ fun EchoNavHost(
         }
         composable<EchoRoute.Review> { entry ->
             val route = entry.toRoute<EchoRoute.Review>()
+            LaunchedEffect(route) { currentRoute = route }
             val mediaTools = rememberMediaTools()
             val viewModel = remember(route.draftId, mediaTools) {
                 ReviewViewModel(
@@ -102,6 +136,7 @@ fun EchoNavHost(
         }
         composable<EchoRoute.Processing> { entry ->
             val route = entry.toRoute<EchoRoute.Processing>()
+            LaunchedEffect(route) { currentRoute = route }
             val mediaTools = rememberMediaTools()
             // Back-stack-scoped, not `remember`: leaving the screen must
             // cancel polling via onCleared() (review 0001 R3).
@@ -127,6 +162,7 @@ fun EchoNavHost(
         }
         composable<EchoRoute.RouteDetail> { entry ->
             val route = entry.toRoute<EchoRoute.RouteDetail>()
+            LaunchedEffect(route) { currentRoute = route }
             RouteDetailScreen(
                 routeId = route.routeId,
                 routes = graph.routeRepository,
@@ -142,6 +178,7 @@ fun EchoNavHost(
         }
         composable<EchoRoute.Share> { entry ->
             val route = entry.toRoute<EchoRoute.Share>()
+            LaunchedEffect(route) { currentRoute = route }
             ShareScreen(
                 routeId = route.routeId,
                 service = graph.transferService,
@@ -151,6 +188,7 @@ fun EchoNavHost(
             )
         }
         composable<EchoRoute.Receive> {
+            LaunchedEffect(Unit) { currentRoute = EchoRoute.Receive }
             ReceiveScreen(
                 service = graph.transferService,
                 sharing = rememberFileSharing(),
@@ -159,6 +197,7 @@ fun EchoNavHost(
         }
         composable<EchoRoute.Align> { entry ->
             val route = entry.toRoute<EchoRoute.Align>()
+            LaunchedEffect(route) { currentRoute = route }
             AlignScreen(
                 routeId = route.routeId,
                 routes = graph.routeRepository,
@@ -168,6 +207,7 @@ fun EchoNavHost(
         }
         composable<EchoRoute.Navigate> { entry ->
             val route = entry.toRoute<EchoRoute.Navigate>()
+            LaunchedEffect(route) { currentRoute = route }
             // W7-04 Simulate: replay the saved geometry instead of the
             // live source. Falls back to live when the route is gone —
             // the screen's empty state still owns that case.
@@ -196,6 +236,7 @@ fun EchoNavHost(
         }
         composable<EchoRoute.Arrived> { entry ->
             val route = entry.toRoute<EchoRoute.Arrived>()
+            LaunchedEffect(route) { currentRoute = route }
             ArrivedScreen(
                 routeId = route.routeId,
                 routes = graph.routeRepository,
@@ -204,6 +245,7 @@ fun EchoNavHost(
             )
         }
         composable<EchoRoute.Settings> {
+            LaunchedEffect(Unit) { currentRoute = EchoRoute.Settings }
             val sharing = rememberFileSharing()
             // Back-stack-scoped like every other screen ViewModel
             // (review 0001 pattern; review 0002 R2 for this regression).
@@ -226,6 +268,7 @@ fun EchoNavHost(
                 onBack = { navController.popBackStack() },
             )
         }
+    }
     }
 }
 

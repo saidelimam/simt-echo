@@ -5,6 +5,9 @@ import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import app.simt.echo.host.RobolectricActivityRule
+import app.simt.echo.ui.EchoRoute
+import app.simt.echo.ui.shell.EchoShell
+import app.simt.echo.ui.shell.shellConfigFor
 import app.simt.echo.ui.theme.EchoTheme
 import org.junit.Rule
 import org.junit.Test
@@ -34,7 +37,18 @@ class EchoThemeHomeRenderTest {
     fun homeRendersInDeepSpaceScheme() {
         compose.setContent {
             EchoTheme(darkTheme = true) {
-                HomeScreen(onOpen = {})
+                // W8-05: Home renders inside the shell; Record/Receive ride
+                // the persistent deck.
+                EchoShell(
+                    config = shellConfigFor(EchoRoute.Home),
+                    onBack = {},
+                    onClose = {},
+                    onSettings = {},
+                    onRecord = {},
+                    onReceive = {},
+                ) {
+                    HomeScreen(onOpen = {})
+                }
             }
         }
         compose.onNodeWithText("Walk it once. Share the way.").assertIsDisplayed()
@@ -46,7 +60,16 @@ class EchoThemeHomeRenderTest {
     fun homeRendersInDaylightScheme() {
         compose.setContent {
             EchoTheme(darkTheme = false) {
-                HomeScreen(onOpen = {})
+                EchoShell(
+                    config = shellConfigFor(EchoRoute.Home),
+                    onBack = {},
+                    onClose = {},
+                    onSettings = {},
+                    onRecord = {},
+                    onReceive = {},
+                ) {
+                    HomeScreen(onOpen = {})
+                }
             }
         }
         compose.onNodeWithText("Walk it once. Share the way.").assertIsDisplayed()

@@ -25,6 +25,10 @@ import kotlin.math.roundToInt
  * Home: saved routes are listed as cards with an ownership badge
  * (plan W2-01), unfinished captures carry a Draft badge (W1-03), and one
  * button per §8.2 destination keeps every route reachable.
+ *
+ * W8-05: the shell owns the top chrome (wordmark, Settings gear) and the
+ * persistent Record/Receive deck — this screen renders the collections
+ * body only, with no screen-local top bar.
  */
 @Composable
 fun HomeScreen(
@@ -46,7 +50,6 @@ fun HomeScreen(
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text(text = "ECHO", style = MaterialTheme.typography.displayLarge)
         Text(text = "Walk it once. Share the way.")
         if (recoverableDrafts.isNotEmpty()) {
             // Interrupted work first (W4-03): a kill mid-record or
@@ -83,9 +86,6 @@ fun HomeScreen(
                 onClick = { onOpenDraft(draftId) },
             )
         }
-        CosmosPrimaryButton(label = "Record", onClick = { onOpen(EchoRoute.Record()) })
-        CosmosPrimaryButton(label = "Receive", onClick = { onOpen(EchoRoute.Receive) })
-        CosmosPrimaryButton(label = "Settings", onClick = { onOpen(EchoRoute.Settings) })
     }
 }
 

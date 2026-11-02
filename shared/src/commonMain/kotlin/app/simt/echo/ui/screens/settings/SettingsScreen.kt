@@ -31,6 +31,9 @@ import app.simt.echo.ui.copy.cloudAiStatusCopy
  * One action per group, words few (§8.4 copy style): the taped 10 m walk
  * corrects the step constant for every future capture, and the baseline
  * toggle hides landmark cards for honest sensor-only trials (W4-01).
+ *
+ * W8-05: the shell owns the Settings heading and the Close chrome —
+ * [onBack] stays for hosts that render this screen outside the shell.
  */
 @Composable
 fun SettingsScreen(
@@ -46,8 +49,6 @@ fun SettingsScreen(
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Text(text = "Settings", style = MaterialTheme.typography.titleLarge)
-
         Text(text = "Step length", style = MaterialTheme.typography.titleMedium)
         Text(
             text = "K = ${threeDecimals(ui.stepK)}",
@@ -161,7 +162,5 @@ fun SettingsScreen(
             },
             style = MaterialTheme.typography.bodyMedium,
         )
-
-        CosmosPrimaryButton(label = "Back", onClick = onBack, modifier = Modifier.fillMaxWidth())
     }
 }

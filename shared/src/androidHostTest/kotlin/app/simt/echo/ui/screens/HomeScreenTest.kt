@@ -8,6 +8,10 @@ import app.simt.echo.data.RecoverableDraft
 import app.simt.echo.host.RobolectricActivityRule
 import app.simt.echo.model.EchoRoute
 import app.simt.echo.model.StartAnchor
+import app.simt.echo.ui.EchoRoute as NavRoute
+import app.simt.echo.ui.shell.EchoShell
+import app.simt.echo.ui.shell.shellConfigFor
+import app.simt.echo.ui.theme.EchoTheme
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -36,7 +40,20 @@ class HomeScreenTest {
     @Test
     fun emptyRepository_showsEmptyStateAndPrimaryActionsOnly() {
         compose.setContent {
-            HomeScreen(onOpen = {})
+            // W8-05: Record/Receive are the shell's persistent deck, not
+            // Home content — the empty state renders inside the shell.
+            EchoTheme(darkTheme = true) {
+                EchoShell(
+                    config = shellConfigFor(NavRoute.Home),
+                    onBack = {},
+                    onClose = {},
+                    onSettings = {},
+                    onRecord = {},
+                    onReceive = {},
+                ) {
+                    HomeScreen(onOpen = {})
+                }
+            }
         }
         compose.onNodeWithText("Walk it once. Share the way.").assertIsDisplayed()
         compose.onNodeWithText("Record").assertIsDisplayed()

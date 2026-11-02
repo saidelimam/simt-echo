@@ -35,6 +35,9 @@ import kotlin.math.roundToInt
  * W7-04 adds the core-loop entries: [onNavigate] walks the live motion
  * source via Align, [onSimulate] replays the creator capture via
  * Align in simulate mode (V2 W2-05's promised RouteDetail entry).
+ *
+ * W8-05: the shell owns the Route heading and the Back chrome — the
+ * missing-route recovery action below is a body action, not a top bar.
  */
 @Composable
 fun RouteDetailScreen(
@@ -159,6 +162,5 @@ fun RouteDetailScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
-        CosmosSecondaryButton(label = "Back home", onClick = onBack, modifier = Modifier.fillMaxWidth())
     }
 }
