@@ -35,6 +35,7 @@ import app.simt.echo.transfer.V11CloudApi
 import app.simt.echo.ui.atmosphere.CosmosMotionTier
 import app.simt.echo.ui.atmosphere.ProvideCosmosMotionTier
 import app.simt.echo.ui.theme.EchoTheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -189,6 +190,7 @@ class ProcessingConstellationTest {
             nowMs = { 1_762_000_100_000L },
             pollIntervalMs = 1L,
             maxPolls = 10,
+            ioDispatcher = Dispatchers.Unconfined,
         )
         return Triple(vm, api, drafts)
     }

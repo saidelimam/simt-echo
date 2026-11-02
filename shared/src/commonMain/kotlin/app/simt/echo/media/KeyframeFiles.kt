@@ -10,9 +10,18 @@ import app.simt.echo.data.DraftRepository
 import app.simt.echo.model.EchoRoute
 import app.simt.echo.model.NodeType
 import app.simt.echo.model.RouteNode
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /** Keyframes and manual crops are extracted at most this wide (plan W1-05). */
 const val KEYFRAME_MAX_SIDE = 1280
+
+/**
+ * Video offset of the start photo's fallback frame, ms: a beat past the
+ * first frame, where the recorder is steady and the camera has settled.
+ */
+const val START_FRAME_FALLBACK_MS = 500L
 
 /**
  * File inside the draft dir holding [node]'s hero keyframe, or null when
@@ -40,7 +49,12 @@ fun keyframeFileName(route: EchoRoute, node: RouteNode): String? {
  * work unchanged. Slots the ledger cannot fill (empty approach window,
  * metadata-only pick, unreadable JPEG) fall back to video extraction;
  * drafts with no ledger behave exactly as before. The ledger start photo
- * fills a missing `start.jpg` only and never overwrites the creator's.
+ * fills a missing `start.jpg` only and never overwrites the creator's;
+ * with no ledger start entry either, the start photo is extracted from the
+ * video at [START_FRAME_FALLBACK_MS] like any other slot.
+ *
+ * Ledger JPEG reads and writes run on [ioDispatcher], never on the
+ * caller's (callers are `viewModelScope` on Main).
  */
 suspend fun ensureKeyframes(
     drafts: DraftRepository,
@@ -48,12 +62,16 @@ suspend fun ensureKeyframes(
     draftId: String,
     route: EchoRoute,
     maxSide: Int = KEYFRAME_MAX_SIDE,
-) {
+    ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+): Unit = withContext(ioDispatcher) {
     val ledger = drafts.loadGlimpseEntries(draftId) ?: emptyList()
     fillLedgerStartPhoto(drafts, draftId, ledger)
     val videoMissing = !drafts.draftFileExists(draftId, CaptureSession.VIDEO_FILE)
     val video = drafts.draftFilePath(draftId, CaptureSession.VIDEO_FILE)
     val missing = buildList {
+        if (!videoMissing && !drafts.draftFileExists(draftId, CaptureSession.START_PHOTO)) {
+            add(FrameRequest(START_FRAME_FALLBACK_MS, maxSide, drafts.draftFilePath(draftId, CaptureSession.START_PHOTO)))
+        }
         for (node in route.nodes) {
             if (node.type == NodeType.START) continue
             val spec = keyframeSpecs(listOf(node)).firstOrNull() ?: continue

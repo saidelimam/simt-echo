@@ -55,6 +55,7 @@ import app.simt.echo.ui.screens.share.ShareQrTag
 import app.simt.echo.ui.screens.share.ShareScreen
 import app.simt.echo.ui.theme.EchoQrMin
 import app.simt.echo.ui.theme.EchoTheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import okio.FileSystem
@@ -240,6 +241,7 @@ class ProcessingShareReceiveCosmosTest {
             nowMs = { 1_762_000_100_000L },
             pollIntervalMs = 1L,
             maxPolls = 10,
+            ioDispatcher = Dispatchers.Unconfined,
         )
         return vm to api
     }

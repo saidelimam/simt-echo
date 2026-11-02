@@ -154,7 +154,7 @@ class MediaToolsDispatchersTest {
         val video = drafts.draftFilePath("d1", CaptureSession.VIDEO_FILE)
 
         // Called from Main, exactly like ProcessingViewModel does.
-        ensureKeyframes(drafts, media, "d1", route())
+        ensureKeyframes(drafts, media, "d1", route(), ioDispatcher = io)
         media.extractFrame(video, 1_000L, 512, drafts.draftFilePath("d1", "one.jpg"))
         media.cropJpeg(video, CropBox(0.1f, 0.1f, 0.5f, 0.5f), 512, drafts.draftFilePath("d1", "crop.jpg"))
         media.videoDurationMs(video)
@@ -170,9 +170,9 @@ class MediaToolsDispatchersTest {
             delegate.ops.map { it.name }.toSet(),
         )
 
-        // TURN (3 frames) + DESTINATION (2 frames) in one batch, plus the single extractFrame.
+        // Start photo (no ledger) + TURN (3 frames) + DESTINATION (2 frames) in one batch, plus the single extractFrame.
         assertEquals(2, delegate.batchCalls, "ensureKeyframes batches once, plus the single extractFrame call")
-        assertEquals(6, delegate.framesWritten)
+        assertEquals(7, delegate.framesWritten)
     }
 
     @Test
@@ -215,8 +215,8 @@ class MediaToolsDispatchersTest {
         val draftDir = "/data/drafts/d1".toPath()
         fileSystem.createDirectories(draftDir / "kf")
         fileSystem.write(draftDir / "video.mp4") { write("video".encodeToByteArray()) }
-        // All five keyframes already on disk: the batch must stay empty.
-        for (name in listOf("kf/n1_0.jpg", "kf/n1_1.jpg", "kf/n1_2.jpg", "kf/n2_0.jpg", "kf/n2_1.jpg")) {
+        // Start photo and all five keyframes already on disk: the batch must stay empty.
+        for (name in listOf("start.jpg", "kf/n1_0.jpg", "kf/n1_1.jpg", "kf/n1_2.jpg", "kf/n2_0.jpg", "kf/n2_1.jpg")) {
             fileSystem.write(draftDir / name) { write("cached".encodeToByteArray()) }
         }
 
@@ -224,7 +224,7 @@ class MediaToolsDispatchersTest {
         val delegate = RecordingMediaTools(fileSystem)
         val media = ConfinedMediaTools(delegate, io)
 
-        ensureKeyframes(drafts, media, "d1", route())
+        ensureKeyframes(drafts, media, "d1", route(), ioDispatcher = io)
         advanceUntilIdle()
 
         assertEquals(0, delegate.batchCalls, "no missing keyframes, no batch")

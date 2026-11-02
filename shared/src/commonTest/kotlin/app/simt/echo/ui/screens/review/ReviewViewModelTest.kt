@@ -103,6 +103,7 @@ class ReviewViewModelTest {
             nowMs = { 1_762_000_100_000L },
             newId = { "lm-test-${ids++}" },
             api = api,
+            ioDispatcher = Dispatchers.Unconfined,
         )
     }
 
@@ -376,6 +377,7 @@ class ReviewViewModelTest {
             media = FakeMediaTools(fileSystem),
             nowMs = { 0L },
             newId = { "x" },
+            ioDispatcher = Dispatchers.Unconfined,
         )
         advanceUntilIdle()
         assertEquals(true, vm.ui.value.missing)
@@ -442,6 +444,7 @@ class ReviewViewModelTest {
             newId = { "lm-test-x" },
             api = h.api,
             router = app.simt.echo.ai.AiRouter(vision),
+            ioDispatcher = Dispatchers.Unconfined,
         )
         advanceUntilIdle()
 

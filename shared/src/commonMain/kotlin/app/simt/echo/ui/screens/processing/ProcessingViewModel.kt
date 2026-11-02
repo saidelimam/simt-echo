@@ -54,6 +54,8 @@ import app.simt.echo.ui.copy.processingJobGoneCopy
 import app.simt.echo.ui.copy.processingJobTimeoutCopy
 import app.simt.echo.ui.copy.processingNoDraftCopy
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -61,6 +63,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 
 /** What the consent sheet offers to send (plan W3-02 copy). */
@@ -147,6 +150,12 @@ class ProcessingViewModel(
      * scan (no ML Kit face dep in the catalog yet), so it is never used.
      */
     private val faceDetector: FaceDetector? = null,
+    /**
+     * Where disk reads/writes and hashing run: keyframe filling, clip
+     * cutting + sidecars, and upload staging all touch draft bytes, and
+     * the screen's scope is Main.
+     */
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
 
     private val _ui = MutableStateFlow(ProcessingUiState())
@@ -211,7 +220,13 @@ class ProcessingViewModel(
                 _ui.update { it.copy(phase = ProcessingPhase.AiUnavailable, jobId = null) }
                 return@launch
             }
-            runCatching { ensureKeyframes(drafts, media, draftId, route) }
+            try {
+                ensureKeyframes(drafts, media, draftId, route, ioDispatcher = ioDispatcher)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Missing keyframes degrade to fewer photos; consent still shows.
+            }
             val sam = runCatching { api.samEnabled() }.getOrDefault(false)
             val specs = keyframeSpecs(route.nodes)
             val photos = specs.sumOf { spec ->
@@ -277,7 +292,7 @@ class ProcessingViewModel(
         val files: List<UploadFile>,
     )
 
-    private suspend fun prepareUpload(): PreparedUpload {
+    private suspend fun prepareUpload(): PreparedUpload = withContext(ioDispatcher) {
         val route = checkNotNull(drafts.loadDraftRoute(draftId)) { "Draft is gone." }
         val log = checkNotNull(drafts.loadCapture(draftId)) { "Capture log is gone." }
         val specs = keyframeSpecs(route.nodes)
@@ -299,7 +314,7 @@ class ProcessingViewModel(
         )
         val files = collectFiles(manifest, specs)
         if (files.isEmpty()) throw EchoApiError.Server(0, "No keyframes to send.")
-        return PreparedUpload(route, EchoJson.encodeToString(manifest), files)
+        PreparedUpload(route, EchoJson.encodeToString(manifest), files)
     }
 
     /**
@@ -343,8 +358,10 @@ class ProcessingViewModel(
                 return restartUpload(v11, restarted)
             }
         } else {
-            val refs = prepared.files.map { file ->
-                UploadFileRef(file.id, sha256Hex(file.bytes), file.bytes.size.toLong())
+            val refs = withContext(ioDispatcher) {
+                prepared.files.map { file ->
+                    UploadFileRef(file.id, sha256Hex(file.bytes), file.bytes.size.toLong())
+                }
             }
             val created = v11.createUpload(refs)
             drafts.saveUploadRecord(draftId, UploadRecord(created.uploadId, manifestJson, manifestSha, nowMs()))

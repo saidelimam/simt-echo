@@ -13,6 +13,7 @@ import app.simt.echo.media.clipSidecarFileName
 import app.simt.echo.media.clipSidecarId
 import app.simt.echo.media.decodeFrameMap
 import app.simt.echo.media.sha256Hex
+import app.simt.echo.media.FrameRequest
 import app.simt.echo.media.Manifest
 import app.simt.echo.model.CaptureLog
 import app.simt.echo.model.CaptureSample
@@ -37,6 +38,7 @@ import app.simt.echo.transfer.uploadTimeoutMs
 import app.simt.echo.ui.copy.aiUnavailableCopy
 import app.simt.echo.ui.copy.processingErrorCopy
 import app.simt.echo.ui.copy.processingJobErrorCopy
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
@@ -51,6 +53,8 @@ import okio.FileSystem
 import okio.Path
 import okio.Path.Companion.toPath
 import okio.fakefilesystem.FakeFileSystem
+import kotlin.coroutines.ContinuationInterceptor
+import kotlinx.coroutines.currentCoroutineContext
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -195,6 +199,8 @@ class ProcessingViewModelTest {
         val fileSystem: FakeFileSystem,
         val drafts: DraftRepository,
         val media: FakeMedia,
+        /** Distinct from Main, same scheduler: disk work hops here (W11-02). */
+        val io: CoroutineDispatcher,
         val draftId: String = "draft-1",
     ) {
         fun vm(
@@ -214,6 +220,7 @@ class ProcessingViewModelTest {
             maxPolls = maxPolls,
             aiConfigured = aiConfigured,
             faceDetector = faceDetector,
+            ioDispatcher = io,
         )
     }
 
@@ -267,7 +274,7 @@ class ProcessingViewModelTest {
         fileSystem.createDirectories(draftDir)
         fileSystem.write(draftDir / "start.jpg") { write("photo".encodeToByteArray()) }
         fileSystem.write(draftDir / "video.mp4") { write("video".encodeToByteArray()) }
-        return Harness(store, fileSystem, drafts, media)
+        return Harness(store, fileSystem, drafts, media, StandardTestDispatcher(dispatcher.scheduler, "io"))
     }
 
     private fun running(stage: JobStage = JobStage.SCOUTING) =
@@ -414,6 +421,7 @@ class ProcessingViewModelTest {
             nowMs = { 1_762_000_100_000L },
             pollIntervalMs = 1L,
             maxPolls = 10,
+            ioDispatcher = h.io,
         )
         advanceUntilIdle()
         vm.send()
@@ -487,6 +495,7 @@ class ProcessingViewModelTest {
             nowMs = { 1_762_000_100_000L },
             pollIntervalMs = 1L,
             maxPolls = 10,
+            ioDispatcher = h.io,
         )
         advanceUntilIdle()
         vm.send()
@@ -1063,6 +1072,38 @@ class ProcessingViewModelTest {
             h.fileSystem.write(out) { write("forged".encodeToByteArray()) }
             return ClipInfo(out, frameCount = frames.size, durationMs = frames.size * 250L)
         }
+    }
+
+    @Test
+    fun keyframeFillingAndClipCuttingRunOnTheInjectedIoDispatcher() = runTest(dispatcher) {
+        val h = harness()
+        val seen = mutableMapOf<String, Any?>()
+        val media: MediaTools = object : MediaTools by h.media {
+            override val supportsStripForge: Boolean = true
+
+            override suspend fun extractFrames(video: Path, frames: List<FrameRequest>) {
+                seen["extractFrames"] = currentCoroutineContext()[ContinuationInterceptor]
+                h.media.extractFrames(video, frames)
+            }
+
+            override suspend fun forgeStripClip(frames: List<Path>, out: Path): ClipInfo {
+                seen["forgeStripClip"] = currentCoroutineContext()[ContinuationInterceptor]
+                h.fileSystem.write(out) { write("forged".encodeToByteArray()) }
+                return ClipInfo(out, frameCount = frames.size, durationMs = frames.size * 250L)
+            }
+        }
+        seedLedger(h) // forgeStripClip needs strip frames; kf slots then fill from the ledger
+        h.fileSystem.delete("/data/drafts/draft-1/start.jpg".toPath())
+        val api = FakeCloudApi(polls = ArrayDeque(listOf(complete())))
+        val vm = h.vm(api, media = media)
+        advanceUntilIdle()
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
+        // The start photo is the only slot the ledger cannot fill: video batch, on IO.
+        assertTrue(seen["extractFrames"] === h.io, seen.toString())
+        assertTrue(seen["forgeStripClip"] === h.io, seen.toString())
     }
 
     @Test

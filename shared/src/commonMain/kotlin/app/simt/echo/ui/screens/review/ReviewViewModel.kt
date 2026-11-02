@@ -32,6 +32,8 @@ import app.simt.echo.ui.copy.reviewSaveErrorCopy
 import app.simt.echo.ui.copy.reviewSaveLandmarkErrorCopy
 import app.simt.echo.ui.copy.reviewSuggestionsErrorCopy
 import app.simt.echo.ui.copy.reviewUseSuggestionErrorCopy
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -115,6 +117,8 @@ class ReviewViewModel(
     private val router: app.simt.echo.ai.AiRouter? = null,
     /** "Prefer local model" from Settings (W5-01). */
     private val preferLocal: Boolean = false,
+    /** Where keyframe filling does its disk work; the screen's scope is Main. */
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
 
     private val _ui = MutableStateFlow(ReviewUiState())
@@ -136,7 +140,7 @@ class ReviewViewModel(
                     _ui.update { it.copy(loading = false, missing = true) }
                     return@launch
                 }
-                ensureKeyframes(drafts, media, draftId, loaded)
+                ensureKeyframes(drafts, media, draftId, loaded, ioDispatcher = ioDispatcher)
                 route = loaded
                 publish(loaded)
                 loadSuggestions()

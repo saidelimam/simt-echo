@@ -14,7 +14,10 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
+import kotlin.coroutines.ContinuationInterceptor
+import kotlinx.coroutines.currentCoroutineContext
 import okio.FileSystem
 import okio.Path
 import okio.Path.Companion.toPath
@@ -137,8 +140,51 @@ class LedgerKeyframesTest {
         ensureKeyframes(drafts, media, "d1", route())
 
         assertEquals(1, media.batchCalls, "no ledger: one video batch as before")
-        assertEquals(5, media.requested.size, "TURN triple + DESTINATION double")
+        assertEquals(6, media.requested.size, "start photo + TURN triple + DESTINATION double")
         assertTrue((drafts.readDraftFile("d1", "kf/n1_1.jpg")?.decodeToString() ?: "").startsWith("video"))
+    }
+
+    @Test
+    fun missingStartPhotoWithoutLedgerStartEntryIsExtractedFromVideo() = runTest {
+        val fs = FakeFileSystem()
+        val drafts = DraftRepository(FileStore(fs, "/data".toPath()))
+        drafts.saveDraftRoute(route())
+        fs.createDirectories("/data/drafts/d1".toPath())
+        fs.write("/data/drafts/d1/video.mp4".toPath()) { write("video".encodeToByteArray()) }
+        val media = FakeMedia(fs)
+
+        ensureKeyframes(drafts, media, "d1", route())
+
+        val start = media.requested.single { it.out.name == "start.jpg" }
+        assertEquals(START_FRAME_FALLBACK_MS, start.atMs)
+        assertEquals("video$START_FRAME_FALLBACK_MS", drafts.readDraftFile("d1", "start.jpg")?.decodeToString())
+
+        // The creator's own start photo is never re-extracted over.
+        drafts.writeDraftFile("d1", "start.jpg", "photo".encodeToByteArray())
+        media.requested.clear()
+        ensureKeyframes(drafts, media, "d1", route())
+        assertTrue(media.requested.none { it.out.name == "start.jpg" })
+        assertEquals("photo", drafts.readDraftFile("d1", "start.jpg")?.decodeToString())
+    }
+
+    @Test
+    fun ledgerAndVideoWorkRunOnTheInjectedIoDispatcherNotTheCallers() = runTest {
+        val fs = FakeFileSystem()
+        val drafts = DraftRepository(FileStore(fs, "/data".toPath()))
+        drafts.saveDraftRoute(route())
+        fs.createDirectories("/data/drafts/d1".toPath())
+        fs.write("/data/drafts/d1/video.mp4".toPath()) { write("video".encodeToByteArray()) }
+        val io = StandardTestDispatcher(testScheduler, "echo-io")
+        var seenBy: Any? = null
+        val media = object : MediaTools by FakeMedia(fs) {
+            override suspend fun extractFrames(video: Path, frames: List<FrameRequest>) {
+                seenBy = currentCoroutineContext()[ContinuationInterceptor]
+            }
+        }
+
+        ensureKeyframes(drafts, media, "d1", route(), ioDispatcher = io)
+
+        assertTrue(seenBy === io, "ensureKeyframes ran on $seenBy, not the injected IO dispatcher")
     }
 
     @Test
@@ -154,7 +200,7 @@ class LedgerKeyframesTest {
         ensureKeyframes(drafts, media, "d1", route())
 
         assertEquals(1, media.batchCalls, "corrupt ledger degrades to no ledger")
-        assertEquals(5, media.requested.size)
+        assertEquals(6, media.requested.size)
     }
 
     @Test
