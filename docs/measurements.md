@@ -162,28 +162,27 @@ W10-01 measurement slots (all TBD — commands to run on the named phones):
   no `META_API_KEY` in this environment (collector ready:
   `metaResponsesDetailed` in `worker/src/meta.ts:32`).
 
-## SAM live probe (W11-07, ≤ $1 budget) — NOT RUN here
+## SAM live probe (W11-07, 2026-11-02)
 
-No live call was made from this environment: no `META_API_KEY` is
-configured, so spend is $0 and every cell below is TBD. The hardening
-half of W11-07 (golden SSE fixtures in `worker/src/meta.test.ts`, the
-`npm run canary:sam` one-frame image call) is implemented and green;
-the probe half must run where a key exists. If multi-phrase works,
-W11-06 sends one video call per checkpoint for all surviving phrases.
+Live calls to `https://api.meta.ai/v1/responses`, `model: sam-3.1`, from
+`worker/scripts/probe-sam.mjs` (one request per run; raw SSE body, summary and
+output archived under `docs/research/measurements/w11-07/`). Fixture: the
+public-domain astronaut portrait (`face_large.jpg`, 512 x 512), so nothing
+private is sent. Five calls in all; billing is reported as counters, no price
+is returned.
 
-| Fact for the ladder (W11-06) | Probe (exact) | Result |
+| Fact for the ladder (W11-06) | Result | Evidence |
 |---|---|---|
-| Multi-phrase in one call? Output attribution per phrase? | `META_API_KEY=…`: POST `https://api.meta.ai/v1/responses` with `model: sam-3.1`, one message whose content holds **two** `input_text` phrases + one `input_image` (the canary 1-px PNG), `stream: true`; record whether both objects are segmented and how the output attributes them | TBD — job/request ids: TBD |
-| 12-frame 4 fps 480p clip accepted? Billed per frame? | Same endpoint, `input_video` with a 12-frame 4 fps 480p clip + one phrase; read `response.completed` → `response.usage.video_frames_processed` (surfaced by `metaResponsesDetailed`) and compare with frames sent | TBD — job/request ids: TBD |
-| Image-call billing | `META_API_KEY=… npm run canary:sam` (worker/; dry-runs with no key) — one 1-frame image call; record billed frames/price and wall latency | TBD — job/request ids: TBD |
-| Latency per shape | Wall ms around each of the three calls above (`Date.now()` delta, as `ground.ts` records `samMs`) | TBD |
+| Multi-phrase in one call? | **No.** With two `input_text` phrases ("a face", "a jacket") the response holds one object, with no phrase attribution; its box (20,209 to 360,511) equals the single-phrase "a jacket" call (20,208 to 360,511). Only the last phrase is used. One phrase per call, so the ladder stays as built and W11-06 must not batch phrases. | `two-phrase/`, `one-phrase-jacket/`, `one-phrase/` |
+| Image-call billing | `usage.images_processed: 1` per image call, whatever the phrase count; tokens all 0. No price is returned. | `*/summary.json` |
+| Image-call latency | 1.0 to 2.1 s total (headers 1.3 to 1.6 s); 1-px canary 1.5 s. | `*/summary.json`, `npm run canary:sam` |
+| SSE shape | `response.created`, `in_progress`, `output_item.added`, `content_part.added`, `output_text.delta`, `output_text.done`, `content_part.done`, `output_item.done`, `completed`; the output line is `<0f>0<\|box;...\|><\|mask;...\|>`. | `*/response.sse` |
+| 12-frame 4 fps 480p clip accepted? Billed per frame? | Not probed standalone: no clip encoder on this machine, and the real forged clip is made on the phone. Measured in the W11-10 run instead (`usage.video_frames_processed` against frames sent). | W11-10 |
 
-Procedure to fill the table (keyed environment only, stop at $1):
-
-1. `cd worker && npm run canary:sam` dry run first (no key) — must exit 0 without sending.
-2. `META_API_KEY=… npm run canary:sam` — record latency, output chars, any usage; append row 3.
-3. Send the two-phrase image call and the 12-frame clip call (rows 1–2) with `curl` or a scratch script mirroring `scripts/canary-sam.mjs`; save each raw SSE body and note the request/job ids.
-4. Append measured numbers + ids to the table above; total spend must stay ≤ $1.
+Procedure to repeat (keyed environment, stop at $1):
+`META_API_KEY=... node scripts/probe-sam.mjs --image a.jpg --phrase "a face" --out probe-out/x`
+(add `--phrase` for more phrases, or `--video clip.mp4`); `npm run canary:sam`
+is the one-pixel release-gate check. Without a key both dry-run for $0.
 
 ## Face pre-filter on device (W11-04, 2026-11-02)
 

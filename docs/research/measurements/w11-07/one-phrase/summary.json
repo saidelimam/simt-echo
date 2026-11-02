@@ -1,0 +1,39 @@
+{
+  "status": 200,
+  "requestId": "131e8a51-34df-4b40-a178-c8853433876f",
+  "phrases": [
+    "a face"
+  ],
+  "media": {
+    "file": "face_large.jpg",
+    "bytes": 45960,
+    "kind": "image"
+  },
+  "headersMs": 1331,
+  "totalMs": 1624,
+  "eventTypes": [
+    "response.created",
+    "response.in_progress",
+    "response.output_item.added",
+    "response.content_part.added",
+    "response.output_text.delta",
+    "response.output_text.done",
+    "response.content_part.done",
+    "response.output_item.done",
+    "response.completed"
+  ],
+  "usage": {
+    "images_processed": 1,
+    "input_tokens": 0,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens": 0,
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "total_tokens": 0
+  },
+  "outputChars": 223,
+  "outputLines": 2
+}

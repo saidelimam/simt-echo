@@ -1,0 +1,40 @@
+{
+  "status": 200,
+  "requestId": "b5d03eff-4cc1-4238-a1cd-991ce52b4d55",
+  "phrases": [
+    "a face",
+    "a jacket"
+  ],
+  "media": {
+    "file": "face_large.jpg",
+    "bytes": 45960,
+    "kind": "image"
+  },
+  "headersMs": 1573,
+  "totalMs": 2096,
+  "eventTypes": [
+    "response.created",
+    "response.in_progress",
+    "response.output_item.added",
+    "response.content_part.added",
+    "response.output_text.delta",
+    "response.output_text.done",
+    "response.content_part.done",
+    "response.output_item.done",
+    "response.completed"
+  ],
+  "usage": {
+    "images_processed": 1,
+    "input_tokens": 0,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens": 0,
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "total_tokens": 0
+  },
+  "outputChars": 515,
+  "outputLines": 2
+}
