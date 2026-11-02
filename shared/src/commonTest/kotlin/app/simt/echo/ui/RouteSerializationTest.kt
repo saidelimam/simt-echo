@@ -30,4 +30,10 @@ class RouteSerializationTest {
         val route: EchoRoute = EchoRoute.Align("r1")
         assertEquals(route, json.decodeFromString<EchoRoute>(json.encodeToString(route)))
     }
+
+    @Test
+    fun alignRoundTripsWithSimulateFlag() {
+        val route: EchoRoute = EchoRoute.Align("r1", simulate = true)
+        assertEquals(route, json.decodeFromString<EchoRoute>(json.encodeToString(route)))
+    }
 }

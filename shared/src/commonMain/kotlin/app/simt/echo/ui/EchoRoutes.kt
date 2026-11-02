@@ -36,7 +36,7 @@ sealed interface EchoRoute {
     data object Receive : EchoRoute
 
     @Serializable
-    data class Align(val routeId: String) : EchoRoute
+    data class Align(val routeId: String, val simulate: Boolean = false) : EchoRoute
 
     @Serializable
     data class Navigate(val routeId: String, val simulate: Boolean) : EchoRoute
@@ -47,3 +47,20 @@ sealed interface EchoRoute {
     @Serializable
     data object Settings : EchoRoute
 }
+
+/**
+ * RouteDetail → Align hop (plan W7-04): carries the debug Simulate choice
+ * forward so Align → Navigate can honour it. The mapping is a named
+ * function (not an inline literal in the host) so the journey test pins
+ * the flag flow against mutation.
+ */
+fun alignForRoute(routeId: String, simulate: Boolean): EchoRoute.Align =
+    EchoRoute.Align(routeId, simulate)
+
+/**
+ * Align → Navigate hop (plan W7-04): the flag survives alignment
+ * untouched — alignment zeroes the odometer, it never changes the motion
+ * source. Navigation inputs/geometry are unaffected (S-reviewed freeze).
+ */
+fun navigateAfterAlign(align: EchoRoute.Align): EchoRoute.Navigate =
+    EchoRoute.Navigate(align.routeId, align.simulate)

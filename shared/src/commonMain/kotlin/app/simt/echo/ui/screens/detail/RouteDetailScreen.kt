@@ -27,9 +27,12 @@ import kotlin.math.roundToInt
 
 /**
  * Saved-route detail (plan W2-01): read-only header, landmark list,
- * entry to Share. Navigation playback lands in W2-06; nothing here
- * navigates into it. Delete (W3-08) removes the route and leaves; the
- * post-save upload delete reuses [CloudApi.delete].
+ * entries to Share and Navigate. Delete (W3-08) removes the route and
+ * leaves; the post-save upload delete reuses [CloudApi.delete].
+ *
+ * W7-04 adds the core-loop entries: [onNavigate] walks the live motion
+ * source via Align, [onSimulate] replays the creator capture via
+ * Align in simulate mode (V2 W2-05's promised RouteDetail entry).
  */
 @Composable
 fun RouteDetailScreen(
@@ -45,6 +48,12 @@ fun RouteDetailScreen(
     savedJobId: String? = null,
     /** Plaintext-export cleanup on delete; null in previews/tests. */
     transferService: TransferService? = null,
+    /** Live navigation entry (W7-04): RouteDetail → Align → Navigate. */
+    onNavigate: (String) -> Unit = {},
+    /** Debug replay entry (W7-04): RouteDetail → Align → Navigate in
+     * simulate mode. Defaults to no-op so previews/tests without a
+     * motion seam keep compiling. */
+    onSimulate: (String) -> Unit = {},
 ) {
     val route = remember(routeId) { routes.get(routeId) }
     val persistedJobId = remember(routeId) { routes.routeJobId(routeId) }
@@ -82,8 +91,18 @@ fun RouteDetailScreen(
             }
         }
         EchoButton(
+            text = "Navigate",
+            onClick = { onNavigate(routeId) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        EchoButton(
             text = "Share",
             onClick = { onShare(routeId) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        PillButton(
+            text = "Simulate walk",
+            onClick = { onSimulate(routeId) },
             modifier = Modifier.fillMaxWidth(),
         )
         val jobId = cloudJobId

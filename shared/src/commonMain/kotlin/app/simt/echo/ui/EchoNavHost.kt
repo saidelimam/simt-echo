@@ -2,6 +2,7 @@ package app.simt.echo.ui
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
@@ -13,12 +14,15 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import kotlin.random.Random
 import app.simt.echo.AppGraph
+import app.simt.echo.capture.ReplayMotionSource
+import app.simt.echo.capture.captureLogForRoute
 import app.simt.echo.data.DraftRepository
 import app.simt.echo.data.listRecoverable
 import app.simt.echo.platform.currentEpochMs
 import app.simt.echo.platform.rememberFileSharing
-import app.simt.echo.platform.rememberMediaTools
 import app.simt.echo.platform.rememberHaptics
+import app.simt.echo.platform.rememberMediaTools
+import app.simt.echo.platform.rememberMotionSource
 import app.simt.echo.ui.screens.HomeScreen
 import app.simt.echo.ui.screens.align.AlignScreen
 import app.simt.echo.ui.screens.arrived.ArrivedScreen
@@ -126,6 +130,8 @@ fun EchoNavHost(
                 routeId = route.routeId,
                 routes = graph.routeRepository,
                 onShare = { navController.navigateTo(EchoRoute.Share(it)) },
+                onNavigate = { navController.navigateTo(alignForRoute(it, simulate = false)) },
+                onSimulate = { navController.navigateTo(alignForRoute(it, simulate = true)) },
                 onBack = { navController.popBackStack() },
                 onDeleted = { navController.popBackStack() },
                 api = graph.apiClient,
@@ -155,12 +161,26 @@ fun EchoNavHost(
             AlignScreen(
                 routeId = route.routeId,
                 routes = graph.routeRepository,
-                onAligned = { navController.navigateTo(EchoRoute.Navigate(route.routeId, false)) },
+                onAligned = { navController.navigateTo(navigateAfterAlign(route)) },
                 onBack = { navController.popBackStack() },
             )
         }
         composable<EchoRoute.Navigate> { entry ->
             val route = entry.toRoute<EchoRoute.Navigate>()
+            // W7-04 Simulate: replay the saved geometry instead of the
+            // live source. Falls back to live when the route is gone —
+            // the screen's empty state still owns that case.
+            val liveMotion = rememberMotionSource()
+            val scope = rememberCoroutineScope()
+            val motion = remember(route.routeId, route.simulate) {
+                if (!route.simulate) {
+                    liveMotion
+                } else {
+                    graph.routeRepository.get(route.routeId)?.let {
+                        ReplayMotionSource(captureLogForRoute(it), scope)
+                    } ?: liveMotion
+                }
+            }
             NavigateScreen(
                 routeId = route.routeId,
                 routes = graph.routeRepository,
@@ -170,6 +190,7 @@ fun EchoNavHost(
                 trials = graph.trialRepository,
                 device = graph.platform.name,
                 baselineMode = graph.configRepository.get().baselineMode,
+                motionSource = motion,
             )
         }
         composable<EchoRoute.Arrived> { entry ->

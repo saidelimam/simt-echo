@@ -2,6 +2,7 @@ package app.simt.echo.capture
 
 import app.simt.echo.model.CaptureLog
 import app.simt.echo.model.CaptureSample
+import app.simt.echo.model.EchoRoute
 import app.simt.echo.platform.MotionSource
 import app.simt.echo.platform.MotionUpdate
 import kotlinx.coroutines.CoroutineScope
@@ -11,6 +12,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
+import kotlin.math.atan2
 
 /**
  * Replays a recorded [CaptureLog] as a [MotionSource] (plan W2-05).
@@ -101,3 +103,58 @@ class ReplayMotionSource(
         private const val NS_PER_MS = 1_000_000L
     }
 }
+
+/**
+ * Synthesises the creator capture for a saved route (plan W7-04 Simulate):
+ * the draft's `capture.json` is consumed on Review save, so the debug
+ * replay walks the saved geometry instead — 1 m/s at 20 Hz along
+ * [EchoRoute.path], yaw from each span's direction (0 = +y at start,
+ * matching the capture yaw convention the Navigator was tested against).
+ * Inputs only: Navigator geometry is untouched.
+ */
+fun captureLogForRoute(route: EchoRoute): CaptureLog {
+    val samples = mutableListOf<CaptureSample>()
+    var tNs = CAPTURE_T0_NS
+    val path = route.path
+    if (path.size < 2) return CaptureLog(
+        draftId = "simulate-${route.routeId}",
+        startedAtEpochMs = 0L,
+        motionSource = ReplayMotionSource.SOURCE,
+        videoStartNs = CAPTURE_T0_NS,
+        samples = samples,
+        marks = emptyList(),
+        startPhoto = "",
+    )
+    var first = true
+    for (i in 0 until path.size - 1) {
+        val a = path[i]
+        val b = path[i + 1]
+        val span = b.d - a.d
+        if (span <= 0.0) continue
+        val yaw = atan2(b.x - a.x, b.y - a.y)
+        var covered = 0.0
+        if (first) {
+            samples += CaptureSample(tNs = tNs, d = a.d, yaw = yaw, p = null)
+            first = false
+        }
+        while (covered < span - 1e-9) {
+            val step = minOf(REPLAY_STEP_M, span - covered)
+            covered += step
+            tNs += REPLAY_TICK_NS
+            samples += CaptureSample(tNs = tNs, d = a.d + covered, yaw = yaw, p = null)
+        }
+    }
+    return CaptureLog(
+        draftId = "simulate-${route.routeId}",
+        startedAtEpochMs = 0L,
+        motionSource = ReplayMotionSource.SOURCE,
+        videoStartNs = CAPTURE_T0_NS,
+        samples = samples,
+        marks = emptyList(),
+        startPhoto = "",
+    )
+}
+
+private const val CAPTURE_T0_NS = 1_000_000_000L
+private const val REPLAY_TICK_NS = 50_000_000L // 20 Hz
+private const val REPLAY_STEP_M = 0.05 // 1 m/s at 20 Hz
