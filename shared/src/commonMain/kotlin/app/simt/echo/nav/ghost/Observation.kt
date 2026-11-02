@@ -51,4 +51,13 @@ sealed interface Observation {
      * event, confirms; never a silent auto-confirm.
      */
     data class Fingerprint(val nodeS: Double, val similarity01: Double) : Observation
+
+    /**
+     * A turn-signature window (W12-06): the observed yaw changes per
+     * [stepM] metres walked since "Lost", fused by
+     * [GhostFilter.observeTurnSignature] (DTW over the heading-change
+     * sequence). Rotation-invariant, so the unknown alignment offset
+     * cancels — the same single-observation seam as every other input.
+     */
+    data class TurnSignature(val deltasRad: DoubleArray, val stepM: Double) : Observation
 }

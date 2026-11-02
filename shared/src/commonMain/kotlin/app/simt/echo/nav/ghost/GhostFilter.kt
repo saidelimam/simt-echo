@@ -18,8 +18,9 @@ import kotlin.random.Random
  * progress in the §6.4 state machine.
  *
  * Allocation audit (≤ 1 ms/update budget): every array is sized N in the
- * constructor and reused — [predict] and the three [observe] entry points
- * allocate nothing. The Gaussian sampler is scalar Box-Muller with a
+ * constructor and reused — [predict] and the [observe] entry points
+ * allocate nothing (the turn-signature scratch rows below are reused
+ * too). The Gaussian sampler is scalar Box-Muller with a
  * primitive spare cache (no boxing). The only allocations in this class
  * happen in the constructor and [reset].
  *
@@ -50,6 +51,15 @@ class GhostFilter(
     private val tmpS = DoubleArray(PARTICLE_COUNT)
     private val tmpK = DoubleArray(PARTICLE_COUNT)
     private val tmpB = DoubleArray(PARTICLE_COUNT)
+
+    /**
+     * Turn-signature scratch (W12-06): expected heading-change sequence
+     * plus the two DTW rows, sized to [MAX_SIGNATURE_STEPS] once and
+     * reused by [observeTurnSignature].
+     */
+    private val sigExp = DoubleArray(MAX_SIGNATURE_STEPS)
+    private val dtwPrev = DoubleArray(MAX_SIGNATURE_STEPS + 1)
+    private val dtwCurr = DoubleArray(MAX_SIGNATURE_STEPS + 1)
 
     private var spareValid = false
     private var spareValue = 0.0
@@ -112,6 +122,7 @@ class GhostFilter(
             is Observation.Level -> observeLevel(obs.nodeS)
             is Observation.Magnetic -> observeMagnetic(obs.s)
             is Observation.Fingerprint -> observeFingerprint(obs.nodeS, obs.similarity01)
+            is Observation.TurnSignature -> observeTurnSignature(obs.deltasRad, obs.stepM)
         }
     }
 
@@ -149,6 +160,72 @@ class GhostFilter(
             wA[i] *= like
         }
         normalizeAndMaybeResample()
+    }
+
+    /**
+     * Lost → relock re-spread (W12-06): particles scatter uniformly over
+     * the whole route with uniform weights, so the next ≤ 10 s / 8 m of
+     * turn signature, fingerprint and magnetic observations reconverge
+     * from nowhere rather than from a stale belief. Stride scale and
+     * heading bias survive (device properties, not position) — like
+     * [anchorAt]. Seeded, so a relock replays deterministically.
+     */
+    fun respreadUniform() {
+        val total = geometry.totalLengthM
+        spareValid = false
+        for (i in 0 until PARTICLE_COUNT) {
+            sA[i] = (random.nextDouble() * total).coerceIn(0.0, total)
+            wA[i] = 1.0 / PARTICLE_COUNT
+        }
+        updateStats()
+    }
+
+    /**
+     * Turn-signature likelihood (W12-06): DTW over the heading-change
+     * sequence. [deltasRad] holds the observed yaw changes per [stepM]
+     * metres walked (rotation-invariant, so the unknown alignment offset
+     * cancels); each particle's expected sequence is the route-heading
+     * changes over its next `deltasRad.size` steps. The likelihood is
+     * floored at [TURN_FLOOR], so a mismatched signature reads as
+     * uninformative rather than collapsing the filter.
+     */
+    fun observeTurnSignature(deltasRad: DoubleArray, stepM: Double) {
+        val n = deltasRad.size
+        if (n == 0 || n > MAX_SIGNATURE_STEPS || stepM <= 0.0) return
+        for (i in 0 until PARTICLE_COUNT) {
+            var prev = geometry.headingAt(sA[i])
+            for (j in 0 until n) {
+                val next = geometry.headingAt(sA[i] + (j + 1) * stepM)
+                sigExp[j] = wrapPi(next - prev)
+                prev = next
+            }
+            wA[i] *= exp(-dtwDistance(deltasRad, n) / (2.0 * n * RELOCK_SIGMA_RAD * RELOCK_SIGMA_RAD)) +
+                TURN_FLOOR
+        }
+        normalizeAndMaybeResample()
+    }
+
+    /**
+     * DTW distance (squared wrapped-angle cost) between the observed
+     * [n]-sequence and [sigExp]. Operates on the reused [dtwPrev]/[dtwCurr]
+     * rows — allocates nothing.
+     */
+    private fun dtwDistance(observed: DoubleArray, n: Int): Double {
+        dtwPrev[0] = 0.0
+        for (j in 1..n) dtwPrev[j] = Double.POSITIVE_INFINITY
+        for (i in 1..n) {
+            dtwCurr[0] = Double.POSITIVE_INFINITY
+            for (j in 1..n) {
+                val err = wrapPi(observed[i - 1] - sigExp[j - 1])
+                val cost = err * err
+                var best = dtwPrev[j]
+                if (dtwCurr[j - 1] < best) best = dtwCurr[j - 1]
+                if (dtwPrev[j - 1] < best) best = dtwPrev[j - 1]
+                dtwCurr[j] = cost + best
+            }
+            for (j in 0..n) dtwPrev[j] = dtwCurr[j]
+        }
+        return dtwPrev[n]
     }
 
     /**
@@ -321,6 +398,12 @@ class GhostFilter(
 
         /** Turn likelihood floor far from any matching node. */
         const val TURN_FLOOR = 1e-4
+
+        /** Turn-signature DTW σ, radians (W12-06): generous on purpose — */
+        const val RELOCK_SIGMA_RAD = 0.6
+
+        /** Turn-signature window: at most 8 heading-change steps (8 m at 1 m). */
+        const val MAX_SIGNATURE_STEPS = 8
 
         /** Landmark hard-anchor half-window, metres. */
         const val ANCHOR_HALF_M = 1.0

@@ -9,15 +9,16 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * W8-10 gate: the phase → UI mapping covers all 8 [NavPhase]s. Phase
- * honesty (the S-reviewed criterion) is asserted per branch: only
- * UNCERTAIN and OFF_ROUTE carry a banner, each mark + copy and never
- * hue-only; the "At marker" trial tap never leaks into product UI.
+ * W8-10 gate: the phase → UI mapping covers all [NavPhase]s (W12-06 adds
+ * RELOCKING). Phase honesty (the S-reviewed criterion) is asserted per
+ * branch: only UNCERTAIN and OFF_ROUTE carry a banner, each mark + copy
+ * and never hue-only; the "At marker" trial tap never leaks into
+ * product UI.
  */
 class NavigatePhaseUiTest {
 
     @Test
-    fun allEightPhasesMap() {
+    fun allPhasesMap() {
         for (phase in NavPhase.entries) {
             val presentation = navigatePhasePresentation(
                 phase = phase,
@@ -44,6 +45,8 @@ class NavigatePhaseUiTest {
                         listOf(NavigateAction.GO_BACK_TO_LAST, NavigateAction.RESTART_FROM_START),
                         presentation.actions,
                     )
+                NavPhase.RELOCKING ->
+                    assertTrue(presentation.actions.isEmpty(), "$phase has no actions")
                 NavPhase.WALK ->
                     assertEquals(
                         listOf(
