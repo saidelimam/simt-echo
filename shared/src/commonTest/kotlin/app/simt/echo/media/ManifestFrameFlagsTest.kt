@@ -107,17 +107,55 @@ class ManifestFrameFlagsTest {
             clips = emptyMap(),
             consent = ManifestConsent(true, 0L),
             frameFlags = mapOf(
-                "kf_n1_1" to FrameFlags(quality = FRAME_QUALITY_BAD, faceFree = false, exposureOk = false),
+                "kf_n1_1" to FrameFlags(quality = FRAME_QUALITY_BAD, faceFree = true, exposureOk = false),
             ),
         )
         val turn = manifest.checkpoints.single { it.nodeId == "n1" }
         val flagged = turn.keyframes.single { it.id == "kf_n1_1" }
-        assertFalse(flagged.faceFree)
+        assertTrue(flagged.faceFree)
         assertEquals(FRAME_QUALITY_BAD, flagged.quality)
         assertFalse(flagged.exposureOk)
         // Siblings untouched.
         assertTrue(turn.keyframes.single { it.id == "kf_n1_0" }.faceFree)
         assertTrue(turn.keyframes.single { it.id == "kf_n1_2" }.faceFree)
+    }
+
+    @Test
+    fun withheldKeyframesAreDroppedAndTheHeroMovesToTheNearestKeptSlot() {
+        val route = flaggedRoute()
+        val manifest = ManifestBuilder.build(
+            route = route,
+            log = testLog(),
+            specs = keyframeSpecs(route.nodes),
+            clips = emptyMap(),
+            consent = ManifestConsent(true, 0L),
+            frameFlags = mapOf("kf_n1_1" to FrameFlags(faceFree = false)),
+        )
+        val turn = manifest.checkpoints.single { it.nodeId == "n1" }
+        // The withheld hero is not promised to the worker (it was never uploaded).
+        assertEquals(listOf("kf_n1_0", "kf_n1_2"), turn.keyframes.map { it.id })
+        assertEquals("kf_n1_0", turn.heroKeyframeId)
+        // An unflagged sibling node is untouched.
+        assertEquals("kf_n3_1", manifest.checkpoints.single { it.nodeId == "n3" }.heroKeyframeId)
+    }
+
+    @Test
+    fun aCheckpointWithEveryKeyframeWithheldIsDroppedWithItsClip() {
+        val route = flaggedRoute()
+        val specs = keyframeSpecs(route.nodes)
+        val manifest = ManifestBuilder.build(
+            route = route,
+            log = testLog(),
+            specs = specs,
+            clips = mapOf("n3" to ClipInfo("/clip.mp4".toPath(), frameCount = 12, durationMs = 3_000L)),
+            consent = ManifestConsent(true, 0L),
+            frameFlags = mapOf(
+                "kf_n3_0" to FrameFlags(faceFree = false),
+                "kf_n3_1" to FrameFlags(faceFree = false),
+            ),
+        )
+        assertEquals(listOf("n1"), manifest.checkpoints.map { it.nodeId })
+        assertTrue(manifest.checkpoints.all { it.clip == null })
     }
 
     @Test
@@ -129,10 +167,11 @@ class ManifestFrameFlagsTest {
             specs = keyframeSpecs(route.nodes),
             clips = emptyMap(),
             consent = ManifestConsent(true, 0L),
-            frameFlags = mapOf("kf_n1_0" to FrameFlags(faceFree = false)),
+            frameFlags = mapOf("kf_n1_0" to FrameFlags(quality = FRAME_QUALITY_BAD, exposureOk = false)),
         )
         val json = EchoJson.encodeToString(Manifest.serializer(), manifest)
-        assertTrue(json.contains("\"faceFree\":false"), "worker reads faceFree === false")
+        assertTrue(json.contains("\"exposureOk\":false"), "worker reads exposureOk === false")
+        assertTrue(json.contains("\"quality\":\"${FRAME_QUALITY_BAD}\""))
         assertTrue(json.contains("\"quality\":\"${FRAME_QUALITY_GOOD}\""))
     }
 

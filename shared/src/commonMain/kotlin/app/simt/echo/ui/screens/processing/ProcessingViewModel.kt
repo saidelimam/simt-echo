@@ -15,8 +15,8 @@ import app.simt.echo.media.ClipFrame
 import app.simt.echo.media.ClipInfo
 import app.simt.echo.media.ClipWindow
 import app.simt.echo.media.ForgeSource
-import app.simt.echo.media.FrameFlags
 import app.simt.echo.media.KeyframeSpec
+import app.simt.echo.media.Manifest
 import app.simt.echo.media.ManifestBuilder
 import app.simt.echo.media.ManifestConsent
 import app.simt.echo.media.MediaTools
@@ -27,7 +27,7 @@ import app.simt.echo.media.clipSidecarFileName
 import app.simt.echo.media.clipSidecarId
 import app.simt.echo.media.encodeFrameMap
 import app.simt.echo.media.ensureKeyframes
-import app.simt.echo.media.frameFlagsFor
+import app.simt.echo.media.failClosedFrameFlags
 import app.simt.echo.media.keyframeFiles
 import app.simt.echo.media.keyframeSpecs
 import app.simt.echo.media.ledgerJpegName
@@ -139,11 +139,12 @@ class ProcessingViewModel(
     /**
      * On-device privacy pre-filter (plan W11-04). Null keeps today's
      * behavior: no face scan, no flagging, every keyframe uploads with
-     * the keep-default flags. A non-null detector flags strip frames
-     * into the manifest (so the worker drops scout boxes before SAM
-     * spend) and withholds face-flagged keyframe bytes from the upload.
-     * Cut video clips cannot be face-scanned yet (no frame seam in the
-     * Media3 cut path and no ML Kit face dep in the catalog) — owed.
+     * the keep-default flags. A non-null detector fails closed: only a
+     * keyframe byte-identical to a scanned ledger frame can upload (the
+     * rest are withheld and left out of the manifest), clips are forged
+     * only from face-cleared strip frames, and a node without a cleared
+     * strip gets no clip — the video-transcode path has no frame seam to
+     * scan (no ML Kit face dep in the catalog yet), so it is never used.
      */
     private val faceDetector: FaceDetector? = null,
 ) : ViewModel() {
@@ -281,9 +282,12 @@ class ProcessingViewModel(
         val log = checkNotNull(drafts.loadCapture(draftId)) { "Capture log is gone." }
         val specs = keyframeSpecs(route.nodes)
         val clips = cutClips(route)
+        // Fail closed (W11-04): with a detector, a keyframe whose bytes are
+        // not a scanned ledger frame (absent/corrupt ledger, video-filled or
+        // recaptured slot) is flagged and withheld rather than uploaded blind.
         val frameFlags = faceDetector?.let { detector ->
-            val ledger = runCatching { drafts.loadGlimpseEntries(draftId) }.getOrNull() ?: emptyList()
-            frameFlagsFor(route, specs, ledger, detector)
+            val ledger = drafts.loadGlimpseEntries(draftId).orEmpty()
+            failClosedFrameFlags(drafts, draftId, route, specs, ledger, detector)
         } ?: emptyMap()
         val manifest = ManifestBuilder.build(
             route = route,
@@ -293,7 +297,7 @@ class ProcessingViewModel(
             consent = ManifestConsent(sendFramesToCloudAi = true, atEpochMs = nowMs()),
             frameFlags = frameFlags,
         )
-        val files = collectFiles(specs, clips, frameFlags)
+        val files = collectFiles(manifest, specs)
         if (files.isEmpty()) throw EchoApiError.Server(0, "No keyframes to send.")
         return PreparedUpload(route, EchoJson.encodeToString(manifest), files)
     }
@@ -717,7 +721,7 @@ class ProcessingViewModel(
             if (node.type == NodeType.START) continue
             val file = clipFileName(node.id)
             try {
-                val strip = approachStrip(ledger, node.atDistanceM)
+                val strip = approachStrip(ledger, node.atDistanceM, faceDetector = faceDetector)
                 val kept = strip.filter { entry ->
                     val name = ledgerJpegName(draftId, entry)
                     name != null && drafts.draftFileExists(draftId, name)
@@ -735,7 +739,10 @@ class ProcessingViewModel(
                     writeSidecar(node.id, file, source = "image-strip", map = buildFrameMap(kept))
                     out[node.id] = info
                 } else {
-                    if (!hasVideo) continue
+                    // The video transcode has no frame seam to scan, so with a
+                    // detector configured a node without a cleared strip gets no
+                    // clip at all (W11-04) rather than un-scanned frames.
+                    if (!hasVideo || faceDetector != null) continue
                     val window = stripFallbackWindow(t, durationMs)
                     val key = "clip:$draftId:${node.id}:${window.startMs}-${window.endMs}"
                     val info = cachedOrForge(key, file) {
@@ -771,30 +778,27 @@ class ProcessingViewModel(
     }
 
     /**
-     * Upload allow-list: keyframe bytes plus cut clips. Keyframes the
-     * pre-filter flagged `faceFree == false` are withheld — their bytes
-     * never leave the phone (the manifest still carries the flag so the
-     * worker drops the box too). Bad-quality (non-face) frames still
-     * upload; the worker drops those boxes itself.
+     * Upload allow-list: exactly the keyframe and clip ids the [manifest]
+     * lists, so a keyframe the pre-filter withheld (W11-04) never leaves
+     * the phone and is never promised to the worker either. Bad-quality
+     * (non-face) frames still upload; the worker drops those boxes itself.
      */
-    private fun collectFiles(
-        specs: List<KeyframeSpec>,
-        clips: Map<String, ClipInfo>,
-        frameFlags: Map<String, FrameFlags> = emptyMap(),
-    ): List<UploadFile> {
+    private fun collectFiles(manifest: Manifest, specs: List<KeyframeSpec>): List<UploadFile> {
+        val listed = manifest.checkpoints.flatMap { cp -> cp.keyframes.map { it.id } }.toSet()
         val files = mutableListOf<UploadFile>()
         for ((id, name) in keyframeFiles(specs)) {
-            if (frameFlags[id]?.faceFree == false) continue
+            if (id !in listed) continue
             val bytes = drafts.readDraftFile(draftId, name) ?: continue
             files += UploadFile(id, "image/jpeg", bytes)
         }
-        for (node in clips.keys) {
-            val bytes = drafts.readDraftFile(draftId, clipFileName(node)) ?: continue
-            files += UploadFile(clipId(node), "video/mp4", bytes)
+        for (cp in manifest.checkpoints) {
+            if (cp.clip == null) continue
+            val bytes = drafts.readDraftFile(draftId, clipFileName(cp.nodeId)) ?: continue
+            files += UploadFile(clipId(cp.nodeId), "video/mp4", bytes)
             // The exact frame map rides beside its clip (W11-03); the worker
             // derives the sidecar id from the clip id by convention.
-            drafts.readDraftFile(draftId, clipSidecarFileName(node))?.let { sidecar ->
-                files += UploadFile(clipSidecarId(node), "application/json", sidecar)
+            drafts.readDraftFile(draftId, clipSidecarFileName(cp.nodeId))?.let { sidecar ->
+                files += UploadFile(clipSidecarId(cp.nodeId), "application/json", sidecar)
             }
         }
         return files

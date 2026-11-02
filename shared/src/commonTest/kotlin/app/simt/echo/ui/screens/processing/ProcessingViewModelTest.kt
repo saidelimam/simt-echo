@@ -1,5 +1,7 @@
 package app.simt.echo.ui.screens.processing
 
+import app.simt.echo.capture.FaceDetector
+import app.simt.echo.capture.FaceVerdict
 import app.simt.echo.capture.GlimpseEntry
 import app.simt.echo.data.DraftRepository
 import app.simt.echo.data.FileStore
@@ -11,8 +13,10 @@ import app.simt.echo.media.clipSidecarFileName
 import app.simt.echo.media.clipSidecarId
 import app.simt.echo.media.decodeFrameMap
 import app.simt.echo.media.sha256Hex
+import app.simt.echo.media.Manifest
 import app.simt.echo.model.CaptureLog
 import app.simt.echo.model.CaptureSample
+import app.simt.echo.model.EchoJson
 import app.simt.echo.model.EchoRoute
 import app.simt.echo.model.NodeType
 import app.simt.echo.model.PathPoint
@@ -198,6 +202,8 @@ class ProcessingViewModelTest {
             pollIntervalMs: Long = 1L,
             maxPolls: Int = 10,
             aiConfigured: Boolean = true,
+            faceDetector: FaceDetector? = null,
+            media: MediaTools = this.media,
         ) = ProcessingViewModel(
             draftId = draftId,
             drafts = drafts,
@@ -207,6 +213,7 @@ class ProcessingViewModelTest {
             pollIntervalMs = pollIntervalMs,
             maxPolls = maxPolls,
             aiConfigured = aiConfigured,
+            faceDetector = faceDetector,
         )
     }
 
@@ -1020,5 +1027,166 @@ class ProcessingViewModelTest {
         assertEquals(StarState.QUEUED, stars[1].state)
         assertEquals("pillar", stars[0].label)
         assertTrue(stars.all { it.x01 in 0f..1f && it.y01 in 0f..1f }, stars.toString())
+    }
+
+    // ── W11-04: face pre-filter fails closed ──────────────────────
+
+    /** Verdicts by odometer metres; unmapped frames are UNKNOWN (exclude-safe). */
+    private class FakeFaceDetector(private val verdicts: Map<Double, FaceVerdict>) : FaceDetector {
+        override fun verdictFor(entry: GlimpseEntry): FaceVerdict =
+            verdicts[entry.odometerM] ?: FaceVerdict.UNKNOWN
+    }
+
+    private val allClear = FakeFaceDetector(
+        listOf(16.0, 19.0, 21.0, 42.0, 45.0).associateWith { FaceVerdict.FACE_FREE },
+    )
+
+    /** Ledger frames inside n1's [12, 21] and n2's [37, 46] approach windows. */
+    private fun seedLedger(h: Harness) {
+        val ds = listOf(16, 19, 21, 42, 45)
+        h.drafts.saveGlimpseEntries(
+            "draft-1",
+            ds.map { d ->
+                GlimpseEntry(d.toLong(), d * 1_000_000_000L, d.toDouble(), 0.9, 0.9, d.toLong(), "glimpse/b$d.jpg")
+            },
+        )
+        val dir = "/data/drafts/draft-1/glimpse".toPath()
+        h.fileSystem.createDirectories(dir)
+        for (d in ds) h.fileSystem.write(dir / "b$d.jpg") { write("jpeg-$d".encodeToByteArray()) }
+    }
+
+    private fun stripForgeMedia(h: Harness, forged: MutableList<String>): MediaTools = object : MediaTools by h.media {
+        override val supportsStripForge: Boolean = true
+
+        override suspend fun forgeStripClip(frames: List<Path>, out: Path): ClipInfo {
+            forged += "${out.name}:" + frames.joinToString(",") { it.name }
+            h.fileSystem.write(out) { write("forged".encodeToByteArray()) }
+            return ClipInfo(out, frameCount = frames.size, durationMs = frames.size * 250L)
+        }
+    }
+
+    @Test
+    fun faceFlaggedKeyframeIsWithheldFromBytesManifestAndClip() = runTest(dispatcher) {
+        val h = harness()
+        seedLedger(h)
+        val forged = mutableListOf<String>()
+        val detector = FakeFaceDetector(
+            listOf(16.0, 21.0, 42.0, 45.0).associateWith { FaceVerdict.FACE_FREE } + (19.0 to FaceVerdict.HAS_FACE),
+        )
+        val api = FakeCloudApi(polls = ArrayDeque(listOf(complete())))
+        val vm = h.vm(api, media = stripForgeMedia(h, forged), faceDetector = detector)
+        advanceUntilIdle()
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
+        val (manifestJson, files) = api.submits.single()
+        val ids = files.map { it.id }.toSet()
+        // The face frame's bytes never left the phone ...
+        assertFalse(ids.contains("kf_n1_1"), ids.toString())
+        assertTrue(files.none { it.bytes.decodeToString() == "jpeg-19" })
+        assertTrue(ids.containsAll(setOf("kf_n1_0", "kf_n1_2", "kf_n2_0", "kf_n2_1")), ids.toString())
+        // ... and the manifest does not promise it (worker: 400 upload_incomplete).
+        val manifest = EchoJson.decodeFromString<Manifest>(manifestJson)
+        val n1 = manifest.checkpoints.single { it.nodeId == "n1" }
+        assertEquals(listOf("kf_n1_0", "kf_n1_2"), n1.keyframes.map { it.id })
+        assertEquals("kf_n1_0", n1.heroKeyframeId)
+        val listed = manifest.checkpoints.flatMap { cp -> cp.keyframes.map { it.id } + listOfNotNull(cp.clip?.id) }
+        assertTrue(ids.containsAll(listed), "manifest ids without bytes: ${listed - ids}")
+        // The forged clip holds cleared frames only: the face frame is not in it.
+        assertEquals("clip_n1.mp4:b16.jpg,b21.jpg", forged.sorted().first())
+        assertTrue(forged.none { it.contains("b19") }, forged.toString())
+    }
+
+    @Test
+    fun noStripForgeWithDetectorMeansNoClipNeverTheUnscannedVideoFallback() = runTest(dispatcher) {
+        val h = harness()
+        seedLedger(h)
+        // n2's frames are unscanned (UNKNOWN); the platform has no strip forge.
+        val detector = FakeFaceDetector(
+            mapOf(16.0 to FaceVerdict.FACE_FREE, 19.0 to FaceVerdict.FACE_FREE, 21.0 to FaceVerdict.FACE_FREE),
+        )
+        val api = FakeCloudApi(polls = ArrayDeque(listOf(complete())))
+        val vm = h.vm(api, faceDetector = detector)
+        advanceUntilIdle()
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
+        // The video transcode cannot be scanned: it never ran, no clip uploaded.
+        assertTrue(h.media.cut.isEmpty(), h.media.cut.toString())
+        val ids = api.submits.single().second.map { it.id }.toSet()
+        assertTrue(ids.none { it.startsWith("clip_") }, ids.toString())
+        // n2's keyframes were unscanned: withheld whole.
+        assertTrue(ids.none { it.startsWith("kf_n2_") }, ids.toString())
+        assertTrue(ids.containsAll(setOf("kf_n1_0", "kf_n1_1", "kf_n1_2")), ids.toString())
+    }
+
+    @Test
+    fun faceStripKeepsOnlyClearedFramesInThatNodesClip() = runTest(dispatcher) {
+        val h = harness()
+        seedLedger(h)
+        val forged = mutableListOf<String>()
+        val detector = FakeFaceDetector(
+            listOf(16.0, 19.0, 21.0, 42.0).associateWith { FaceVerdict.FACE_FREE } + (45.0 to FaceVerdict.HAS_FACE),
+        )
+        val api = FakeCloudApi(polls = ArrayDeque(listOf(complete())))
+        val vm = h.vm(api, media = stripForgeMedia(h, forged), faceDetector = detector)
+        advanceUntilIdle()
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
+        // n2's single cleared frame still forges; the face frame (45 m) is not in it.
+        assertEquals(listOf("clip_n1.mp4:b16.jpg,b19.jpg,b21.jpg", "clip_n2.mp4:b42.jpg"), forged.sorted())
+        assertTrue(h.media.cut.isEmpty())
+    }
+
+    @Test
+    fun detectorWithAbsentLedgerWithholdsEverythingAndSendsNothing() = runTest(dispatcher) {
+        val h = harness() // video only: slots fill from video, nothing is scanned
+        val api = FakeCloudApi(polls = ArrayDeque(listOf(complete())))
+        val vm = h.vm(api, faceDetector = allClear)
+        advanceUntilIdle()
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Failed>(vm.ui.value.phase)
+        assertTrue(api.uploadCreates.isEmpty())
+        assertTrue(api.puts.isEmpty())
+        assertTrue(api.jobCreates.isEmpty())
+    }
+
+    @Test
+    fun detectorWithCorruptLedgerWithholdsEverythingAndSendsNothing() = runTest(dispatcher) {
+        val h = harness()
+        h.drafts.writeDraftFile("draft-1", "glimpse/entries.json", "{not json".encodeToByteArray())
+        val api = FakeCloudApi(polls = ArrayDeque(listOf(complete())))
+        val vm = h.vm(api, faceDetector = allClear)
+        advanceUntilIdle()
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Failed>(vm.ui.value.phase)
+        assertTrue(api.puts.isEmpty())
+        assertTrue(api.jobCreates.isEmpty())
+    }
+
+    @Test
+    fun detectorWithholdsASlotRecapturedAfterTheScan() = runTest(dispatcher) {
+        val h = harness()
+        seedLedger(h)
+        // A creator recapture replaced the ledger copy: its bytes were never scanned.
+        h.drafts.writeDraftFile("draft-1", "kf/n1_0.jpg", "recaptured".encodeToByteArray())
+        val api = FakeCloudApi(polls = ArrayDeque(listOf(complete())))
+        val vm = h.vm(api, faceDetector = allClear)
+        advanceUntilIdle()
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
+        val ids = api.submits.single().second.map { it.id }.toSet()
+        assertFalse(ids.contains("kf_n1_0"), ids.toString())
+        assertTrue(ids.containsAll(setOf("kf_n1_1", "kf_n1_2")), ids.toString())
     }
 }

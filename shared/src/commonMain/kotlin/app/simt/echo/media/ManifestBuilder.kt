@@ -2,9 +2,7 @@ package app.simt.echo.media
 
 import app.simt.echo.capture.FaceDetector
 import app.simt.echo.capture.GlimpseEntry
-import app.simt.echo.capture.approachStrip
 import app.simt.echo.capture.isFaceFree
-import app.simt.echo.capture.ledgerKeyframes
 import app.simt.echo.model.CaptureLog
 import app.simt.echo.model.CaptureSample
 import app.simt.echo.model.EchoRoute
@@ -12,6 +10,7 @@ import app.simt.echo.model.NodeType
 import app.simt.echo.model.RouteNode
 import kotlinx.serialization.Serializable
 import okio.Path
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
@@ -193,6 +192,9 @@ internal fun distanceAt(log: CaptureLog, samples: List<CaptureSample>, tMs: Long
  * when SAM is disabled (then `clip` is omitted, plan W3-01). [frameFlags]
  * carries the W11-04 per-frame flags by keyframe id; ids absent from the
  * map keep the keep-defaults (today's manifests behave exactly as before).
+ * Keyframes flagged `faceFree = false` are dropped from their checkpoint
+ * (the hero moves to the nearest kept slot); a checkpoint left with no
+ * keyframe is dropped whole, clip included.
  */
 object ManifestBuilder {
 
@@ -229,10 +231,16 @@ object ManifestBuilder {
         // Manifest keyframe ids are the W1-05 file names minus the extension
         // and with the directory flattened (see [keyframeId]); the worker
         // maps them to uploaded files by id.
-        val keyframes = spec.timesMs.indices.map { i ->
+        // A keyframe flagged `faceFree = false` is withheld from the upload,
+        // so it must not be listed either: the worker rejects a manifest id
+        // with no staged bytes (400 `upload_incomplete`).
+        val kept = spec.timesMs.indices.filter { i -> (frameFlags[keyframeId(spec, i)] ?: FrameFlags()).faceFree }
+        if (kept.isEmpty()) return null
+        val keyframes = kept.map { i ->
             val flags = frameFlags[keyframeId(spec, i)] ?: FrameFlags()
             ManifestKeyframe(keyframeId(spec, i), spec.timesMs[i], flags.quality, flags.faceFree, flags.exposureOk)
         }
+        val heroId = keyframeId(spec, kept.minBy { abs(it - spec.heroIndex) })
         val clip = clips[node.id]?.let { info ->
             val window = clipWindow(t)
             ManifestClip(
@@ -249,7 +257,7 @@ object ManifestBuilder {
             turn = node.turn?.name,
             atDistanceM = node.atDistanceM,
             tMs = t,
-            heroKeyframeId = if (spec.heroIndex < keyframes.size) keyframes[spec.heroIndex].id else keyframes.last().id,
+            heroKeyframeId = heroId,
             keyframes = keyframes,
             clip = clip,
             approach = approachSamples(log, clipWindow(t)),
@@ -281,8 +289,8 @@ fun qualityFor(score: Double): String =
  * upload path withholds and the worker drops. A scanned UNKNOWN verdict
  * flags `faceFree = false` (exclude-safe); a zero score flags
  * `quality = "bad"` and `exposureOk = false`. Slots the ledger cannot
- * fill stay absent from the map and keep the keep-defaults —
- * video-fallback frames upload as before.
+ * fill stay absent from this map; the upload path layers
+ * [failClosedFrameFlags] over it so an unscanned slot is withheld, not kept.
  */
 fun frameFlagsFor(
     route: EchoRoute,
@@ -295,11 +303,7 @@ fun frameFlagsFor(
         for (node in route.nodes) {
             if (node.type == NodeType.START) continue
             val spec = specByNode[node.id] ?: continue
-            val picks = ledgerKeyframes(
-                approachStrip(ledger, node.atDistanceM),
-                node.type,
-                node.atDistanceM,
-            )
+            val picks = ledgerPicksFor(ledger, node)
             picks.forEachIndexed { index, pick ->
                 if (index >= spec.timesMs.size) return@forEachIndexed
                 val verdict = detector.verdictFor(pick)

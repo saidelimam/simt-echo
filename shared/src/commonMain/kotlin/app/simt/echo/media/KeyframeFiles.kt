@@ -1,6 +1,7 @@
 package app.simt.echo.media
 
 import app.simt.echo.capture.CaptureSession
+import app.simt.echo.capture.FaceDetector
 import app.simt.echo.capture.GlimpseEntry
 import app.simt.echo.capture.approachStrip
 import app.simt.echo.capture.ledgerKeyframes
@@ -56,11 +57,7 @@ suspend fun ensureKeyframes(
         for (node in route.nodes) {
             if (node.type == NodeType.START) continue
             val spec = keyframeSpecs(listOf(node)).firstOrNull() ?: continue
-            val picks = ledgerKeyframes(
-                approachStrip(ledger, node.atDistanceM),
-                node.type,
-                node.atDistanceM,
-            )
+            val picks = ledgerPicksFor(ledger, node)
             spec.timesMs.forEachIndexed { index, atMs ->
                 val name = spec.fileName(index)
                 if (drafts.draftFileExists(draftId, name)) return@forEachIndexed
@@ -76,6 +73,52 @@ suspend fun ensureKeyframes(
         }
     }
     if (missing.isNotEmpty()) media.extractFrames(video, missing)
+}
+
+/**
+ * The ledger frames that fill [node]'s keyframe slots, in slot order: the
+ * distance-picked [ledgerKeyframes] of its approach strip (plan W11-02).
+ * Shared by `ensureKeyframes` (which copies them into `kf/`) and the W11-04
+ * flags (which scan them), so both always address the same frames.
+ */
+internal fun ledgerPicksFor(ledger: List<GlimpseEntry>, node: RouteNode): List<GlimpseEntry> =
+    ledgerKeyframes(approachStrip(ledger, node.atDistanceM), node.type, node.atDistanceM)
+
+/** Flags that withhold a keyframe: its bytes are not a scanned ledger frame. */
+private val UNVERIFIED_FRAME = FrameFlags(faceFree = false)
+
+/**
+ * Fail-closed W11-04 flags for every planned keyframe. A keyframe is
+ * flag-able by the scan only when its `kf/` file is byte-identical to the
+ * ledger pick the [detector] verdict was computed on. Anything else — a
+ * slot filled from video, a recapture, an absent or corrupt ledger — has
+ * no scan behind it and is flagged `faceFree = false`, so its bytes never
+ * upload and the manifest drops it. Call only with a detector configured;
+ * without one, keyframes keep today's unflagged behavior.
+ */
+fun failClosedFrameFlags(
+    drafts: DraftRepository,
+    draftId: String,
+    route: EchoRoute,
+    specs: List<KeyframeSpec>,
+    ledger: List<GlimpseEntry>,
+    detector: FaceDetector,
+): Map<String, FrameFlags> {
+    val scanned = frameFlagsFor(route, specs, ledger, detector)
+    val nodes = route.nodes.associateBy { it.id }
+    return buildMap {
+        for (spec in specs) {
+            val node = nodes[spec.nodeId]?.takeIf { it.type != NodeType.START }
+            val picks = if (node == null) emptyList() else ledgerPicksFor(ledger, node)
+            spec.timesMs.indices.forEach { index ->
+                val id = keyframeId(spec, index)
+                val pickBytes = picks.getOrNull(index)?.let { drafts.readLedgerJpeg(draftId, it) }
+                val fileBytes = drafts.readDraftFile(draftId, spec.fileName(index))
+                val verified = pickBytes != null && fileBytes != null && pickBytes.contentEquals(fileBytes)
+                put(id, if (verified) scanned[id] ?: UNVERIFIED_FRAME else UNVERIFIED_FRAME)
+            }
+        }
+    }
 }
 
 /**
@@ -99,7 +142,7 @@ private fun fillLedgerStartPhoto(
  * by stripping the prefix; anything unreadable yields null and the
  * caller falls back to video.
  */
-private fun DraftRepository.readLedgerJpeg(draftId: String, entry: GlimpseEntry): ByteArray? {
+internal fun DraftRepository.readLedgerJpeg(draftId: String, entry: GlimpseEntry): ByteArray? {
     val path = entry.jpegPath ?: return null
     readDraftFile(draftId, path)?.let { return it }
     val prefix = "drafts/$draftId/"
