@@ -125,3 +125,15 @@ Deploy evidence (all live):
   `WORKERS_API_BASE` to the URL above (`ECHO_PROD_API_BASE`
   overrides) and reads `ECHO_APP_TOKEN` only from
   `ECHO_PROD_APP_TOKEN` (empty default — fail-closed per W7-07).
+
+  Token rotation (2026-11-02, recorded honestly): the W9-01 token
+  value survived only in a worktree file that was deleted before the
+  operator's `local.properties` write landed (an append-guard
+  skipped the write because the key already existed empty), leaving
+  production at `server_misconfigured`. Rotated with `wrangler
+  secret put ECHO_APP_TOKEN` (same approved secret class, no new
+  scope), value stored in the gitignored `local.properties`, live
+  check `GET /v1/jobs/:id` → `job_not_found` (authenticated).
+  Redeployed version `b0e5c38a-046b-49e4-8a7d-a2d190db1f7d`
+  to rebind. Lesson: verify secret liveness (`job_not_found`, not
+  `unauthorized`) before deleting the only value copy.
