@@ -23,24 +23,72 @@ export interface MetaResponse {
   videoFramesProcessed?: number;
 }
 
+/** Per-call bounds (plan §10 W11-06 closes G9): 60 s for the whole call,
+ * 20 s idle between SSE events. Callers may narrow them (tests) or pass
+ * their own already-linked signal; the idle watchdog always applies. */
+export const META_CALL_TIMEOUT_MS = 60_000;
+export const META_CALL_IDLE_MS = 20_000;
+
+export interface MetaCallOptions {
+  timeoutMs?: number;
+  idleMs?: number;
+  signal?: AbortSignal;
+}
+
 /** POST a streaming Responses request and collect the output text. */
 export async function metaResponses(env: Env, body: object): Promise<string> {
   return (await metaResponsesDetailed(env, body)).text;
 }
 
 /** As [metaResponses], but also surfaces the vendor usage counters. */
-export async function metaResponsesDetailed(env: Env, body: object): Promise<MetaResponse> {
+export async function metaResponsesDetailed(
+  env: Env,
+  body: object,
+  opts: MetaCallOptions = {},
+): Promise<MetaResponse> {
   const key = env.META_API_KEY;
   if (!key) throw new NonRetryableError("meta: META_API_KEY is not configured");
-  const res = await fetch(RESPONSES_URL, {
-    method: "POST",
-    body: JSON.stringify({ ...body, stream: true }),
-    headers: {
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json",
-      Accept: "text/event-stream",
-    },
-  });
+  const timeoutMs = opts.timeoutMs ?? META_CALL_TIMEOUT_MS;
+  const idleMs = opts.idleMs ?? META_CALL_IDLE_MS;
+  const timeoutSignal = opts.signal ?? AbortSignal.timeout(timeoutMs);
+  const ctrl = new AbortController();
+  if (timeoutSignal.aborted) {
+    ctrl.abort(timeoutSignal.reason);
+  } else {
+    timeoutSignal.addEventListener("abort", () => ctrl.abort(timeoutSignal.reason), { once: true });
+  }
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  const clearIdle = (): void => {
+    if (idleTimer !== undefined) clearTimeout(idleTimer);
+    idleTimer = undefined;
+  };
+  const armIdle = (): void => {
+    clearIdle();
+    idleTimer = setTimeout(
+      () => ctrl.abort(new Error(`meta: no SSE event for ${idleMs} ms`)),
+      idleMs,
+    );
+  };
+  let res: Response;
+  // The idle watchdog covers the whole call: armed before fetch (headers
+  // may never arrive), re-armed per body chunk, cleared at the end. Only
+  // silence aborts (G9).
+  armIdle();
+  try {
+    res = await fetch(RESPONSES_URL, {
+      method: "POST",
+      body: JSON.stringify({ ...body, stream: true }),
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      signal: ctrl.signal,
+    });
+  } catch (e) {
+    clearIdle();
+    throw e;
+  }
   if (res.status === 429 || res.status >= 500) {
     throw new Error(`retryable meta ${res.status}`);
   }
@@ -96,16 +144,24 @@ export async function metaResponsesDetailed(env: Env, body: object): Promise<Met
       }
     }
   };
-  for (let r = await reader.read(); !r.done; r = await reader.read()) {
-    // Normalise CRLF: event boundaries may arrive as \r\n\r\n.
-    buf += r.value.replace(/\r\n/g, "\n");
-    let i: number;
-    while ((i = buf.indexOf("\n\n")) >= 0) {
-      handleBlock(buf.slice(0, i));
-      buf = buf.slice(i + 2);
+  // Re-arm after headers: body silence trips the same watchdog.
+  armIdle();
+  try {
+    for (let r = await reader.read(); !r.done; r = await reader.read()) {
+      // Normalise CRLF: event boundaries may arrive as \r\n\r\n.
+      buf += r.value.replace(/\r\n/g, "\n");
+      // Any chunk resets the idle watchdog: only silence aborts (G9).
+      armIdle();
+      let i: number;
+      while ((i = buf.indexOf("\n\n")) >= 0) {
+        handleBlock(buf.slice(0, i));
+        buf = buf.slice(i + 2);
+      }
     }
+    // A final event without a trailing blank line still counts.
+    if (buf.includes("data:")) handleBlock(buf);
+  } finally {
+    clearIdle();
   }
-  // A final event without a trailing blank line still counts.
-  if (buf.includes("data:")) handleBlock(buf);
   return { text: out, ...(videoFramesProcessed !== undefined ? { videoFramesProcessed } : {}) };
 }

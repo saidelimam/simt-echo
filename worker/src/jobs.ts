@@ -2,8 +2,10 @@ import { Hono } from "hono";
 import type { Env } from "./index";
 import { handleCreateJobV11 } from "./uploads";
 import {
+  JobEventSchema,
   JobResultSchema,
   ManifestSchema,
+  type JobEvent,
   type JobStage,
   type Manifest,
 } from "./types";
@@ -37,6 +39,55 @@ export async function putError(env: Env, jobId: string, message: string): Promis
   } catch {
     // R2 itself is down; the instance still reports errored via its status.
   }
+}
+
+// W10-06 job events (plan §10 W11-06 item 6), emitted by the SAM lens and
+// the pipeline's lens path. One R2 record per event under
+// `jobs/<id>/events/<eventId>.json` — append-only, per-job scoped (deleted
+// with the job by the DELETE sweep, same as every other jobs/<id>/ key),
+// so a concurrent emit never rewrites another event. The GET SSE endpoint
+// reads them back with [readJobEvents]; no HTTP shape is added here.
+
+const eventsPrefix = (jobId: string) => `jobs/${jobId}/events/`;
+const eventKey = (jobId: string, id: string) => `jobs/${jobId}/events/${id}.json`;
+
+/** Monotonic-ish event id: time-ordered, unique per emit. The per-isolate
+ * sequence keeps same-millisecond emits in emit order under the R2 key
+ * sort that [readJobEvents] relies on. */
+let eventSeq = 0;
+export function newEventId(): string {
+  const seq = (eventSeq++).toString(36).padStart(4, "0");
+  return `${Date.now().toString(36)}-${seq}-${crypto.randomUUID().slice(0, 8)}`;
+}
+
+/** Validates against the frozen W10-06 union, then stores the record. */
+export async function emitJobEvent(env: Env, jobId: string, event: JobEvent): Promise<void> {
+  JobEventSchema.parse(event);
+  await env.MEDIA.put(eventKey(jobId, event.id), JSON.stringify(event));
+}
+
+/** All stored events for a job, in emit (key) order. Skips unreadable rows. */
+export async function readJobEvents(env: Env, jobId: string): Promise<JobEvent[]> {
+  const keys: string[] = [];
+  let cursor: string | undefined;
+  for (;;) {
+    const page = await env.MEDIA.list({ prefix: eventsPrefix(jobId), cursor });
+    for (const o of page.objects) keys.push(o.key);
+    if (!page.truncated) break;
+    cursor = page.cursor;
+  }
+  keys.sort();
+  const out: JobEvent[] = [];
+  for (const key of keys) {
+    const obj = await env.MEDIA.get(key);
+    if (!obj) continue;
+    try {
+      out.push(JobEventSchema.parse(await obj.json()));
+    } catch {
+      // A half-written record never blocks the stream.
+    }
+  }
+  return out;
 }
 
 async function readJson<T>(env: Env, key: string): Promise<T | null> {

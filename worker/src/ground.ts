@@ -1,20 +1,21 @@
-// Ground step (plan §6.6 + §10 W3-05, slice W3-05).
+// Ground step (plan §6.6 + §10 W3-05, slice W3-05; W11-06 adds the lens).
 //
-// Two paths, one output shape. Without a Meta key (or with GROUND_ORDER
-// resolving to `none`) scout boxes pass through as AI_BOX_ONLY. With a key,
-// each kept candidate is grounded against SAM 3.1 on its checkpoint clip and
-// selected/ranked by the §6.6 formulas; the mask null-degrades to box-only
-// whenever SAM yields nothing usable — never a crash.
+// Two modes, one output shape. `GROUND_MODE=legacy` runs the frozen W3-05
+// path below verbatim — per-candidate whole-clip video first, hero-image
+// fallback, string-concat base64 — until W11-10 removes it or records why
+// it stays. Any other value (or unset) runs the SAM lens in `samLens.ts`
+// (per-call Workflow steps, content-hash cache, escalation ladder, budget
+// governor) through the same `runGround` entry, so callers never branch.
 //
-// Generic core: `bestBy` picks any item by a numeric score, `iou` works on
-// any `[x1,y1,x2,y2]` tuple, and `rankCandidate` is pure over scalars, so
-// W3-06's assemble reuses all three without re-implementing §6.6.
+// Generic core lives in `groundCommon.ts`, shared by both modes without
+// re-implementing §6.6.
 
 import { NonRetryableError } from "cloudflare:workflows";
-import { decodeMaskToSVGPath, formats, frameIndexOf, recordsOfKind } from "@meta-sam/parser";
 import type { Env } from "./index";
 import { metaResponses, metaResponsesDetailed } from "./meta";
-import { parseSam, type SamObs } from "./samParse";
+import { parseSam } from "./samParse";
+import { boxOnly, toGrounded } from "./groundCommon";
+import { inlineRunner, runGroundLens, type LensOptions, type StepRunner } from "./samLens";
 import {
   JobResultSchema,
   type Candidate,
@@ -25,60 +26,30 @@ import {
 import type { ScoutCandidate, ScoutResult } from "./scout";
 
 import type { Box } from "./selection";
-import {
-  heroIndex,
-  interpolateDistance,
-  iou,
-  rankCandidate,
-  selectTrack,
-  sparkBoxToPixels,
-} from "./selection";
+import { heroIndex, rankCandidate } from "./selection";
 
-const GRID = 1000;
+export type { StepRunner };
+export { inlineRunner };
+export { runGroundLens } from "./samLens";
+export type { LensOptions } from "./samLens";
 
-function boxOnly(
+/**
+ * Dispatch: the frozen W3-05 path vs the W11-06 SAM lens. `runner` and
+ * `lensOpts` only affect the lens; legacy ignores both, keeping public
+ * behavior for `GROUND_MODE=legacy` identical.
+ */
+export async function runGround(
+  env: Env,
   jobId: string,
-  scoutModel: string,
-  checkpoint: Checkpoint,
-  candidates: ScoutCandidate[],
-  keyframeTMs: Map<string, number>,
-): Candidate[] {
-  return candidates.map((c, k) => {
-    const tMs = keyframeTMs.get(c.imageId) ?? checkpoint.tMs;
-    void tMs;
-    return {
-      candidateId: `${checkpoint.nodeId}_${k}`,
-      title: c.title,
-      description: c.description,
-      cue: c.cue,
-      samPhrase: c.samPhrase,
-      signText: c.signText,
-      privacyRisk: c.privacyRisk,
-      keyframeId: c.imageId,
-      box: [...c.box] as Box,
-      frameW: GRID,
-      frameH: GRID,
-      maskSvgPath: null,
-      maskW: null,
-      maskH: null,
-      samConfidence: null,
-      trackability: null,
-      visibleFromM: null,
-      distinctiveness: c.distinctiveness,
-      permanence: c.permanence,
-      rank: rankCandidate({
-        distinctiveness: c.distinctiveness,
-        permanence: c.permanence,
-        trackability: null,
-        samConfidence: null,
-        ambiguous: c.ambiguous,
-        boxMismatch: false,
-      }),
-      source: "AI_BOX_ONLY" as const,
-      models: `${scoutModel} (box-only)`,
-      evidenceKey: `jobs/${jobId}/scout/raw/${checkpoint.nodeId}.0.json`,
-    };
-  });
+  manifest: Manifest,
+  scout: ScoutResult,
+  runner: StepRunner = inlineRunner,
+  lensOpts: LensOptions = {},
+): Promise<JobResult> {
+  if ((env.GROUND_MODE ?? "lens") === "legacy") {
+    return runGroundLegacy(env, jobId, manifest, scout);
+  }
+  return runGroundLens(env, jobId, manifest, scout, runner, lensOpts);
 }
 
 function toBase64(bytes: Uint8Array): string {
@@ -97,41 +68,13 @@ function toBase64(bytes: Uint8Array): string {
 }
 
 /**
- * Decode the hero observation's mask to an SVG path (plan §7.3): the hero
- * line goes to `@meta-sam/parser`'s video parser, and the mask record for
- * this object on this frame goes to its mask→SVG helper. The SVG lives in
- * mask-raster coordinates, so `w`/`h` are the raster's own dims — never
- * the frame's. The mask stays attached to the object that produced it:
- * a multi-object line cannot donate another object's mask. Any shape
- * drift or decode failure null-degrades to box-only (review 0002 R1).
- */
-function decodeHeroMask(hero: SamObs | null): { svg: string; w: number; h: number } | null {
-  if (!hero) return null;
-  try {
-    const parser = formats.segmentation.video().createParser();
-    parser.push(`${hero.line}\n`);
-    const { result } = parser.finish({ status: "completed" });
-    const masks = recordsOfKind(result.records, "mask");
-    const rec =
-      masks.find((m) => m.objectId === String(hero.id) && frameIndexOf(m) === hero.frame) ??
-      (masks.length === 1 ? masks[0] : undefined);
-    if (!rec) return null;
-    const svg = decodeMaskToSVGPath(rec.mask);
-    if (typeof svg !== "string" || svg === "") return null;
-    return { svg, w: rec.mask.width, h: rec.mask.height };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Ground every checkpoint: SAM 3.1 when ordered and keyed, box-only
- * otherwise. Reads the scout result + media from R2, writes raw SAM text to
- * `jobs/<id>/sam/<node>_<k>.txt` and the ranked candidates to
+ * Frozen W3-05 ground (see file header): SAM 3.1 when ordered and keyed,
+ * box-only otherwise. Reads the scout result + media from R2, writes raw
+ * SAM text to `jobs/<id>/sam/<node>_<k>.txt` and the ranked candidates to
  * `jobs/<id>/ground.json`. Total: zero observations, missing clips, and a
  * missing key all degrade to AI_BOX_ONLY instead of throwing.
  */
-export async function runGround(
+async function runGroundLegacy(
   env: Env,
   jobId: string,
   manifest: Manifest,
@@ -229,8 +172,8 @@ async function groundOne(
     privacyRisk: sc.privacyRisk,
     keyframeId: sc.imageId,
     box: [...sc.box] as Box,
-    frameW: GRID,
-    frameH: GRID,
+    frameW: 1000,
+    frameH: 1000,
     maskSvgPath: null,
     maskW: null,
     maskH: null,
@@ -337,66 +280,4 @@ async function groundViaImage(
     fallback,
     true,
   );
-}
-
-function toGrounded(
-  cp: Checkpoint,
-  sc: ScoutCandidate,
-  k: number,
-  evidenceKey: string,
-  obs: SamObs[],
-  clip: { clipB64: string; fps: number; heroIdx: number; heroTMs: number },
-  fallback: Candidate,
-  imageFallback: boolean,
-): Candidate {
-  const frameW = obs[0]?.w ?? GRID;
-  const frameH = obs[0]?.h ?? GRID;
-  const sparkPx = sparkBoxToPixels(sc.box, frameW, frameH);
-  const sel = selectTrack(obs, sparkPx, imageFallback ? 0 : clip.heroIdx, clip.fps);
-  // No hero observation means no SAM box in this frame's pixels. Emitting
-  // the scout's 0–1000-grid box against SAM frame dims would mix two
-  // coordinate systems (review 0002): degrade to the box-only candidate.
-  if (!sel.hero || sel.obs.length === 0) return fallback;
-  const winW = sel.frameW > 0 ? sel.frameW : frameW;
-  const winH = sel.frameH > 0 ? sel.frameH : frameH;
-  const trackability = imageFallback ? null : sel.present;
-  const samConfidence = sel.hero?.c ?? (sel.meanC || null);
-  const tFirst = cp.clip ? cp.clip.startMs + (sel.first * 1000) / Math.max(1e-9, clip.fps) : cp.tMs;
-  const visibleFromM = imageFallback
-    ? null
-    : Math.max(0, cp.atDistanceM - interpolateDistance(cp.approach, tFirst));
-  const mask = decodeHeroMask(sel.hero);
-  const box = [...sel.hero.box] as Box;
-  return {
-    candidateId: `${cp.nodeId}_${k}`,
-    title: sc.title,
-    description: sc.description,
-    cue: sc.cue,
-    samPhrase: sc.samPhrase,
-    signText: sc.signText,
-    privacyRisk: sc.privacyRisk,
-    keyframeId: sc.imageId,
-    box,
-    frameW: winW,
-    frameH: winH,
-    maskSvgPath: mask?.svg ?? null,
-    maskW: mask && mask.w > 0 ? mask.w : null,
-    maskH: mask && mask.h > 0 ? mask.h : null,
-    samConfidence,
-    trackability,
-    visibleFromM,
-    distinctiveness: sc.distinctiveness,
-    permanence: sc.permanence,
-    rank: rankCandidate({
-      distinctiveness: sc.distinctiveness,
-      permanence: sc.permanence,
-      trackability,
-      samConfidence,
-      ambiguous: sc.ambiguous,
-      boxMismatch: sel.boxMismatch,
-    }),
-    source: "AI_GROUNDED",
-    models: fallback.models,
-    evidenceKey,
-  };
 }

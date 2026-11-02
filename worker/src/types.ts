@@ -118,11 +118,17 @@ export const JobResultCheckpointSchema = z.object({
 
 /** Measured cost/latency. The three fields are the complete §5.5 set;
  * W3-06 fills them. The object is closed (zod strips extras) so step
- * results stay Rpc.Serializable across the Workflow boundary. */
+ * results stay Rpc.Serializable across the Workflow boundary.
+ * W11-06 adds two optional fields (still closed, still serializable):
+ * `samFramesBilled` sums only vendor-reported `response.completed` frames
+ * (cache hits bill zero) and `budgetExhausted` records the governor
+ * refusing a call. Both are absent when SAM never ran. */
 export const JobUsageSchema = z.object({
   samFrames: z.number().int().nonnegative().optional(),
   scoutMs: z.number().nonnegative().optional(),
   samMs: z.number().nonnegative().optional(),
+  samFramesBilled: z.number().int().nonnegative().optional(),
+  budgetExhausted: z.boolean().optional(),
 });
 export type JobUsage = z.infer<typeof JobUsageSchema>;
 

@@ -757,6 +757,26 @@ describe("v1.1 resumable uploads (W11-05)", () => {
     expect(pipeline.instances.size).toBe(1);
   });
 
+  it("persists the v1.1 budget and resume source for the W11-06 governor", async () => {
+    const media = new FakeR2();
+    const pipeline = new FakePipeline();
+    const env = envFor(media, pipeline);
+    const res = await postJobJson(env, {
+      manifest: validManifest(),
+      budget: { maxSamFrames: 120 },
+      resumeOf: "33333333-3333-3333-3333-333333333333",
+      idempotencyKey: "governor-budget-key-1",
+    });
+    expect(res.status).toBe(202);
+    const { jobId } = (await res.json()) as { jobId: string };
+    const stored = media.store.get(`jobs/${jobId}/budget.json`);
+    expect(stored).toBeDefined();
+    expect(JSON.parse(new TextDecoder().decode(stored!.body))).toEqual({
+      maxSamFrames: 120,
+      resumeOf: "33333333-3333-3333-3333-333333333333",
+    });
+  });
+
   it("refuses to create from an incomplete upload, naming what is missing", async () => {
     const media = new FakeR2();
     const pipeline = new FakePipeline();
@@ -913,7 +933,11 @@ describe("EchoPipeline skeleton", () => {  it("runs load → scout → ground �
       step,
     );
 
-    expect(seen).toEqual(["load", "scout", "ground", "assemble"]);
+    // W11-06: no META_API_KEY here, so the lens grounds box-only with zero
+    // SAM calls — and zero calls means zero per-call `ground:…` steps. The
+    // ground phase still runs (box-only seal below); per-call steps appear
+    // only when SAM calls are actually sent (pipeline.test.ts proves it).
+    expect(seen).toEqual(["load", "scout", "assemble"]);
     const progress = JSON.parse(
       new TextDecoder().decode(media.store.get(`jobs/${jobId}/progress.json`)!.body),
     );
