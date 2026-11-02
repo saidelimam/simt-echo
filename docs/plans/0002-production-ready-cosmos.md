@@ -235,7 +235,7 @@ with device model + build SHA. No slice is Complete on a partial pass.
 | W8-11 | Complete | Settings in Cosmos (sections, delete-all, AI status) | F (T) | E | W8-05, W7-07 | 65a981137155c2c668c73f0968a82ea54faa270c |
 | W8-12 | Complete | Accessibility & motion gate (contrast, fontScale, TalkBack) | T | F | W8-06, W8-07, W8-08, W8-09, W8-10, W8-11 | 116c0236beec9326c77656572c713748cec69890 |
 | W9-01 | Complete | Worker production deploy (R2, secrets, live health) | S | D | W7-12 | f79d2169b7c67c8e1462ca776debd66e42ce96ed |
-| W9-02 | In progress | Live AI envelope: deployed 60 m job, cost/latency measured | T (S) | D | W9-01 | — |
+| W9-02 | Complete | Live AI envelope: deployed 60 m job, cost/latency measured | T (S) | D | W9-01 | fdff6e1f87b3c45351f607c30f9addf7be5599b3 |
 | W9-03 | Complete | Relay wired end-to-end (AppGraph → Share → Receive) | F (S) | D | W9-01, W7-08 | 04efbdfe7b4f833c248c027e00f3f8fa7b57d4e7 |
 | W9-04 | Queued | Two-phone field E2E (transfer, airplane navigate, haptics) | T | F | W7-12, W8-12 | — |
 | W9-05 | Queued | Device robustness pass (kill, deny, airplane, no-sensor) | F (T) | F | W9-04 | — |
