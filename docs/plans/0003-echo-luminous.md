@@ -883,3 +883,22 @@ surface the slice claims.
   https://developer.android.com/agents/skills/jetpack-compose/jetpack-compose-performance/references/animation
 - Blur and duplicate scoring (Laplacian variance, dHash): https://arxiv.org/pdf/2512.19107 ·
   https://docs.rs/crate/oximedia-dedup/latest/source/src/video_dedup_pipeline.rs
+
+## 12. Build wave-14 deferral (2026-11-02, coordinator note — not a slice)
+
+40/45 rows are Complete on main (all unit-testable work, each in its own
+slice worktree, merged). The remaining 5 rows cannot pass honestly without
+named hardware, a SAM key, or plan 0002's release slice, so they stay Queued
+for a smarter model / a device session instead of being faked:
+
+| ID | Blocked on |
+|---|---|
+| W11-10 | Walked 60 m route + deployed v1.1 worker + SAM key (billing, bytes, latency, retry cache-hit, jank). Scaffolding present: `npm run canary:sam` (W11-07), forge budget maths (W11-03), lens governor + cache (W11-06), client v1.1 (W11-08). |
+| W14-01 | Two named devices + 10-minute walk (jank, Frame Tap ≤ 6 ms, filter ≤ 1 ms, battery ≤ 6 %, cold start, thermal step-down). Harness present: `:benchmark` module + `docs/perf.md` gates (W10-04). |
+| W14-02 | Manual TalkBack pass per primary screen + V-reviewed frames at fontScale 2.0 (W8-12 repeated over W13-04…W13-11). Static-tier parity is unit-pinned per slice; the human pass is owed. |
+| W14-03 | Taped course + 15 alternating runs (5 SENSOR_ONLY + 5 LINEAR + 5 GHOST). Both engines are unit-pinned on all 7 scenarios (W12-02); the field verdict decides the default. |
+| W14-05 | Plan 0002 W9-12 (still Queued) + W11-10 + W14-01…W14-04. Audit W14-04 returned APPROVE WITH RESIDUAL RISK (no BLOCK). |
+
+"Unmeasured is not Complete" (W11-10) applies to all five: no numbers were
+invented for any of them. The `GROUND_MODE=legacy` flag stays until W11-10
+passes; GHOST stays default-off until W14-03 passes.
