@@ -32,6 +32,8 @@ import app.simt.echo.transfer.UploadFileRef
 import app.simt.echo.transfer.UploadPreparer
 import app.simt.echo.transfer.UploadRecord
 import app.simt.echo.transfer.V11CloudApi
+import app.simt.echo.transfer.createJobFromWalkStaging
+import app.simt.echo.transfer.discardWalkStaging
 import app.simt.echo.ui.copy.processingErrorCopy
 import app.simt.echo.ui.copy.processingJobErrorCopy
 import app.simt.echo.ui.copy.processingJobGoneCopy
@@ -47,6 +49,7 @@ import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.encodeToString
 
 /** What the consent sheet offers to send (plan W3-02 copy). */
@@ -62,6 +65,9 @@ data class ConsentInfo(
      */
     val faceFilterActive: Boolean = false,
 )
+
+/** How long declining waits for staged uploads to be deleted before it leaves anyway. */
+private const val DISCARD_WAIT_MS = 5_000L
 
 /** Processing screen phase (plan §8.3): consent → stages → Ready. */
 sealed interface ProcessingPhase {
@@ -334,6 +340,7 @@ class ProcessingViewModel(
         val prepared = prepareUpload()
         lastRoute = prepared.route
         if (!restarted) clearPartials()
+        createJobFromWalk(v11, prepared, resumeOf)?.let { return watchNewJob(it, uploadId = null) }
         val stored = resumableRecord(drafts.loadUploadRecord(draftId), prepared.manifestJson)
         val resume = stored != null
         val manifestJson = stored?.manifestJson ?: prepared.manifestJson
@@ -367,6 +374,28 @@ class ProcessingViewModel(
         }
         val jobId = v11.createJob(manifestJson, uploadId, manifestSha, resumeOf)
         drafts.clearUploadRecord(draftId)
+        watchNewJob(jobId, uploadId)
+    }
+
+    /**
+     * The job built from the uploads staged while walking (W11-09), sending only
+     * what changed since; null means upload in full. That is the case when nothing
+     * was staged, when a session is already in flight, when this is a re-send of an
+     * errored job (staged jobs cannot name `resumeOf`) and when the worker no
+     * longer holds the staged sessions (the dead record is already cleared).
+     */
+    private suspend fun createJobFromWalk(v11: V11CloudApi, prepared: PreparedUpload, resumeOf: String?): String? {
+        if (resumeOf != null || drafts.loadUploadRecord(draftId) != null) return null
+        return try {
+            withContext(ioDispatcher) {
+                createJobFromWalkStaging(v11, drafts, draftId, prepared.manifestJson, prepared.files, sha256Hex(prepared.manifestJson.encodeToByteArray()))
+            }
+        } catch (e: EchoApiError.UploadStale) {
+            null
+        }
+    }
+
+    private suspend fun watchNewJob(jobId: String, uploadId: String?) {
         persist(jobId, "queued", uploadId = uploadId)
         _ui.update { it.copy(phase = ProcessingPhase.Working(JobStage.QUEUED), jobId = jobId) }
         watchOrPoll(jobId, lastEventId = null)
@@ -399,8 +428,27 @@ class ProcessingViewModel(
         sendV11(v11, resumeOf, restarted = true)
     }
 
-    /** Consent Not now / error Continue without AI: back to Review. */
-    fun decline(onDone: () -> Unit) = onDone()
+    /**
+     * Consent Not now / error Continue without AI: back to Review. Anything
+     * staged while walking is deleted first, so declining leaves nothing on the
+     * server. A slow or failed delete never holds the user here: the worker
+     * sweeps staged uploads after an hour.
+     */
+    fun decline(onDone: () -> Unit) {
+        viewModelScope.launch {
+            val v11 = api as? V11CloudApi
+            if (v11 != null) {
+                try {
+                    withTimeoutOrNull(DISCARD_WAIT_MS) { discardWalkStaging(v11, drafts, draftId) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // Kept on the record; the worker's staging TTL is the backstop.
+                }
+            }
+            onDone()
+        }
+    }
 
     /**
      * Failure Retry: drops the dead job server-side, then returns to the

@@ -37,6 +37,7 @@ import app.simt.echo.transfer.JobEvent
 import app.simt.echo.transfer.JobPoll
 import app.simt.echo.transfer.JobRecord
 import app.simt.echo.transfer.JobStage
+import app.simt.echo.transfer.ReadyStagedRecord
 import app.simt.echo.transfer.UploadFile
 import app.simt.echo.transfer.UploadFileRef
 import app.simt.echo.transfer.UploadRecord
@@ -123,6 +124,10 @@ class ProcessingViewModelTest {
         var polls: ArrayDeque<Result<JobPoll>> = ArrayDeque(),
         var submitError: EchoApiError? = null,
         var deleteError: EchoApiError? = null,
+        /** Thrown by [createJobFromStaged]: the worker no longer holds the walk's sessions. */
+        var stagedError: EchoApiError? = null,
+        /** Thrown by [deleteUpload]: a staged session that could not be deleted. */
+        var uploadDeleteError: EchoApiError? = null,
         /** Names the server already holds (resume-skips-present scripts). */
         var staged: MutableSet<String> = mutableSetOf(),
         /** One flow per [watchEvents] call; empty when exhausted. */
@@ -177,6 +182,7 @@ class ProcessingViewModelTest {
         }
 
         override suspend fun deleteUpload(uploadId: String) {
+            uploadDeleteError?.let { throw it }
             deletes += uploadId
         }
 
@@ -185,6 +191,7 @@ class ProcessingViewModelTest {
             uploadIds: List<String>,
             idempotencyKey: String,
         ): String {
+            stagedError?.let { throw it }
             jobCreates += Triple(manifestJson, uploadIds.joinToString("+"), idempotencyKey)
             submits += manifestJson to puts.toList()
             return "job-1"
@@ -744,6 +751,89 @@ class ProcessingViewModelTest {
         // W7-06: the 401 detail stays in code; the screen gets typed copy.
         assertEquals(processingErrorCopy(), failed.message)
         assertNull(h.drafts.loadJobRecord("draft-1"))
+    }
+
+    private fun stageWhileWalking(h: Harness, files: Map<String, String> = emptyMap()) =
+        h.drafts.saveReadyStagedRecord("draft-1", ReadyStagedRecord(listOf("walk-1", "walk-2"), 0L, files))
+
+    @Test
+    fun finishBuildsTheJobFromTheWalkSessionsAndSendsOnlyWhatTheyLack() = runTest(dispatcher) {
+        val h = harness()
+        // The cut clips are the same bytes the walk staged, so only the keyframes are left to send.
+        val clipSha = sha256Hex("clip".encodeToByteArray())
+        stageWhileWalking(h, mapOf("clip_n1" to clipSha, "clip_n2" to clipSha))
+        val api = FakeCloudApi(polls = ArrayDeque(listOf(complete())))
+        val vm = h.vm(api)
+        advanceUntilIdle()
+
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
+        val (manifest, sessions, key) = api.jobCreates.single()
+        assertEquals("upload-1+walk-1+walk-2", sessions, "the final session is listed first so changed bytes win")
+        assertEquals(sha256Hex(manifest.encodeToByteArray()), key)
+        assertEquals(
+            setOf("kf_n1_0", "kf_n1_1", "kf_n1_2", "kf_n2_0", "kf_n2_1"),
+            api.puts.map { it.id }.toSet(),
+            "every keyframe goes in the final session, and neither already-staged clip does",
+        )
+        assertNull(h.drafts.loadReadyStagedRecord("draft-1"), "the walk record is consumed by the job")
+        assertEquals("job-1", h.drafts.loadJobRecord("draft-1")?.jobId)
+    }
+
+    @Test
+    fun finishFallsBackToAFullUploadWhenTheWorkerForgotTheWalkSessions() = runTest(dispatcher) {
+        val h = harness()
+        stageWhileWalking(h)
+        val api = FakeCloudApi(
+            stagedError = EchoApiError.UploadStale("upload_expired"),
+            polls = ArrayDeque(listOf(complete())),
+        )
+        val vm = h.vm(api)
+        advanceUntilIdle()
+
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
+        assertNull(h.drafts.loadReadyStagedRecord("draft-1"), "the dead sessions are forgotten")
+        val (_, upload, _) = api.jobCreates.single()
+        assertEquals("upload-1", upload, "a normal single-session job")
+        assertTrue(api.puts.map { it.id }.containsAll(listOf("kf_n1_0", "clip_n1")), "everything was sent again")
+    }
+
+    @Test
+    fun declineDeletesWhatWasStagedWhileWalkingAndThenLeaves() = runTest(dispatcher) {
+        val h = harness()
+        stageWhileWalking(h)
+        val api = FakeCloudApi()
+        val vm = h.vm(api)
+        advanceUntilIdle()
+        var left = false
+
+        vm.decline { left = true }
+        advanceUntilIdle()
+
+        assertEquals(listOf("walk-1", "walk-2"), api.deletes)
+        assertNull(h.drafts.loadReadyStagedRecord("draft-1"))
+        assertTrue(left)
+    }
+
+    @Test
+    fun declineLeavesEvenWhenTheDeleteFailsAndKeepsTheRecordForTheTtl() = runTest(dispatcher) {
+        val h = harness()
+        stageWhileWalking(h)
+        val api = FakeCloudApi(uploadDeleteError = EchoApiError.Server(500, "boom"))
+        val vm = h.vm(api)
+        advanceUntilIdle()
+        var left = false
+
+        vm.decline { left = true }
+        advanceUntilIdle()
+
+        assertTrue(left, "a failed delete never traps the user on this screen")
+        assertNotNull(h.drafts.loadReadyStagedRecord("draft-1"))
     }
 
     @Test
