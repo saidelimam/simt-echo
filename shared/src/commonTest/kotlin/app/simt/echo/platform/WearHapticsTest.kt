@@ -54,4 +54,15 @@ class WearHapticsTest {
         haptics.play(HapticPattern.TICK)
         assertTrue(played)
     }
+
+    @Test
+    fun mirrorReceivesSameCues() {
+        val mirrored = mutableListOf<HapticPattern>()
+        val local = object : Haptics {
+            override fun play(pattern: HapticPattern) = Unit
+        }
+        val haptics = WearMirroringHaptics(local) { mirrored += it }
+        for (pattern in HapticPattern.entries) haptics.play(pattern)
+        assertEquals(HapticPattern.entries.toList(), mirrored)
+    }
 }
