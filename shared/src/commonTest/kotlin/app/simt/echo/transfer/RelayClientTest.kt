@@ -11,6 +11,10 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -97,5 +101,40 @@ class RelayClientTest {
             )
         })
         assertFailsWith<IllegalStateException> { api.download("ZZZZZZ") }
+    }
+
+    @Test
+    fun uploadEmitsProgressEndingAtTotal() = runTest {
+        val sealed = byteArrayOf(69, 67, 88, 49, 1, 2, 3)
+        val api = client({ _ ->
+            respond(
+                """{"ok":true,"code":"ABC234","expiresAt":123}""",
+                HttpStatusCode.OK,
+                headersOf(HttpHeaders.ContentType, "application/json"),
+            )
+        })
+        // Undispatched: subscribed before the upload can emit anything.
+        val done = async(start = CoroutineStart.UNDISPATCHED) {
+            api.progress.filter { it.isComplete }.first()
+        }
+        api.upload(sealed)
+        val progress = done.await()
+        assertEquals(sealed.size.toLong(), progress.totalBytes)
+        assertEquals(sealed.size.toLong(), progress.bytesSent)
+    }
+
+    @Test
+    fun downloadEmitsProgressEndingAtTotal() = runTest {
+        val stored = byteArrayOf(69, 67, 88, 49, 9, 8, 7)
+        val api = client({ _ ->
+            respond(stored, HttpStatusCode.OK)
+        })
+        val done = async(start = CoroutineStart.UNDISPATCHED) {
+            api.progress.filter { it.isComplete }.first()
+        }
+        assertContentEquals(stored, api.download("ABC234"))
+        val progress = done.await()
+        assertEquals(stored.size.toLong(), progress.totalBytes)
+        assertEquals(stored.size.toLong(), progress.bytesSent)
     }
 }

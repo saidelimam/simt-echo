@@ -6,9 +6,11 @@ import app.simt.echo.data.RouteRepository
 import app.simt.echo.platform.Endpoint
 import app.simt.echo.platform.FileSharing
 import app.simt.echo.platform.PeerTransport
+import app.simt.echo.platform.TransferProgress
 import app.simt.echo.transfer.QrPayload
 import app.simt.echo.transfer.TransferService
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -44,6 +46,9 @@ class ReceiveViewModelTest {
         var servedPayload: ByteArray? = null
         var servedToken: String? = null
         var fetches = 0
+        val progressFlow = MutableSharedFlow<TransferProgress>(extraBufferCapacity = 64)
+
+        override val progress: kotlinx.coroutines.flow.Flow<TransferProgress> get() = progressFlow
 
         override suspend fun offer(payload: ByteArray, token: String): Endpoint {
             servedPayload = payload
@@ -54,7 +59,11 @@ class ReceiveViewModelTest {
         override suspend fun fetch(endpoint: Endpoint, token: String): ByteArray {
             fetches++
             check(token == servedToken) { "token mismatch" }
-            return servedPayload ?: error("nothing served")
+            val bytes = servedPayload ?: error("nothing served")
+            val total = bytes.size.toLong()
+            progressFlow.emit(TransferProgress(0L, total))
+            progressFlow.emit(TransferProgress(total, total))
+            return bytes
         }
 
         override fun stopOffer() = Unit
@@ -310,5 +319,42 @@ class ReceiveViewModelTest {
         assertNull(vm.ui.value.savedRouteId)
         assertNull(vm.ui.value.preview)
         assertNull(vm.ui.value.error)
+    }
+
+    @Test
+    fun fetchSurfacesProgressEndingAtTotal() = runTest(dispatcher) {
+        val setup = setup()
+        val offer = setup.serviceA.offer(Fixtures.L_ROUTE.routeId)
+        val vm = ReceiveViewModel(setup.serviceB, FakeFileSharing(), nowMs = { 9_000L })
+        advanceUntilIdle()
+        assertNull(vm.ui.value.progress)
+
+        vm.onScanned(offer.qrUri)
+        advanceUntilIdle()
+
+        // The preview landed and the measured flow ended exactly at total.
+        assertNotNull(vm.ui.value.preview)
+        val progress = vm.ui.value.progress
+        assertNotNull(progress)
+        assertTrue(progress.totalBytes > 0L)
+        assertEquals(progress.totalBytes, progress.bytesSent)
+        assertTrue(progress.isComplete)
+        assertTrue(vm.ui.value.bytesPerSecond >= 0.0)
+    }
+
+    @Test
+    fun rescanClearsProgress() = runTest(dispatcher) {
+        val setup = setup()
+        val offer = setup.serviceA.offer(Fixtures.L_ROUTE.routeId)
+        val vm = ReceiveViewModel(setup.serviceB, FakeFileSharing(), nowMs = { 9_000L })
+        advanceUntilIdle()
+        vm.onScanned(offer.qrUri)
+        advanceUntilIdle()
+        assertNotNull(vm.ui.value.progress)
+
+        vm.rescan()
+
+        assertNull(vm.ui.value.progress)
+        assertEquals(0.0, vm.ui.value.bytesPerSecond)
     }
 }

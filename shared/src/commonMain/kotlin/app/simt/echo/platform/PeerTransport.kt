@@ -28,4 +28,14 @@ interface PeerTransport {
      * observe downloads keep compiling without pretending they can.
      */
     val served: Flow<Unit> get() = emptyFlow()
+
+    /**
+     * Additive byte-count progress (W13-14): emits [TransferProgress] as
+     * bytes move in the active direction — served on the offering phone,
+     * received on the fetching phone. Monotonic per transfer, ends at
+     * ([TransferProgress.totalBytes], itself). Defaults to never emitting
+     * so fakes and stubs that cannot observe chunk flow keep compiling.
+     * Wire format, keys and tokens are untouched.
+     */
+    val progress: Flow<TransferProgress> get() = emptyFlow()
 }

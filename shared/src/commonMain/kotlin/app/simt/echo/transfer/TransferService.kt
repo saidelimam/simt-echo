@@ -8,7 +8,10 @@ import app.simt.echo.model.Asset
 import app.simt.echo.model.BundleBody
 import app.simt.echo.platform.Endpoint
 import app.simt.echo.platform.PeerTransport
+import app.simt.echo.platform.TransferProgress
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.merge
 import okio.Path
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
@@ -243,6 +246,16 @@ class TransferService(
 
     /** Re-emits the transport's per-download signal (W2-04 Share "Sent ✓"). */
     val served: Flow<Unit> get() = transport.served
+
+    /**
+     * Forwards byte-count progress (W13-14) from whichever path is active —
+     * LAN transport or relay. Monotonic per transfer, ends at total; the
+     * wire format, keys and tokens are untouched.
+     */
+    val progress: Flow<TransferProgress> get() = merge(
+        transport.progress,
+        relay?.progress ?: emptyFlow(),
+    )
 
     private fun collectAssets(
         routeId: String,

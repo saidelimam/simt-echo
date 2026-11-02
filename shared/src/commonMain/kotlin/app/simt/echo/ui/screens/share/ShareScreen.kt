@@ -39,6 +39,7 @@ import app.simt.echo.ui.components.CosmosPrimaryButton
 import app.simt.echo.ui.components.CosmosSecondaryButton
 import app.simt.echo.ui.components.CosmosTertiaryButton
 import app.simt.echo.ui.components.StatusChip
+import app.simt.echo.ui.components.TransferParticles
 import app.simt.echo.ui.copy.UNTITLED_WALK
 import app.simt.echo.ui.copy.createdCopy
 import app.simt.echo.ui.copy.expiryCopy
@@ -126,6 +127,16 @@ fun ShareScreen(
             ui.sent -> StatusChip(text = "Sent ✓")
             qrUri != null -> StatusChip(text = "Waiting for the other phone…")
             else -> StatusChip(text = "Starting offer…")
+        }
+        // W13-14: particle flow between the two phones, driven only by
+        // measured bytes — frozen until the first byte moves.
+        val progress = ui.progress
+        if (progress != null) {
+            TransferParticles(
+                progress = progress,
+                bytesPerSecond = ui.bytesPerSecond,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
         if (error != null && qrUri == null) {
             CosmosPrimaryButton(

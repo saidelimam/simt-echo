@@ -6,6 +6,9 @@ import app.simt.echo.platform.ECHO_MIME
 import app.simt.echo.platform.FileSharing
 import app.simt.echo.platform.HapticPattern
 import app.simt.echo.platform.Haptics
+import app.simt.echo.platform.TransferProgress
+import app.simt.echo.platform.bytesPerSecond
+import app.simt.echo.platform.currentEpochMs
 import app.simt.echo.transfer.ExpiryOption
 import app.simt.echo.transfer.ExportItem
 import app.simt.echo.transfer.ExportSelection
@@ -15,6 +18,7 @@ import app.simt.echo.transfer.TransferService
 import app.simt.echo.ui.copy.shareErrorCopy
 import app.simt.echo.ui.copy.shareExportErrorCopy
 import app.simt.echo.ui.copy.shareUpdateErrorCopy
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -38,6 +42,13 @@ data class ShareUiState(
     val selection: ExportSelection = ExportSelection(),
     /** Honest summary of everything the bundle carries. */
     val summary: ExportSummary? = null,
+    /**
+     * Live byte progress of the transfer in flight (W13-14); null before
+     * any byte moves. Drives the particle flow — never synthesised.
+     */
+    val progress: TransferProgress? = null,
+    /** Measured bytes/s behind [progress]; 0 means frozen light. */
+    val bytesPerSecond: Double = 0.0,
 )
 
 /** Plan copy for the W2-07 plain-file export warning. */
@@ -51,12 +62,27 @@ class ShareViewModel(
     private val service: TransferService,
     private val haptics: Haptics,
     private val sharing: FileSharing,
+    private val nowMs: () -> Long = { currentEpochMs() },
 ) : ViewModel() {
 
     private val _ui = MutableStateFlow(ShareUiState())
     val ui: StateFlow<ShareUiState> = _ui.asStateFlow()
 
+    private var lastProgress: TransferProgress? = null
+    private var lastProgressMs: Long = 0L
+
     init {
+        // Undispatched: subscribed before any offer can move bytes, so a
+        // transport that emits without suspending loses nothing.
+        viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            service.progress.collect { emitted ->
+                val now = nowMs()
+                val rate = lastProgress?.let { bytesPerSecond(it, lastProgressMs, emitted, now) } ?: 0.0
+                lastProgress = emitted
+                lastProgressMs = now
+                _ui.update { it.copy(progress = emitted, bytesPerSecond = rate) }
+            }
+        }
         viewModelScope.launch {
             try {
                 val items = service.describeExport(routeId)
@@ -111,9 +137,18 @@ class ShareViewModel(
 
     private fun reoffer(selection: ExportSelection) {
         // Clear the stale (superset) QR + sent state before re-offering.
+        clearProgress()
         val summary = runCatching { service.summaryFor(routeId, selection) }.getOrNull()
         _ui.update {
-            it.copy(selection = selection, summary = summary, qrUri = null, sent = false, error = null)
+            it.copy(
+                selection = selection,
+                summary = summary,
+                qrUri = null,
+                sent = false,
+                error = null,
+                progress = null,
+                bytesPerSecond = 0.0,
+            )
         }
         viewModelScope.launch {
             try {
@@ -133,7 +168,8 @@ class ShareViewModel(
      */
     fun useInternetRelay() {
         if (_ui.value.relayOffered) return
-        _ui.update { it.copy(qrUri = null, sent = false, error = null) }
+        clearProgress()
+        _ui.update { it.copy(qrUri = null, sent = false, error = null, progress = null, bytesPerSecond = 0.0) }
         viewModelScope.launch {
             try {
                 val offer = service.offer(routeId, useRelay = true, selection = _ui.value.selection)
@@ -188,7 +224,8 @@ class ShareViewModel(
      */
     fun retryOffer() {
         if (_ui.value.qrUri != null) return
-        _ui.update { it.copy(error = null, sent = false) }
+        clearProgress()
+        _ui.update { it.copy(error = null, sent = false, progress = null, bytesPerSecond = 0.0) }
         viewModelScope.launch {
             try {
                 val selection = _ui.value.selection
@@ -221,6 +258,12 @@ class ShareViewModel(
      */
     fun stop() {
         service.stopOffer()
+    }
+
+    /** Drops measured progress so a new offer starts from frozen light. */
+    private fun clearProgress() {
+        lastProgress = null
+        lastProgressMs = 0L
     }
 
     override fun onCleared() {
