@@ -222,7 +222,7 @@ with device model + build SHA. No slice is Complete on a partial pass.
 | W7-10 | Complete | Corrupt/missing storage never crashes startup or screens | F (T) | A | W7-02 | f73c967d4b4a7fbaa816a8c3697ec266ecb18683 |
 | W7-11 | Complete | Repo truth: README, tracker states, stale scaffolding removed | L (F) | F | W7-01 | 72c8c1cbde400ddbf19614a5e03e9d7b7a495fdf |
 | W7-12 | Complete | Wave 7 exit gate: offline core loop proven on one device | S | F | W7-09, W7-10, W7-11 | 8d15207ab7e29fa08ce1ddb4cfdd6f94417bd556 |
-| W8-01 | Queued | Cosmos adoption freeze (tokens, accents, non-adoptions) | S | A | W7-12 | — |
+| W8-01 | Complete | Cosmos adoption freeze (tokens, accents, non-adoptions) | S | A | W7-12 | c2f98799ff0c95aceab4c414043c202067cd785b |
 | W8-02 | Queued | Cosmos tokens & theme in code + contrast gate | F (T) | E | W8-01 | — |
 | W8-03 | Queued | Cosmos atmosphere: background, canopy, motion tiers | T | E | W8-02 | — |
 | W8-04 | Queued | Cosmos component library (commands, fields, dialogs, states) | F (T) | E | W8-02, W8-03 | — |
@@ -243,7 +243,7 @@ with device model + build SHA. No slice is Complete on a partial pass.
 | W9-07 | Queued | Local model proven on device/LAN — or claims removed | T (S) | D | W9-02 | — |
 | W9-08 | Queued | Wear module restored; paired-watch haptic proof | F (T) | F | W7-12 | — |
 | W9-09 | Queued | Security & privacy production audit | S | D | W9-01, W9-03 | — |
-| W9-10 | Queued | Release engineering: CI, signing, versioned release build | F (S) | A | W7-02 | — |
+| W9-10 | Complete | Release engineering: CI, signing, versioned release build | F (S) | A | W7-02 | 9a229529ca6ab1ee8499bf8b9c48fd4b861cca8d |
 | W9-11 | Queued | First-run, icon, splash, screenshots in Cosmos | L (T) | E | W8-12 | — |
 | W9-12 | Queued | MVP v1 release gate (README, demo, limitations, APK) | S | F | W9-02, W9-04, W9-05, W9-06, W9-09, W9-10, W9-11 | — |
 
