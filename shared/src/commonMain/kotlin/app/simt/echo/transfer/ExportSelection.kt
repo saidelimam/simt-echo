@@ -48,6 +48,15 @@ const val LANDMARK_TEXT_DISCLOSURE =
 const val PERCEPTION_DISCLOSURE =
     "On-device perception fingerprints (if recorded) travel inside this bundle under the same encryption and expiry."
 
+/**
+ * Disclosure (W11-04): the on-device privacy pre-filter. Frames showing
+ * faces are left out before upload, and per-frame quality flags travel in
+ * the manifest so the worker skips bad frames before any SAM spend.
+ * Minimal and honest: it states the exclude behavior, nothing more.
+ */
+const val FACE_FILTER_DISCLOSURE =
+    "Frames showing faces are left out before upload."
+
 /** One toggle row in the export preview sheet. */
 data class ExportItem(
     /** Asset id (`start` sentinel for the start photo, else crop asset id). */

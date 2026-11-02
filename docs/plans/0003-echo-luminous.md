@@ -227,8 +227,8 @@ No slice is Complete on a partial pass or on unit evidence for a device claim.
 | W10-08 | Complete | Turn haptics emitted (LEFT/RIGHT/U_TURN) | T (S) | C | — | 3d4cb54584a6f3712368799dcbb1d67ce8852e42 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.nav.NavigatorTest" --tests "app.simt.echo.ui.screens.navigate.NavigateViewModelTest" |
 | W11-01 | Complete | Glimpse ledger: on-device frame quality per 0.5 m | L (T) | B | W10-03 | 5919d24ef85a89bacc523b4e52adfd771fe27b8f |
 | W11-02 | Complete | Approach strips + ledger keyframes (no video seeking) | T (S) | B | W11-01 | 0d4985cebc70e9c90bdacf858e1ff35627f87bb3 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.capture.ApproachStripTest" --tests "app.simt.echo.media.MediaToolsTest" |
-| W11-03 | Queued | Clip forge: 12-frame 480 p strips, exact frame↔distance map | F (T) | B | W11-02 | — |
-| W11-04 | Queued | On-device privacy pre-filter (faces, blur) before upload | T (S) | B | W11-02 | — |
+| W11-03 | Complete | Clip forge: 12-frame 480 p strips, exact frame↔distance map | F (T) | B | W11-02 | f4b0699a9c9352861dbdf66a00a517f930c98857 |
+| W11-04 | Complete | On-device privacy pre-filter (faces, blur) before upload | T (S) | B | W11-02 | 6bfb21577923e1beb440f22ec82c9eea9a5adea9 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.capture.FacePrivacyTest" --tests "app.simt.echo.media.ManifestFrameFlagsTest" |
 | W11-05 | Complete | Worker intake v1.1: content-addressed resumable uploads | F (S) | D | W10-06 | b74143be9eb7030b20667f25fe1e47397bdb0faa |
 | W11-06 | Complete | Worker SAM Lens: per-call steps, cache, governor, ladder | T (S) | D | W10-06, W11-07 | 539e885070fb40c75f860523d416f7d52784aa9e |
 | W11-07 | Complete | SAM live probe: multi-phrase, strip clips, SSE hardening | T (S) | D | W10-06 | d7c988df1727df6ca86f48e64ec7b92f3826e62c |
@@ -238,8 +238,8 @@ No slice is Complete on a partial pass or on unit evidence for a device claim.
 | W12-01 | Complete | Heading quality: stillness, gyro-bias, quality score | S | C | W10-02 | 44cb4fd3fb25ac23b721146a323313827852be13 |
 | W12-02 | Complete | Ghost filter: along-route particle filter behind a flag | S | C | W12-01, W10-08, W10-05 | 5fa18caece1cead41ce6a0bc8b27811dac21f2b1 · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.nav.*" |
 | W12-03 | Complete | Self-calibrating stride from anchored legs | T (S) | C | W12-02 | 037139c25ebbb8b8ace828500eb950745570955f · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.nav.StrideLearnerTest" --tests "app.simt.echo.data.ConfigRepositoryTest" |
-| W12-04 | Queued | Magnetic signature capture + DTW observation (P1) | T (S) | C | W12-02 | — |
-| W12-05 | Queued | Visual fingerprints: capture, match, "That's it?" | T (S) | C | W12-02, W11-02 | — |
+| W12-04 | Complete | Magnetic signature capture + DTW observation (P1) | T (S) | C | W12-02 | 065bcee33eaf95f71d6bde9ad2891314d2b09d35 |
+| W12-05 | Complete | Visual fingerprints: capture, match, "That's it?" | T (S) | C | W12-02, W11-02 | 3790205bb6e17e6b530a96b61678f88d56d5d3bc |
 | W12-06 | Queued | Lost → Relock (global re-spread, turn-signature DTW) | T (S) | C | W12-05 | — |
 | W12-07 | Complete | Route Health score + nudges (pure) | L (T) | C | W10-05 | 75e44eaa179938655397ebf919ac3bbe2f7061f3 |
 | W12-08 | Complete | Live level awareness (barometer, stairs vs lift) | T (S) | C | W12-02 | 83993aea57a0880855773ad68c7bccc56df1874f · test: ./gradlew :shared:testAndroidHostTest --tests "app.simt.echo.nav.LevelAwarenessTest" --tests "app.simt.echo.nav.NavigatorTest" |
