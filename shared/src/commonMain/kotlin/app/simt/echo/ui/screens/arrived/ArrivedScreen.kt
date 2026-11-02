@@ -38,7 +38,8 @@ import app.simt.echo.ui.copy.UNTITLED_WALK
  * — destination, time, distance, confirmations — with Done. The run's
  * stats were written by Navigate on arrival (W4-01); the §11 field-trial
  * form lives behind the "Field trial details" disclosure: still saved,
- * no longer the screen (M4).
+ * no longer the screen (M4). W13-11: the success mark is the arrival
+ * bloom (luminous-freeze §4).
  */
 @Composable
 fun ArrivedScreen(
@@ -80,6 +81,7 @@ fun ArrivedScreen(
             body = summary,
             actionLabel = "Done",
             onAction = onDone,
+            hero = { ArrivalBloom() },
             modifier = Modifier.fillMaxWidth(),
         )
         if (trial != null && trials != null) {
