@@ -135,9 +135,6 @@ half4 main(float2 fc) {
 }
 """
 
-/** Low-pass factor for gravity tilt (≈ 2 Hz at SENSOR_DELAY_UI). */
-private const val TILT_ALPHA = 0.12f
-
 @Composable
 actual fun rememberDeviceTilt(enabled: Boolean): State<Offset> {
     val tilt = remember { mutableStateOf(Offset.Zero) }
@@ -146,16 +143,13 @@ actual fun rememberDeviceTilt(enabled: Boolean): State<Offset> {
         val manager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
         val sensor = manager?.getDefaultSensor(Sensor.TYPE_GRAVITY)
             ?: manager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        val filter = TiltFilter()
         val listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent) {
                 val g = SensorManager.GRAVITY_EARTH
                 val x = (-event.values[0] / g).coerceIn(-1f, 1f)
                 val y = (event.values[1] / g - 0.7f).coerceIn(-1f, 1f)
-                val last = tilt.value
-                tilt.value = Offset(
-                    last.x + TILT_ALPHA * (x - last.x),
-                    last.y + TILT_ALPHA * (y - last.y),
-                )
+                filter.update(x, y)?.let { tilt.value = it }
             }
 
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
