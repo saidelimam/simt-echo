@@ -90,13 +90,14 @@ class NavigateViewModelTest {
         assertEquals(NavPhase.ARRIVED, vm.ui.value?.phase)
         assertEquals(Fixtures.L_ROUTE.routeId, arrived)
         // The acceptance criterion is the sequence, not its members. This
-        // walk turns twice (0° → 90° → 0°): each turn is approached (TICK,
-        // once per leg) and anchored (CONFIRM), then ARRIVE — nothing else.
+        // walk turns twice (0° → 90° → 0°): each turn is approached with
+        // its direction cue (RIGHT, then LEFT — W10-08 turn language, once
+        // per leg) and anchored (CONFIRM), then ARRIVE — nothing else.
         assertEquals(
             listOf(
-                HapticPattern.TICK,
+                HapticPattern.RIGHT,
                 HapticPattern.CONFIRM,
-                HapticPattern.TICK,
+                HapticPattern.LEFT,
                 HapticPattern.CONFIRM,
                 HapticPattern.ARRIVE,
             ),

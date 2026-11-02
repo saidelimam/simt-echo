@@ -157,7 +157,7 @@ class Navigator(
                         setPhase(NavPhase.APPROACH)
                         if (tickedLegIndex != legIndex) {
                             tickedLegIndex = legIndex
-                            emit(NavEvent.Haptic(HapticPattern.TICK))
+                            emit(NavEvent.Haptic(turnCueFor(target)))
                         }
                     }
                 }
@@ -197,7 +197,12 @@ class Navigator(
         emit(NavEvent.Anchor(AnchorKind.LANDMARK, target.id, dist))
         confirmAutoAdvanceProgress = null
         when {
-            target.type == NodeType.TURN -> setPhase(NavPhase.TURNING)
+            target.type == NodeType.TURN -> {
+                if (phase != NavPhase.TURNING) {
+                    setPhase(NavPhase.TURNING)
+                    emit(NavEvent.Haptic(turnCueFor(target)))
+                }
+            }
             target.type == NodeType.DESTINATION && isLastLeg -> arrive()
             else -> advanceLeg(null)
         }
@@ -319,6 +324,19 @@ class Navigator(
 
     private fun offRouteCopy(): String =
         "Off route — go back to ${anchorNode?.label ?: "the last landmark"}"
+
+    /**
+     * Turn haptic (W10-08): the approach and turning cues speak the next
+     * turn's direction; a node with no turn (straight checkpoint) keeps
+     * the neutral TICK. Geometry and phases are untouched — this only
+     * selects the pattern.
+     */
+    private fun turnCueFor(node: RouteNode?): HapticPattern = when (node?.turn) {
+        TurnDir.LEFT -> HapticPattern.LEFT
+        TurnDir.RIGHT -> HapticPattern.RIGHT
+        TurnDir.U_TURN -> HapticPattern.U_TURN
+        null -> HapticPattern.TICK
+    }
 
     /**
      * Corridor snapping (§6.4): on a straight, steady corridor the arrow
