@@ -65,6 +65,13 @@ class GhostFilter(
     private var spareValid = false
     private var spareValue = 0.0
 
+    /**
+     * Distinct stride-scale values across the particles — a diagnostic for
+     * the diversity the post-resample jitter preserves. Allocates; never
+     * call it from the update path.
+     */
+    internal fun distinctStrideCount(): Int = kA.distinct().size
+
     /** Posterior mean along-route position, metres. */
     var meanS: Double = 0.0
         private set
@@ -75,6 +82,10 @@ class GhostFilter(
 
     /** Effective sample size after the last update. */
     var effectiveN: Double = PARTICLE_COUNT.toDouble()
+        private set
+
+    /** Heading observations applied (non-zero quality) since construction. */
+    var headingObservationCount: Int = 0
         private set
 
     /** Systematic resamples performed since construction. */
@@ -99,12 +110,15 @@ class GhostFilter(
 
     /**
      * Predict per odometer delta: s += k·L + N(0, 0.05·L); b takes a
-     * 0.3°/step random walk. Non-positive deltas are a no-op. k is static
-     * per particle — it is learned implicitly when turn/anchor
-     * observations resample the matching-stride survivors.
+     * 0.3°/step random walk. Non-positive and non-finite deltas are a
+     * no-op (a NaN or infinite odometer glitch must not poison every
+     * particle). k is static per particle between resamples — it is
+     * learned implicitly when turn/anchor observations resample the
+     * matching-stride survivors, and re-diversified by the post-resample
+     * jitter.
      */
     fun predict(deltaM: Double) {
-        if (deltaM <= 0.0) return
+        if (!deltaM.isFinite() || deltaM <= 0.0) return
         val total = geometry.totalLengthM
         for (i in 0 until PARTICLE_COUNT) {
             sA[i] = (sA[i] + kA[i] * deltaM + gauss() * S_PROCESS_REL * deltaM)
@@ -136,6 +150,7 @@ class GhostFilter(
     fun observeHeading(yawPlusOffsetRad: Double, quality01: Double) {
         val kappa = KAPPA_MAX * quality01.coerceIn(0.0, 1.0)
         if (kappa <= 0.0) return
+        headingObservationCount++
         for (i in 0 until PARTICLE_COUNT) {
             val err = wrapPi(yawPlusOffsetRad + bA[i] - geometry.headingAt(sA[i]))
             wA[i] *= exp(kappa * (cos(err) - 1.0))
@@ -152,7 +167,7 @@ class GhostFilter(
     fun observeTurn(dir: TurnDir) {
         for (i in 0 until PARTICLE_COUNT) {
             val nodeS = geometry.nearestTurnS(sA[i], dir)
-            val like = if (nodeS == null) {
+            val like = if (nodeS.isNaN()) {
                 TURN_FLOOR
             } else {
                 val d = sA[i] - nodeS
@@ -351,10 +366,13 @@ class GhostFilter(
             tmpB[i] = bA[j]
             u += step
         }
+        // Resampling duplicates survivors; without jitter the static k and
+        // b collapse to a handful of distinct values within seconds and
+        // the filter can no longer learn stride or heading bias.
         for (i in 0 until PARTICLE_COUNT) {
             sA[i] = tmpS[i]
-            kA[i] = tmpK[i]
-            bA[i] = tmpB[i]
+            kA[i] = tmpK[i] + gauss() * K_JITTER_SD
+            bA[i] = tmpB[i] + gauss() * B_JITTER_SD_RAD
             wA[i] = 1.0 / PARTICLE_COUNT
         }
         resampleCount++
@@ -399,6 +417,12 @@ class GhostFilter(
         /** Heading-bias random walk per predict, 0.3° in radians. */
         val B_RW_RAD = 0.3 * PI / 180.0
 
+        /** Post-resample stride-scale jitter σ (keeps k diverse). */
+        const val K_JITTER_SD = 0.005
+
+        /** Post-resample heading-bias jitter σ, 0.2° in radians. */
+        val B_JITTER_SD_RAD = 0.2 * PI / 180.0
+
         /** Von Mises κ at full heading quality (q = 1). */
         const val KAPPA_MAX = 8.0
 
@@ -408,7 +432,10 @@ class GhostFilter(
         /** Turn likelihood floor far from any matching node. */
         const val TURN_FLOOR = 1e-4
 
-        /** Turn-signature DTW σ, radians (W12-06): generous on purpose — */
+        /**
+         * Turn-signature DTW σ, radians (W12-06): generous on purpose, so
+         * a single noisy window reads as a hint rather than a verdict.
+         */
         const val RELOCK_SIGMA_RAD = 0.6
 
         /** Sakoe-Chiba band half-width of the turn-signature DTW, in steps. */

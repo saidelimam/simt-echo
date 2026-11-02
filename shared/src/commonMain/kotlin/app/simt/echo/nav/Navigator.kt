@@ -82,6 +82,12 @@ class Navigator(
     /** Previous raw odometer reading, for Ghost per-update deltas. */
     private var prevOdoM: Double = 0.0
 
+    /** Raw odometer at the last Ghost heading observation (see [HEADING_OBS_STEP_M]). */
+    private var lastHeadingObsOdo: Double = 0.0
+
+    /** Heading observations the Ghost filter has applied; 0 on LINEAR. */
+    internal val ghostHeadingObservations: Int get() = ghost?.headingObservationCount ?: 0
+
     /**
      * Raw odometer value where the current leg began. The overshoot guard
      * below reads this on both engines: overshoot compares metres actually
@@ -135,7 +141,6 @@ class Navigator(
      * observation so each metre feeds the filter at most once.
      */
     private var relockStartOdo: Double = 0.0
-    private var relockStartNs: Long = 0L
     private val relockTrail = mutableListOf<RelockSample>()
     private var lastSignatureBucket: Int = -1
 
@@ -147,9 +152,6 @@ class Navigator(
      */
     private var foundNearLabel: String? = null
     private var foundAtS: Double = Double.NaN
-
-    /** Timestamp of the last motion update (relock window clock). */
-    private var lastMotionTNs: Long = 0L
 
     /**
      * Live level awareness (W12-08): relative-pressure Δh from the
@@ -239,7 +241,6 @@ class Navigator(
     private fun onMotion(update: MotionUpdate) {
         dist = update.distanceM
         yaw = update.yawRad
-        lastMotionTNs = update.tNs
         if (phase != NavPhase.WALK && phase != NavPhase.APPROACH &&
             phase != NavPhase.TURNING && phase != NavPhase.CONFIRM &&
             phase != NavPhase.RELOCKING
@@ -251,7 +252,14 @@ class Navigator(
             val delta = dist - prevOdoM
             prevOdoM = dist
             if (delta > 0.0) it.predict(delta)
-            it.observe(Observation.Heading(yaw + yawOffset, update.headingQuality))
+            // The heading likelihood is applied about once per step, in
+            // step with predict. Motion updates arrive at ~100 Hz; folding
+            // each in would count the same heading ~50x per stride and
+            // resample on every one.
+            if (dist - lastHeadingObsOdo >= HEADING_OBS_STEP_M) {
+                lastHeadingObsOdo = dist
+                it.observe(Observation.Heading(yaw + yawOffset, update.headingQuality))
+            }
         }
         if (foundAtS.isFinite() && absoluteS - foundAtS >= FOUND_COPY_EXPIRE_M) {
             foundNearLabel = null
@@ -486,7 +494,6 @@ class Navigator(
         fingerprintPrompt = null
         g.respreadUniform()
         relockStartOdo = dist
-        relockStartNs = lastMotionTNs
         relockTrail.clear()
         lastSignatureBucket = (dist / RELOCK_SIGNATURE_STEP_M).toInt()
         emit(NavEvent.Haptic(HapticPattern.WARN))
@@ -884,6 +891,13 @@ class Navigator(
     private data class RelockSample(val d: Double, val yaw: Double, val tNs: Long)
 
     companion object {
+        /**
+         * Odometer metres between Ghost heading observations: about one
+         * step, so the likelihood is applied once per predict-sized stride
+         * instead of once per ~100 Hz motion update.
+         */
+        const val HEADING_OBS_STEP_M = 0.5
+
         /** Relock lock criterion: σ below 3 m announces "Found you". */
         const val RELOCK_SIGMA_M = 3.0
 

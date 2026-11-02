@@ -77,38 +77,60 @@ class GhostFilterTest {
         assertEquals(0, filter.resampleCount)
     }
 
+    @Test
+    fun nonFiniteOdometerDeltasAreIgnored() {
+        val filter = GhostFilter(Fixtures.L_ROUTE, seed = 1L)
+        filter.reset(5.0)
+        val before = filter.meanS
+        filter.predict(Double.NaN)
+        filter.predict(Double.POSITIVE_INFINITY)
+        filter.predict(Double.NEGATIVE_INFINITY)
+        assertEquals(before, filter.meanS)
+        assertTrue(filter.sigma.isFinite(), "sigma was ${filter.sigma}")
+    }
+
+    @Test
+    fun strideAndBiasStayDiverseThroughSixtySecondsOfHeadingOnlyUpdates() {
+        // 60 s at 10 Hz down the straight opening leg with a heading offset
+        // the prior only partly covers: the selection pressure on b makes
+        // the filter resample again and again. Without post-resample
+        // jitter k collapses onto a few survivors.
+        val filter = GhostFilter(Fixtures.L_ROUTE, seed = 11L)
+        filter.reset(0.0)
+        repeat(600) {
+            filter.predict(0.03)
+            filter.observeHeading(1.0, 1.0)
+        }
+        assertTrue(filter.resampleCount > 30, "scenario never resampled (${filter.resampleCount})")
+        assertTrue(
+            filter.distinctStrideCount() >= 10,
+            "only ${filter.distinctStrideCount()} distinct k after ${filter.resampleCount} resamples",
+        )
+    }
+
     /**
      * Timing note for the ≤ 1 ms/update budget (plan §4): 256 particles,
      * predict + heading observe per update, measured with a monotonic
-     * clock on the host. The assert is a 5× loose trip-wire against a
-     * real regression — the recorded numbers below are the evidence, and
-     * the on-device gate stays with W14-01 on named hardware.
+     * clock on the host. The bound is the budget itself: the host JVM runs
+     * this in tens of microseconds, so it fails only on a real regression
+     * (an allocation or a quadratic loop in the update path); the
+     * on-device gate stays with W14-01 on named hardware.
      */
     @Test
-    fun updateTimingNote() {
+    fun updateStaysInsideTheOneMillisecondBudget() {
         val filter = GhostFilter(Fixtures.L_ROUTE, seed = 3L)
         filter.reset(0.0)
-        repeat(50) {
+        repeat(200) {
             filter.predict(0.05)
             filter.observeHeading(0.0, 1.0)
         }
-        val start = TimeSource.Monotonic.markNow()
-        var maxNs = 0L
         val updates = 300
+        val start = TimeSource.Monotonic.markNow()
         repeat(updates) { i ->
-            val tick = TimeSource.Monotonic.markNow()
             filter.predict(0.05)
             filter.observeHeading(if (i % 2 == 0) 0.0 else 0.01, 1.0)
-            val took = tick.elapsedNow().inWholeNanoseconds
-            if (took > maxNs) maxNs = took
         }
-        val totalNs = start.elapsedNow().inWholeNanoseconds
-        val avgUs = totalNs.toDouble() / updates / 1_000.0
-        println(
-            "W12-02 GhostFilter timing (256 particles, host JVM): " +
-                "avg=${"%.1f".format(avgUs)} µs/update, " +
-                "max=${"%.1f".format(maxNs / 1_000.0)} µs/update over $updates updates",
-        )
-        assertTrue(avgUs < 5_000.0, "avg update took $avgUs µs, budget trip-wire is 5000 µs")
+        val avgUs = start.elapsedNow().inWholeNanoseconds.toDouble() / updates / 1_000.0
+        assertTrue(avgUs < 1_000.0, "avg update took $avgUs µs, budget is 1000 µs")
     }
 }

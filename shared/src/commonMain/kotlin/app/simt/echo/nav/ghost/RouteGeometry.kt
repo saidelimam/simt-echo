@@ -67,10 +67,11 @@ class RouteGeometry(route: EchoRoute) {
 
     /**
      * Along-route position of the nearest node whose turn is [dir], or
-     * null when the route has no such node.
+     * [Double.NaN] when the route has no such node. A sentinel rather than
+     * a nullable: this runs per particle, and a `Double?` would box.
      */
-    fun nearestTurnS(s: Double, dir: TurnDir): Double? {
-        var best: Double? = null
+    fun nearestTurnS(s: Double, dir: TurnDir): Double {
+        var best = Double.NaN
         var bestDist = Double.MAX_VALUE
         for (i in turnS.indices) {
             if (turnDirs[i] != dir) continue
