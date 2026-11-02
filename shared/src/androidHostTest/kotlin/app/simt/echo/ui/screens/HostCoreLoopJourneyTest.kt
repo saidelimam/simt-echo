@@ -183,7 +183,7 @@ class HostCoreLoopJourneyTest {
         }
 
         compose.onNodeWithTag("CosmosRecord:Short hop (fixture)").performClick()
-        compose.onNodeWithText("Simulate walk").performClick()
+        compose.onNodeWithText("Simulate walk").performScrollTo().performClick()
         compose.runOnIdle {
             assertEquals(
                 EchoRoute.Align("fixture-short-hop", simulate = true),

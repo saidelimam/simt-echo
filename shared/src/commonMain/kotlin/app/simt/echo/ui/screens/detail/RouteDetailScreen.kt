@@ -15,7 +15,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.transfer.CloudApi
@@ -24,6 +26,8 @@ import app.simt.echo.ui.components.CosmosPrimaryButton
 import app.simt.echo.ui.components.CosmosSecondaryButton
 import app.simt.echo.ui.copy.MISSING_ROUTE_ERROR
 import app.simt.echo.ui.copy.UNTITLED_WALK
+import app.simt.echo.ui.sigil.RouteSigil
+import app.simt.echo.ui.sigil.routeSigil
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -85,12 +89,28 @@ fun RouteDetailScreen(
             CosmosPrimaryButton(label = "Back home", onClick = onBack, modifier = Modifier.fillMaxWidth())
             return@Column
         }
-        Text(text = route.name.ifEmpty { UNTITLED_WALK }, style = MaterialTheme.typography.titleLarge)
-        Text(
-            text = "${route.totalLengthM.roundToInt()} m · ${route.nodes.size} nodes · " +
-                "${route.landmarks.size} landmarks",
-            style = MaterialTheme.typography.bodyLarge,
-        )
+        // Hero (W13-03): the route's own sigil traces itself in above its
+        // name — the glyph is decorative, the name stays the identifier.
+        val sigil = remember(route) { routeSigil(route) }
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            RouteSigil(geometry = sigil, sigilSize = 144.dp, trace = true)
+            Text(
+                text = route.name.ifEmpty { UNTITLED_WALK },
+                style = MaterialTheme.typography.headlineSmall,
+                textAlign = TextAlign.Center,
+            )
+            Text(
+                text = "${route.totalLengthM.roundToInt()} m · ${route.nodes.size} nodes · " +
+                    "${route.landmarks.size} landmarks",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+        }
         route.landmarks.forEach { landmark ->
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(text = landmark.title, style = MaterialTheme.typography.titleMedium)
@@ -104,7 +124,8 @@ fun RouteDetailScreen(
             onClick = { onNavigate(routeId) },
             modifier = Modifier.fillMaxWidth(),
         )
-        CosmosPrimaryButton(
+        // One Ember primary per region (Cosmos C12): Navigate leads, Share follows.
+        CosmosSecondaryButton(
             label = "Share",
             onClick = { onShare(routeId) },
             modifier = Modifier.fillMaxWidth(),

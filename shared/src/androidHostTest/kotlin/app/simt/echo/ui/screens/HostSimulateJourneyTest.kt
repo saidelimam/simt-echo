@@ -116,7 +116,7 @@ class HostSimulateJourneyTest {
         // W8-06: saved walks are Cosmos records — click the record row,
         // same RouteDetail destination as the pre-Cosmos button.
         compose.onNodeWithTag("CosmosRecord:L route (fixture)").performClick()
-        compose.onNodeWithText("Navigate").performClick()
+        compose.onNodeWithText("Navigate").performScrollTo().performClick()
 
         compose.runOnIdle {
             assertEquals(
