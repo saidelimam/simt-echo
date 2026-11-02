@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- W4-04: launch theme doubles as the splash — near-black window
-         background shows until the shared Compose UI draws first frame. -->
+    <!-- W9-11: launch theme doubles as the splash — freeze void shows
+         edge-to-edge (window + status + navigation) until the shared
+         Compose UI draws first frame. -->
     <style name="Theme.Echo" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/echo_launcher_bg</item>
+        <item name="android:statusBarColor">@color/echo_launcher_bg</item>
+        <item name="android:navigationBarColor">@color/echo_launcher_bg</item>
     </style>
 </resources>

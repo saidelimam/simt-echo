@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- W4-04: launcher background, the near-black ECHO dark background. -->
-    <color name="echo_launcher_bg">#0B0D10</color>
+    <!-- W9-11: launcher background is freeze void #120A14 (was the
+         pre-Cosmos near-black #0B0D10). The splash window shows this. -->
+    <color name="echo_launcher_bg">#120A14</color>
 </resources>

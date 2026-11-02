@@ -51,10 +51,15 @@ fun HomeScreen(
     onResumeDraft: (RecoverableDraft) -> Unit = { onOpen(it.destination()) },
 ) {
     if (savedRoutes.isEmpty() && draftIds.isEmpty() && recoverableDrafts.isEmpty()) {
-        // First-run Ignition: one centred task, one primary command.
+        // First-run Ignition: one centred task, one primary command, with
+        // camera permission priming (W9-11) in the body. Presentation only:
+        // nothing requests permission from here; the Record/Receive gates
+        // ask on entry, and nothing leaves the phone until the user shares.
         CosmosEmptyState(
             title = "Walk it once. Share the way.",
-            body = "Record a short walk to share it as a guided route.",
+            body = "Record a short walk to share it as a guided route. " +
+                "Recording and scanning use the camera — nothing leaves " +
+                "this phone until you share.",
             actionLabel = "Record a walk",
             onAction = { onOpen(EchoRoute.Record()) },
             modifier = modifier.fillMaxSize(),

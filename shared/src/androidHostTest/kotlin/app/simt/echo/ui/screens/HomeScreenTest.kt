@@ -63,6 +63,10 @@ class HomeScreenTest {
         compose.onNodeWithText("Walk it once. Share the way.").assertIsDisplayed()
         // First-run Ignition: one centred task, one primary command.
         compose.onNodeWithText("Record a walk").assertIsDisplayed()
+        // W9-11: first-run permission priming — camera named before any
+        // gate asks, with the stays-on-phone promise.
+        compose.onNodeWithText("use the camera", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("until you share", substring = true).assertIsDisplayed()
         compose.onNodeWithText("Record").assertIsDisplayed()
         compose.onNodeWithText("Receive").assertIsDisplayed()
         compose.onNodeWithText("Review demo draft").assertDoesNotExist()
