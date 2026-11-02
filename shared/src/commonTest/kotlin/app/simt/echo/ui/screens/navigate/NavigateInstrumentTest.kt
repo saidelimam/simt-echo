@@ -1,6 +1,5 @@
 package app.simt.echo.ui.screens.navigate
 
-import app.simt.echo.model.NavigatorEngine
 import app.simt.echo.model.TurnDir
 import app.simt.echo.nav.NavPhase
 import app.simt.echo.nav.ghost.FingerprintPrompt
@@ -12,8 +11,8 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * W13-08 gate: the phase → instrument mapping covers all 8 [NavPhase]s
- * on both engines, and UNCERTAIN/OFF_ROUTE honesty is structural —
+ * W13-08 gate: the phase → instrument mapping covers all 8 [NavPhase]s,
+ * and UNCERTAIN/OFF_ROUTE honesty is structural —
  * σ stays visible in every phase, dashed + labelled only in UNCERTAIN.
  * Pure mapping: tiers settle to the same info (Static parity) because
  * the mapping takes no tier — animation only changes arrival, never
@@ -30,7 +29,6 @@ class NavigateInstrumentTest {
         landmarkPresent: Boolean = false,
         fingerprintPrompt: FingerprintPrompt? = null,
         relock: NavigateRelockState? = null,
-        engine: NavigatorEngine = NavigatorEngine.LINEAR,
     ) = navigateInstrumentPresentation(
         phase = phase,
         arrowRad = arrowRad,
@@ -40,24 +38,15 @@ class NavigateInstrumentTest {
         landmarkPresent = landmarkPresent,
         fingerprintPrompt = fingerprintPrompt,
         relock = relock,
-        engine = engine,
     )
 
     @Test
-    fun allEightPhasesMapOnBothEngines() {
+    fun allEightPhasesMap() {
         for (phase in NavPhase.entries) {
-            for (engine in NavigatorEngine.entries) {
-                val p = presentation(phase = phase, engine = engine)
-                when (phase) {
-                    NavPhase.ARRIVED -> assertEquals(ArrowShape.CHECK, p.arrowShape, "$phase $engine")
-                    else -> assertEquals(ArrowShape.STRAIGHT, p.arrowShape, "$phase $engine")
-                }
-                // Engine-independence: same NavUi snapshot, same instrument.
-                val other = presentation(
-                    phase = phase,
-                    engine = if (engine == NavigatorEngine.LINEAR) NavigatorEngine.GHOST else NavigatorEngine.LINEAR,
-                )
-                assertEquals(p, other, "$phase renders identically on both engines")
+            val p = presentation(phase = phase)
+            when (phase) {
+                NavPhase.ARRIVED -> assertEquals(ArrowShape.CHECK, p.arrowShape, "$phase")
+                else -> assertEquals(ArrowShape.STRAIGHT, p.arrowShape, "$phase")
             }
         }
     }
@@ -89,6 +78,10 @@ class NavigateInstrumentTest {
         val soft = listOf(0.5, 1.0, 2.0, 4.0, 8.0).map(::auraSoftnessFor)
         for (i in 1 until soft.size) assertTrue(soft[i] >= soft[i - 1], "softness monotonic")
         assertTrue(auraRadiusDpFor(100.0) <= AURA_MAX_DP, "radius clamped")
+        // The aura must fit the canvas, or every σ past the clamp draws the same disc.
+        assertTrue(AURA_MAX_DP * 2f <= AURA_CANVAS_DP, "max aura fits the canvas")
+        assertTrue(auraRadiusDpFor(0.0) < auraRadiusDpFor(3.0), "radius moves across the σ range")
+        assertTrue(auraRadiusDpFor(3.0) < auraRadiusDpFor(5.0), "radius still moves at high σ")
         assertTrue(auraSoftnessFor(100.0) <= 1f, "softness clamped")
     }
 

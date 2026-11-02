@@ -1,6 +1,5 @@
 package app.simt.echo.ui.screens.navigate
 
-import app.simt.echo.model.NavigatorEngine
 import app.simt.echo.model.TurnDir
 import app.simt.echo.nav.NavPhase
 import app.simt.echo.nav.NavUi
@@ -97,16 +96,21 @@ const val ARROW_STRAIGHT_MAX_RAD = 0.44
 /** |arrow| above this reads as a U-turn. */
 const val ARROW_UTURN_MIN_RAD = 2.36
 
-/** σ aura geometry: base radius plus per-metre growth, clamped. */
-const val AURA_BASE_DP = 116f
-const val AURA_PER_SIGMA_DP = 14f
-const val AURA_MAX_DP = 190f
+/** Side of the square instrument canvas; the aura must fit inside it. */
+const val AURA_CANVAS_DP = 200f
+
+/**
+ * σ aura geometry: base radius plus per-metre growth, clamped so the
+ * largest aura exactly fills the canvas — radius really tracks σ.
+ */
+const val AURA_BASE_DP = 72f
+const val AURA_PER_SIGMA_DP = 5f
+const val AURA_MAX_DP = AURA_CANVAS_DP / 2f
 
 /**
  * Pure phase → instrument mapping (W13-08 acceptance: covers all 8
- * [NavPhase]s on both engines). The mapping is engine-independent by
- * construction — [engine] is accepted so tests pin that LINEAR and
- * GHOST render the same instrument for the same [NavUi] snapshot.
+ * [NavPhase]s). Engine-independent by construction: it reads only the
+ * [NavUi] snapshot fields passed in, so LINEAR and GHOST render alike.
  */
 fun navigateInstrumentPresentation(
     phase: NavPhase,
@@ -117,7 +121,6 @@ fun navigateInstrumentPresentation(
     landmarkPresent: Boolean,
     fingerprintPrompt: FingerprintPrompt?,
     relock: NavigateRelockState?,
-    engine: NavigatorEngine = NavigatorEngine.LINEAR,
 ): NavigateInstrumentPresentation {
     val shape = arrowShapeFor(phase, arrowRad)
     val remaining = remainingM.coerceAtLeast(0.0)

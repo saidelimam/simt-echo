@@ -19,7 +19,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.platform.LocalDensity
@@ -33,6 +32,7 @@ import app.simt.echo.ui.components.CosmosSecondaryButton
 import app.simt.echo.ui.components.CosmosTertiaryButton
 import app.simt.echo.ui.components.DefaultOverlayLandmarkCard
 import app.simt.echo.ui.components.LandmarkCard
+import app.simt.echo.ui.components.wrapPi
 import app.simt.echo.ui.components.MaskedCropImage
 import app.simt.echo.ui.motion.LuminousSprings
 import kotlin.math.PI
@@ -77,7 +77,7 @@ fun NavigateMorphArrow(
     val animated = remember { Animatable(arrowRad) }
     LaunchedEffect(arrowRad, tier) {
         if (tier == CosmosMotionTier.FULL) {
-            val delta = wrapPiLocal(arrowRad - animated.value)
+            val delta = wrapPi(arrowRad - animated.value)
             if (delta != 0f) {
                 animated.animateTo(
                     animated.value + delta,
@@ -97,27 +97,21 @@ fun NavigateMorphArrow(
     } else {
         bendFraction01
     }
-    val auraAlpha = (if (dimChrome) 0.35f else 0.9f) * (1f - 0.5f * auraSoftness01)
-    val auraColor = color.copy(alpha = auraAlpha)
     val density = LocalDensity.current
     val auraRadiusPx = with(density) { auraRadiusDp.dp.toPx() }
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = modifier) {
         Canvas(
             modifier = Modifier
-                .size(200.dp)
+                .size(AURA_CANVAS_DP.dp)
                 .testTag(NavigateMorphArrowTag),
         ) {
-            drawCircle(color = auraColor, radius = auraRadiusPx.coerceAtMost(size.minDimension / 2f))
-            if (auraDashed) {
-                drawCircle(
-                    color = color,
-                    radius = auraRadiusPx.coerceAtMost(size.minDimension / 2f),
-                    style = Stroke(
-                        width = 3.dp.toPx(),
-                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 10f)),
-                    ),
-                )
-            }
+            drawSigmaAura(
+                color = color,
+                radiusPx = auraRadiusPx,
+                softness01 = auraSoftness01,
+                dimChrome = dimChrome,
+                dashed = auraDashed,
+            )
             when (shape) {
                 ArrowShape.U_TURN -> drawUTurn(color)
                 ArrowShape.CHECK -> drawCheck(color)
