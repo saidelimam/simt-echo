@@ -47,7 +47,7 @@ object BundleCodec {
 
     suspend fun encode(route: EchoRoute, assets: List<Asset>): ByteArray {
         // W10-05 producer gate: oversize/malformed perception never ships.
-        route.perception?.validate()
+        route.perception?.validate(route.legs.size)
         val body = EchoJson.encodeToString(
             BundleBody(route = route, assets = assets.sortedBy { it.id }),
         ).encodeToByteArray()

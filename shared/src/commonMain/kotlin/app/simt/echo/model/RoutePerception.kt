@@ -61,6 +61,8 @@ data class RoutePerception(
     /** Accent seed for the route sigil; 0 keeps the routeId-derived accent. */
     val sigilSeed: Long = 0L,
     val health: RouteHealth? = null,
+    /** Additive v2.1 data; older readers ignore this key, not the route. */
+    val parallax: ParallaxProfile? = null,
 ) {
     companion object {
         /** W10-05 size cap: the JSON encoding of a perception must fit. */
@@ -71,7 +73,7 @@ data class RoutePerception(
      * Producer gate: throws [IllegalArgumentException] on the first shape or
      * size violation. Decoders never call this — receive stays tolerant.
      */
-    fun validate(): RoutePerception {
+    fun validate(legCount: Int? = null): RoutePerception {
         fingerprints.forEach { it.validate() }
         waypointPrints.forEach {
             require(it.atDistanceM >= 0.0) {
@@ -81,6 +83,7 @@ data class RoutePerception(
         }
         magProfile?.validate()
         health?.validate()
+        parallax?.validate(legCount)
         val bytes = EchoJson.encodeToString(this).encodeToByteArray().size
         require(bytes <= MAX_BYTES) {
             "perception encodes to $bytes bytes, over the $MAX_BYTES-byte cap"
@@ -188,6 +191,6 @@ data class RouteHealth(
  * so an invalid perception can never be encoded.
  */
 fun EchoRoute.withPerception(perception: RoutePerception): EchoRoute {
-    perception.validate()
+    perception.validate(legs.size)
     return copy(schemaVersion = EchoSchemaVersion.V2, perception = perception)
 }
