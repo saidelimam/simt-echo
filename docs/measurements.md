@@ -57,3 +57,32 @@ vendor-billed cost, and total latency to this file.
   latency/cost envelope (~$0.16/route, < 2 min) is therefore still
   unmeasured and unclaimed; usage fields in `result.json` are now
   measured (vendor frames per send, real Meta time) for when it runs.
+
+## Wave 7 exit gate (W7-12, 2026-11-02) — offline core loop on emulator
+
+- Device: Android emulator `sdk_gphone64_arm64` (emulator-5554,
+  API 36.1 AVD image), fresh install (`pm clear`), build SHA `867e556`
+  + W7-12 fix-forward (CameraX parent dirs, below). No AI, single
+  device, airplane mode for the navigation leg.
+- Run: Home empty state ("Walk it once. Share the way.", no demo
+  buttons) → Record (live preview, 0:31, 1 spot) → Finish form →
+  Review → Save → RouteDetail (Navigate/Share/Simulate on a real
+  route) → Share screen (preview + QR render) → airplane on → Align
+  (reference photo matched) → Navigate (0.0 m, Leg 1 of 1, ±0.5 m
+  chip) → ARRIVED ("Destination", Done). No crash, no stuck state.
+- Route: "Gate-Walk" 0.0 m, 2 nodes, 0 landmarks (emulator has no
+  PDR motion; destination label left empty by driver mis-tap and the
+  UI showed honest fallbacks, never a raw id).
+- Initial BLOCK then fix: first run failed at Start with "Could not
+  start recording" — `ImageCapture` ENOENT because
+  `CameraXRecorder.takePhoto` handed CameraX a path in a
+  never-created `drafts/<draftId>/` dir (FileStore creates parents;
+  the Android seam did not; a fresh-install phone would hit the
+  same). Fixed in-slice (`parentFile?.mkdirs()` in `takePhoto` and
+  `startVideo`), host suite 342 green, re-ran the full loop above.
+- Verdict: **APPROVE WITH RESIDUAL RISK**. Residuals and owners:
+  emulator, not a physical device, and a 0 m route — guidance
+  quality, haptics and a real walk belong to W9-04/W9-06; dark-scheme
+  heading contrast is poor on-device (headings near-unreadable) —
+  owned by W8-02's contrast gate; "Start: Start" node-label
+  duplication — owned by W8-10. Wave 8 proceeds on this verdict.

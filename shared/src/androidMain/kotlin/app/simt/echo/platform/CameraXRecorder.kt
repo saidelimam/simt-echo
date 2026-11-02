@@ -138,6 +138,10 @@ class CameraXRecorder(
     override suspend fun takePhoto(out: Path): Path {
         val capture = imageCapture
             ?: error("takePhoto needs ImageCapture; photoFromVideo=$photoFromVideo")
+        // FileStore guarantees parent dirs for common-code writes; the
+        // CameraX seam owns the same contract (fresh draft dirs may not
+        // exist yet — W7-12 device gate: ENOENT on first photo).
+        File(out.toString()).parentFile?.mkdirs()
         return suspendCancellableCoroutine { cont ->
             capture.takePicture(
                 ImageCapture.OutputFileOptions.Builder(File(out.toString())).build(),
@@ -163,6 +167,9 @@ class CameraXRecorder(
         startEventNs = null
         val signal = CompletableDeferred<VideoRecordEvent.Finalize>()
         finalizeSignal = signal
+        // Same parent-dir contract as takePhoto above: video output lands
+        // in a possibly-fresh draft dir.
+        File(out.toString()).parentFile?.mkdirs()
         recording = output.output
             .prepareRecording(context, FileOutputOptions.Builder(File(out.toString())).build())
             .start(ContextCompat.getMainExecutor(context)) { event ->
