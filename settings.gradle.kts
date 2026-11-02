@@ -35,3 +35,5 @@ dependencyResolutionManagement {
 include(":shared")
 include(":androidApp")
 include(":wear")
+// W10-04: macrobenchmark + Baseline Profile harness (docs/perf.md).
+include(":benchmark")

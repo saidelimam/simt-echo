@@ -20,6 +20,13 @@ qrose = "1.3.1"
 zxing = "3.5.3"
 mlkit-barcode = "17.3.0"
 play-services-wearable = "20.0.1"
+# W10-04 perf harness: macrobenchmark + Baseline Profile + JankStats.
+benchmark = "1.5.0"
+baselineprofile = "1.5.0"
+profileinstaller = "1.4.0"
+metrics-performance = "1.0.0"
+uiautomator = "2.3.0"
+test-ext-junit = "1.2.1"
 junit4 = "4.13.2"
 # W6-03 headless UI gate: Robolectric runs androidMain composables on the
 # host JVM. SDK pin lags compileSdk per review 0006 NR-2 (no SDK-37
@@ -74,6 +81,13 @@ media3-extractor = { group = "androidx.media3", name = "media3-extractor", versi
 # Wear OS (W5-04 haptic mirror: MessageClient + CapabilityClient only)
 play-services-wearable = { group = "com.google.android.gms", name = "play-services-wearable", version.ref = "play-services-wearable" }
 
+# W10-04 perf harness (macrobenchmarks run on device; see docs/perf.md).
+benchmark-macro-junit4 = { group = "androidx.benchmark", name = "benchmark-macro-junit4", version.ref = "benchmark" }
+profileinstaller = { group = "androidx.profileinstaller", name = "profileinstaller", version.ref = "profileinstaller" }
+metrics-performance = { group = "androidx.metrics", name = "metrics-performance", version.ref = "metrics-performance" }
+test-ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "test-ext-junit" }
+uiautomator = { group = "androidx.test.uiautomator", name = "uiautomator", version.ref = "uiautomator" }
+
 # Unit tests
 junit-junit = { group = "junit", name = "junit", version.ref = "junit4" }
 
@@ -90,3 +104,8 @@ composeCompiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "k
 composeMultiplatform = { id = "org.jetbrains.compose", version.ref = "compose-multiplatform" }
 kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 kotlinxSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+# W10-04 perf harness: :benchmark is a com.android.test module with the
+# Baseline Profile plugin; the app consumes its output (see docs/perf.md).
+# No version: bundled with AGP on the classpath (see root build.gradle.kts).
+androidTest = { id = "com.android.test" }
+baselineprofile = { id = "androidx.baselineprofile", version.ref = "baselineprofile" }
