@@ -94,6 +94,42 @@ describe("metaResponses", () => {
     await expect(metaResponses(env, {})).rejects.toBeInstanceOf(NonRetryableError);
   });
 
+  it("cancels the response stream when an error event ends the call", async () => {
+    let cancelled = false;
+    const failed = JSON.stringify({ type: "response.failed", error: "boom" });
+    // The vendor keeps the connection open after the error event.
+    const open = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(new TextEncoder().encode(`data: ${failed}\n\n`));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    vi.stubGlobal("fetch", async () => new Response(open, { status: 200 }));
+    await expect(metaResponses(env, {})).rejects.toThrow(/boom/);
+    expect(cancelled).toBe(true);
+  });
+
+  it("fails retryably, not with a TypeError, when a 200 carries no body", async () => {
+    vi.stubGlobal("fetch", async () => new Response(null, { status: 200 }));
+    await expect(metaResponses(env, {})).rejects.toThrow(/response has no body/);
+  });
+
+  it("leaves no idle watchdog armed after an early status failure", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.stubGlobal("fetch", async () => new Response("busy", { status: 503 }));
+      await expect(metaResponses(env, {})).rejects.toThrow(/retryable meta 503/);
+      expect(vi.getTimerCount()).toBe(0);
+      vi.stubGlobal("fetch", async () => new Response("no", { status: 403 }));
+      await expect(metaResponses(env, {})).rejects.toBeInstanceOf(NonRetryableError);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("collects a final event with no trailing blank line", async () => {
     const wire = `data: ${done("<0f>7<|box|>")}`; // no \n\n terminator
     vi.stubGlobal("fetch", async () => chunked(wire, [10]));

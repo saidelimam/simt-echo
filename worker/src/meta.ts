@@ -69,34 +69,6 @@ export async function metaResponsesDetailed(
       idleMs,
     );
   };
-  let res: Response;
-  // The idle watchdog covers the whole call: armed before fetch (headers
-  // may never arrive), re-armed per body chunk, cleared at the end. Only
-  // silence aborts (G9).
-  armIdle();
-  try {
-    res = await fetch(RESPONSES_URL, {
-      method: "POST",
-      body: JSON.stringify({ ...body, stream: true }),
-      headers: {
-        Authorization: `Bearer ${key}`,
-        "Content-Type": "application/json",
-        Accept: "text/event-stream",
-      },
-      signal: ctrl.signal,
-    });
-  } catch (e) {
-    clearIdle();
-    throw e;
-  }
-  if (res.status === 429 || res.status >= 500) {
-    throw new Error(`retryable meta ${res.status}`);
-  }
-  if (!res.ok) {
-    throw new NonRetryableError(`meta ${res.status}: ${(await res.text()).slice(0, 500)}`);
-  }
-  const reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
-  let buf = "";
   let out = "";
   let sawDelta = false;
   let videoFramesProcessed: number | undefined;
@@ -144,22 +116,53 @@ export async function metaResponsesDetailed(
       }
     }
   };
-  // Re-arm after headers: body silence trips the same watchdog.
+  // The idle watchdog covers the whole call: armed before fetch (headers
+  // may never arrive), re-armed per body chunk, and cleared on every exit
+  // path. Only silence aborts (G9).
   armIdle();
   try {
-    for (let r = await reader.read(); !r.done; r = await reader.read()) {
-      // Normalise CRLF: event boundaries may arrive as \r\n\r\n.
-      buf += r.value.replace(/\r\n/g, "\n");
-      // Any chunk resets the idle watchdog: only silence aborts (G9).
-      armIdle();
-      let i: number;
-      while ((i = buf.indexOf("\n\n")) >= 0) {
-        handleBlock(buf.slice(0, i));
-        buf = buf.slice(i + 2);
-      }
+    const res = await fetch(RESPONSES_URL, {
+      method: "POST",
+      body: JSON.stringify({ ...body, stream: true }),
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      signal: ctrl.signal,
+    });
+    if (res.status === 429 || res.status >= 500) {
+      await res.body?.cancel().catch(() => undefined);
+      throw new Error(`retryable meta ${res.status}`);
     }
-    // A final event without a trailing blank line still counts.
-    if (buf.includes("data:")) handleBlock(buf);
+    if (!res.ok) {
+      throw new NonRetryableError(`meta ${res.status}: ${(await res.text()).slice(0, 500)}`);
+    }
+    if (res.body === null) throw new Error("meta: response has no body");
+    const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buf = "";
+    // Re-arm after headers: body silence trips the same watchdog.
+    armIdle();
+    try {
+      for (let r = await reader.read(); !r.done; r = await reader.read()) {
+        // Normalise CRLF: event boundaries may arrive as \r\n\r\n.
+        buf += r.value.replace(/\r\n/g, "\n");
+        // Any chunk resets the idle watchdog: only silence aborts (G9).
+        armIdle();
+        let i: number;
+        while ((i = buf.indexOf("\n\n")) >= 0) {
+          handleBlock(buf.slice(0, i));
+          buf = buf.slice(i + 2);
+        }
+      }
+      // A final event without a trailing blank line still counts.
+      if (buf.includes("data:")) handleBlock(buf);
+    } catch (e) {
+      // An error event or a watchdog abort ends the call: release the
+      // connection instead of leaving the response stream open.
+      await reader.cancel().catch(() => undefined);
+      throw e;
+    }
   } finally {
     clearIdle();
   }

@@ -41,6 +41,10 @@ if (!key) {
   process.exit(0);
 }
 
+// A hung vendor must fail the canary, not hang the release gate: the signal
+// bounds the headers and the streamed body alike.
+const CANARY_TIMEOUT_MS = 60_000;
+
 const started = Date.now();
 const res = await fetch(RESPONSES_URL, {
   method: "POST",
@@ -50,26 +54,55 @@ const res = await fetch(RESPONSES_URL, {
     "Content-Type": "application/json",
     Accept: "text/event-stream",
   },
+  signal: AbortSignal.timeout(CANARY_TIMEOUT_MS),
 });
 if (!res.ok) {
   console.error(`canary:sam HTTP ${res.status}: ${(await res.text()).slice(0, 500)}`);
   process.exit(1);
 }
+if (res.body === null) {
+  console.error("canary:sam response has no body");
+  process.exit(1);
+}
+
+// Stream-parse line by line: the response is never buffered whole.
 let text = "";
-for (const chunk of (await res.text()).split("\n")) {
+const handleLine = (chunk) => {
   const line = chunk.trim();
-  if (!line.startsWith("data:")) continue;
+  if (!line.startsWith("data:")) return;
   const data = line.slice(5).trim();
-  if (!data || data === "[DONE]") continue;
+  if (!data || data === "[DONE]") return;
+  let j;
   try {
-    const j = JSON.parse(data);
-    if (j.type === "response.output_text.delta") text += j.delta;
-    else if (j.type === "response.output_text.done" && !text && typeof j.text === "string") {
-      text = j.text;
-    }
+    j = JSON.parse(data);
   } catch {
     // Ignore non-event lines; the collector holds text only.
+    return;
   }
+  if (j.type === "response.output_text.delta") text += j.delta;
+  else if (j.type === "response.output_text.done" && !text && typeof j.text === "string") {
+    text = j.text;
+  } else if (j.type === "response.failed" || j.type === "error") {
+    throw new Error(data.slice(0, 500));
+  }
+};
+const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+let buf = "";
+try {
+  for (let r = await reader.read(); !r.done; r = await reader.read()) {
+    buf += r.value;
+    let nl;
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      handleLine(buf.slice(0, nl));
+      buf = buf.slice(nl + 1);
+    }
+  }
+  handleLine(buf);
+} catch (e) {
+  // An error event or the timeout ends the call: release the connection.
+  await reader.cancel().catch(() => undefined);
+  console.error(`canary:sam failed: ${e instanceof Error ? e.message : String(e)}`);
+  process.exit(1);
 }
 console.log(`canary:sam ok in ${Date.now() - started} ms; output chars: ${text.length}`);
 console.log(text.slice(0, 500));
