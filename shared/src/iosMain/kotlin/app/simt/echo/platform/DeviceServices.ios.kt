@@ -37,7 +37,7 @@ private class StubCameraRecorder : CameraRecorder {
 }
 
 @Composable
-actual fun rememberCameraRecorder(): CameraRecorder = remember { StubCameraRecorder() }
+actual fun rememberCameraRecorder(graph: CameraGraph): CameraRecorder = remember { StubCameraRecorder() }
 
 @OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
 actual fun currentEpochMs(): Long =

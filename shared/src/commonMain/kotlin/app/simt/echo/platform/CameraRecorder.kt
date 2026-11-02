@@ -2,6 +2,9 @@ package app.simt.echo.platform
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import app.simt.echo.capture.FrameTap
+import app.simt.echo.capture.NoOpFrameTap
+import app.simt.echo.model.PerceptionMode
 import okio.Path
 
 /**
@@ -31,6 +34,22 @@ interface CameraRecorder {
 
     /** Stops recording and returns [out] once the file is final. */
     suspend fun stopVideo(): Path
+
+    /**
+     * Throttled analysed frames (plan W10-03 Frame Tap). Graphs without
+     * analysis report [NoOpFrameTap]; fakes inherit it, so existing tests
+     * compile and behave unchanged.
+     */
+    val frameTap: FrameTap
+        get() = NoOpFrameTap
+
+    /**
+     * Ledger mode for `capture.json` (plan W10-03): the recorder reports
+     * [PerceptionMode.LEDGER_ON] only when its bind ladder actually bound
+     * analysis. Defaults off — no ledger ran unless the backend says so.
+     */
+    val perceptionMode: String
+        get() = PerceptionMode.LEDGER_OFF
 }
 
 /** Lifecycle of one capture session. See [transition] for legal moves. */

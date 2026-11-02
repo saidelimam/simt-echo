@@ -12,7 +12,7 @@ import androidx.compose.runtime.Composable
 expect fun rememberMotionSource(): MotionSource
 
 @Composable
-expect fun rememberCameraRecorder(): CameraRecorder
+expect fun rememberCameraRecorder(graph: CameraGraph = CameraGraph.RECORD_FULL): CameraRecorder
 
 @Composable
 expect fun rememberHaptics(): Haptics

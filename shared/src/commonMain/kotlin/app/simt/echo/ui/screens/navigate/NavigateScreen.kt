@@ -37,8 +37,11 @@ import app.simt.echo.data.TrialRepository
 import app.simt.echo.model.EchoConfig
 import app.simt.echo.model.shouldShowLandmarkCards
 import app.simt.echo.nav.NavUi
+import app.simt.echo.platform.CameraRecorder
+import app.simt.echo.platform.CaptureScreen
 import app.simt.echo.platform.KeepScreenOn
 import app.simt.echo.platform.MotionSource
+import app.simt.echo.platform.cameraGraphFor
 import app.simt.echo.platform.rememberCameraRecorder
 import app.simt.echo.platform.rememberHaptics
 import app.simt.echo.platform.rememberMotionSource
@@ -113,6 +116,9 @@ fun NavigateScreen(
     }
 
     val nav = ui
+    // Navigate graph (plan W10-03): Preview + Analysis with overlay,
+    // Analysis-only otherwise — W12-05 decides when analysis runs at all.
+    val camera = rememberCameraRecorder(cameraGraphFor(CaptureScreen.NAVIGATE, config.cameraOverlayEnabled))
     if (nav == null) {
         CosmosEmptyState(
             title = MISSING_ROUTE_ERROR.whatHappened,
@@ -133,11 +139,15 @@ fun NavigateScreen(
             legCount = viewModel.legCount,
             researchMode = researchMode,
             viewModel = viewModel,
+            camera = camera,
             modifier = modifier,
         )
         return
     }
 
+    // Overlay off: the Analysis-only graph still binds (no visible
+    // preview) so the tap runs without a viewfinder.
+    camera.Preview(modifier = Modifier)
     NavigateBody(
         nav = nav,
         routes = routes,
@@ -278,9 +288,9 @@ private fun NavigateOverlayBody(
     legCount: Int,
     researchMode: Boolean,
     viewModel: NavigateViewModel,
+    camera: CameraRecorder,
     modifier: Modifier = Modifier,
 ) {
-    val camera = rememberCameraRecorder()
     // Baseline honesty in the overlay too: a SENSOR_ONLY trial sees no
     // landmark card, crop, or mask (review 0004 R4).
     val landmark = nav.landmark?.takeIf { shouldShowLandmarkCards(viewModel.baselineMode) }

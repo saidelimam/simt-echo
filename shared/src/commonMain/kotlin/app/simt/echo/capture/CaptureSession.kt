@@ -5,6 +5,7 @@ import app.simt.echo.model.CaptureLog
 import app.simt.echo.model.CaptureSample
 import app.simt.echo.model.EchoConfig
 import app.simt.echo.model.Mark
+import app.simt.echo.model.PerceptionMode
 import app.simt.echo.platform.CameraRecorder
 import app.simt.echo.platform.HapticPattern
 import app.simt.echo.platform.Haptics
@@ -57,6 +58,14 @@ class CaptureSession(
     private val newDraftId: () -> String,
     private val autosaveEveryMs: Long = 10_000L,
     private val config: EchoConfig = EchoConfig(),
+    /**
+     * Ledger mode stamped into every `capture.json` (plan W10-03). A
+     * supplier, not a snapshot: the recorder learns its bind outcome
+     * lazily, so the mode is read when the log is built. Defaults to
+     * [PerceptionMode.LEDGER_OFF] — recording behaviour is otherwise
+     * unchanged, and fakes that report nothing stay honest.
+     */
+    private val perceptionMode: () -> String = { PerceptionMode.LEDGER_OFF },
 ) {
     private val _state = MutableStateFlow(CaptureState.IDLE)
     val state: StateFlow<CaptureState> = _state.asStateFlow()
@@ -214,6 +223,7 @@ class CaptureSession(
             startPhoto = START_PHOTO,
             routeName = routeName,
             destinationLabel = destinationLabel,
+            perceptionMode = perceptionMode(),
         )
     }
 

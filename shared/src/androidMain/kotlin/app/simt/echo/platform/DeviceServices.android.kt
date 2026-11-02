@@ -26,11 +26,11 @@ actual fun rememberMotionSource(): MotionSource {
 }
 
 @Composable
-actual fun rememberCameraRecorder(): CameraRecorder {
+actual fun rememberCameraRecorder(graph: CameraGraph): CameraRecorder {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    return remember(context, lifecycleOwner) {
-        CameraXRecorder(context.applicationContext, lifecycleOwner)
+    return remember(context, lifecycleOwner, graph) {
+        CameraXRecorder(context.applicationContext, lifecycleOwner, graph)
     }
 }
 

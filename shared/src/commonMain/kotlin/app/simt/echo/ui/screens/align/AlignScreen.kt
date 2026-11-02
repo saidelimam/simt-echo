@@ -19,6 +19,8 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import app.simt.echo.data.RouteRepository
+import app.simt.echo.platform.CaptureScreen
+import app.simt.echo.platform.cameraGraphFor
 import app.simt.echo.platform.rememberCameraRecorder
 import app.simt.echo.ui.components.CropImage
 import app.simt.echo.ui.components.CosmosPrimaryButton
@@ -42,7 +44,8 @@ fun AlignScreen(
     modifier: Modifier = Modifier,
 ) {
     val route = remember(routeId) { routes.get(routeId) }
-    val camera = rememberCameraRecorder()
+    // Align graph: Preview + Analysis, never video (plan W10-03).
+    val camera = rememberCameraRecorder(cameraGraphFor(CaptureScreen.ALIGN))
 
     if (route == null) {
         CosmosEmptyState(

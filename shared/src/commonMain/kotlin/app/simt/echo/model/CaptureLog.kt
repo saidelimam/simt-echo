@@ -14,6 +14,13 @@ data class CaptureLog(
     val startPhoto: String,
     val routeName: String = "",
     val destinationLabel: String = "",
+    /**
+     * Frame-ledger mode (plan W10-03): [PerceptionMode.LEDGER_ON] when the
+     * Record graph bound Preview+Video+Analysis, [PerceptionMode.LEDGER_OFF]
+     * on the `[P,V]` fallback. Defaults off so pre-W10-03 logs — recorded
+     * with no ledger — decode honestly.
+     */
+    val perceptionMode: String = PerceptionMode.LEDGER_OFF,
 )
 
 /** One motion sample; every step plus a 2 Hz heartbeat. */

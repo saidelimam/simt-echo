@@ -40,7 +40,9 @@ import app.simt.echo.capture.CaptureHud
 import app.simt.echo.data.DraftRepository
 import app.simt.echo.model.EchoConfig
 import app.simt.echo.platform.CameraPermissionGate
+import app.simt.echo.platform.CaptureScreen
 import app.simt.echo.platform.KeepScreenOn
+import app.simt.echo.platform.cameraGraphFor
 import app.simt.echo.platform.currentEpochMs
 import app.simt.echo.platform.rememberCameraRecorder
 import app.simt.echo.platform.rememberHaptics
@@ -88,7 +90,9 @@ fun RecordScreen(
     resumeDraftId: String? = null,
 ) {
     val motion = rememberMotionSource()
-    val camera = rememberCameraRecorder()
+    // Record graph: Preview + Video + Analysis (plan W10-03); the bind
+    // ladder reports its ledger mode into every capture.json.
+    val camera = rememberCameraRecorder(cameraGraphFor(CaptureScreen.RECORD))
     val haptics = rememberHaptics()
     val session = remember(motion, camera, haptics, drafts, config, resumeDraftId) {
         CaptureSession(
@@ -100,6 +104,7 @@ fun RecordScreen(
             nowMs = { currentEpochMs() },
             newDraftId = { "draft-${Random.nextInt(1_000_000)}" },
             config = config,
+            perceptionMode = { camera.perceptionMode },
         )
     }
     // Back-stack-scoped (review 0001 pattern): rotation/process handling

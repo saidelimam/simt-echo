@@ -5,10 +5,12 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.camera.compose.CameraXViewfinder
 import androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA
+import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.core.SurfaceRequest
+import androidx.camera.core.UseCase
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.FileOutputOptions
 import androidx.camera.video.FallbackStrategy
@@ -28,41 +30,86 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
+import app.simt.echo.capture.FrameRateGovernor
+import app.simt.echo.capture.FrameTap
+import app.simt.echo.capture.TimestampAlignment
+import app.simt.echo.model.PerceptionMode
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeout
 import okio.Path
 import java.io.File
+import java.util.concurrent.ExecutorService
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 /**
- * CameraX [CameraRecorder] (slice W1-02).
+ * CameraX [CameraRecorder] (slice W1-02, graph rework W10-03).
  *
- * Silent HD video (no `withAudioEnabled`, so no mic permission), one still
- * for the start photo, and the recording-start `tNs` on the motion clock.
- * If binding Preview+ImageCapture+Video together throws on a device, falls
- * back to Preview+Video and flags [photoFromVideo] so W1-05 extracts the
- * start frame at t = 500 ms after [stopVideo] instead.
+ * Silent HD video (no `withAudioEnabled`, so no mic permission) on the
+ * motion clock, plus a throttled Frame Tap on its own thread. The bound
+ * use cases follow [CameraGraph]: Record binds Preview+Video+Analysis with
+ * ImageCapture dropped (the start photo becomes the ledger's best frame in
+ * W11-01); Align and Navigate bind Preview+Analysis; overlay-off Navigate
+ * binds Analysis only. The fallback ladder is by real bind attempt:
+ * `[P,V,A] → [P,V]` with the ledger off, recorded as [perceptionMode].
  *
  * @param lifecycleOwner the Activity lifecycle camera binds to; supplied by
  * the owning screen (W1-03), never the Application.
+ * @param graph the screen's use-case graph (W10-03).
  */
 class CameraXRecorder(
     private val context: Context,
     private val lifecycleOwner: LifecycleOwner,
+    private val graph: CameraGraph = CameraGraph.RECORD_FULL,
 ) : CameraRecorder {
 
     private var state = RecorderState.IDLE
     private var provider: ProcessCameraProvider? = null
     private var imageCapture: ImageCapture? = null
     private var videoCapture: VideoCapture<Recorder>? = null
+    private var analysisExecutor: ExecutorService? = null
     private var recording: Recording? = null
     private var activeVideoOut: Path? = null
     private var finalizeSignal: CompletableDeferred<VideoRecordEvent.Finalize>? = null
 
-    /** True once the fallback path is in effect (plan §12 camera risk). */
+    /** Throttled frames; the W11-01 ledger is the first subscriber. */
+    private val tapSource = FrameTapSource(
+        governor = FrameRateGovernor(
+            if (graph == CameraGraph.NAVIGATE || graph == CameraGraph.ANALYSIS_ONLY) {
+                FrameRateGovernor.NAVIGATE_INTERVAL_NS
+            } else {
+                // Record 8 Hz; Align is interactive and keeps the same
+                // budget until W12-05 tunes it.
+                FrameRateGovernor.RECORD_INTERVAL_NS
+            },
+        ),
+        thermalNow = { context.currentThermalState() },
+        alignmentNow = { timestampAlignment },
+    )
+
+    override val frameTap: FrameTap
+        get() = tapSource
+
+    @Volatile
+    private var timestampAlignment: TimestampAlignment = TimestampAlignment.REALTIME
+
+    /**
+     * Ledger mode for `capture.json`: [PerceptionMode.LEDGER_ON] only when
+     * the bind ladder actually bound analysis, OFF on the `[P,V]` fallback.
+     */
+    override val perceptionMode: String
+        get() = boundMode
+
+    @Volatile
+    private var boundMode: String = PerceptionMode.LEDGER_OFF
+
+    /**
+     * True once the fallback path is in effect (plan §12 camera risk): no
+     * still source, so the start photo comes from the ledger (W11-01) or,
+     * before it, the W1-05 video-frame extraction.
+     */
     var photoFromVideo: Boolean = false
         private set
 
@@ -82,7 +129,11 @@ class CameraXRecorder(
                 .onSuccess { boundPreview?.setSurfaceProvider { request = it } }
         }
         DisposableEffect(Unit) {
-            onDispose { provider?.unbindAll() }
+            onDispose {
+                provider?.unbindAll()
+                analysisExecutor?.shutdown()
+                analysisExecutor = null
+            }
         }
         request?.let {
             CameraXViewfinder(surfaceRequest = it, modifier = modifier)
@@ -95,49 +146,74 @@ class CameraXRecorder(
         if (provider != null) return
         val cameraProvider = awaitProvider()
         provider = cameraProvider
-        val preview = Preview.Builder().build()
+        timestampAlignment = queryTimestampAlignment(context)
+        val preview = if (graph.hasPreview) Preview.Builder().build() else null
         boundPreview = preview
-        val video = VideoCapture.withOutput(
-            Recorder.Builder()
-                .setQualitySelector(
-                    QualitySelector.from(
-                        Quality.HD,
-                        FallbackStrategy.lowerQualityOrHigherThan(Quality.SD),
-                    ),
-                )
-                .setTargetVideoEncodingBitRate(3_000_000)
-                .build(),
-        )
+        val video = if (graph.hasVideo) {
+            VideoCapture.withOutput(
+                Recorder.Builder()
+                    .setQualitySelector(
+                        QualitySelector.from(
+                            Quality.HD,
+                            FallbackStrategy.lowerQualityOrHigherThan(Quality.SD),
+                        ),
+                    )
+                    .setTargetVideoEncodingBitRate(3_000_000)
+                    .build(),
+            )
+        } else {
+            null
+        }
         videoCapture = video
-        try {
-            imageCapture = ImageCapture.Builder()
-                .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+        val analysis = if (graph.hasAnalysis) {
+            val executor = newAnalysisExecutor()
+            analysisExecutor = executor
+            ImageAnalysis.Builder()
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
                 .build()
+                .also { it.setAnalyzer(executor, tapSource.analyzer) }
+        } else {
+            null
+        }
+        // Fallback ladder by real bind attempt, never capability guess:
+        // the full graph first, then Preview (+Video on Record) with the
+        // ledger off. ImageCapture is dropped from every rung: the start
+        // photo is the ledger's best frame (W11-01).
+        imageCapture = null
+        photoFromVideo = true
+        try {
             cameraProvider.bindToLifecycle(
                 lifecycleOwner,
                 DEFAULT_BACK_CAMERA,
-                preview,
-                imageCapture,
-                video,
+                *listOfNotNull(preview, video, analysis).toTypedArray<UseCase>(),
             )
+            boundMode = if (analysis != null) PerceptionMode.LEDGER_ON else PerceptionMode.LEDGER_OFF
         } catch (e: Exception) {
-            Log.w(TAG, "3-use-case bind failed, falling back to Preview+Video", e)
-            photoFromVideo = true
-            imageCapture = null
+            Log.w(TAG, "Full ${graph.name} bind failed, falling back", e)
             cameraProvider.unbindAll()
+            analysis?.clearAnalyzer()
+            analysisExecutor?.shutdown()
+            analysisExecutor = null
             cameraProvider.bindToLifecycle(
                 lifecycleOwner,
                 DEFAULT_BACK_CAMERA,
-                preview,
-                video,
+                *listOfNotNull(preview, video).toTypedArray<UseCase>(),
             )
+            boundMode = PerceptionMode.LEDGER_OFF
         }
         if (state == RecorderState.IDLE) move(RecorderEvent.PREVIEW_READY)
     }
 
+    /**
+     * Single still into [out]. ImageCapture left the bind graphs in W10-03
+     * (the start photo is the ledger's best frame, W11-01), so this stays
+     * only for API compatibility and fails honestly until the ledger wires
+     * it; the video recording path is untouched.
+     */
     override suspend fun takePhoto(out: Path): Path {
         val capture = imageCapture
-            ?: error("takePhoto needs ImageCapture; photoFromVideo=$photoFromVideo")
+            ?: error("takePhoto has no still source on graph ${graph.name}; the ledger (W11-01) supplies the start photo")
         // FileStore guarantees parent dirs for common-code writes; the
         // CameraX seam owns the same contract (fresh draft dirs may not
         // exist yet — W7-12 device gate: ENOENT on first photo).
