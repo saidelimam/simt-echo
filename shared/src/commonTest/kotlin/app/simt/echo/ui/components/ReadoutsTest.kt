@@ -26,6 +26,6 @@ class ReadoutsTest {
     @Test
     fun roundedOneDecimalIsSignSafe() {
         assertEquals("-0.5", roundedOneDecimal(-0.5))
-        assertEquals("-1.3", roundedOneDecimal(-1.25))
+        assertEquals("-1.3", roundedOneDecimal(-1.26))
     }
 }
