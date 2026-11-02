@@ -164,3 +164,107 @@ export const ApiErrorSchema = z.object({
   ok: z.literal(false),
   error: z.string().min(1),
 });
+
+// W10-06 worker API v1.1 freeze (additive to the W3-03 freeze above; the
+// W3-03 shapes are untouched). Full intake lands in W11-05, the SAM ladder
+// in W11-06, SSE hardening in W11-07 — this section is the producer
+// contract those slices implement against, never widened without a new S slice.
+
+// Content hash declared per file at upload creation (plan W10-06).
+export const Sha256Schema = z.string().regex(/^[0-9a-f]{64}$/);
+
+export const UploadFileRefSchema = z.object({
+  name: JobIdSchema,
+  sha256: Sha256Schema,
+  bytes: z.number().int().nonnegative(),
+});
+export type UploadFileRef = z.infer<typeof UploadFileRefSchema>;
+
+// POST /v1/uploads {files:[{name,sha256,bytes}]} (caps mirror W3-03 §10:
+// at most 60 files; the 80 MB total is enforced on PUT bytes in W11-05).
+export const CreateUploadRequestSchema = z.object({
+  files: z.array(UploadFileRefSchema).min(1).max(60),
+});
+export type CreateUploadRequest = z.infer<typeof CreateUploadRequestSchema>;
+
+// POST /v1/uploads → {uploadId, missing[]}; missing[] lets clients resume
+// by PUTing only what the server does not already hold (W11-05).
+export const CreateUploadResponseSchema = z.object({
+  ok: z.literal(true),
+  uploadId: z.string().min(1),
+  missing: z.array(JobIdSchema),
+});
+export type CreateUploadResponse = z.infer<typeof CreateUploadResponseSchema>;
+
+// PUT /v1/uploads/:uploadId/:name carries raw file bytes; W11-05 verifies
+// sha256(bytes) against the declared sha and answers 400 on mismatch.
+export const UploadPutParamsSchema = z.object({
+  uploadId: z.string().min(1),
+  name: JobIdSchema,
+});
+export type UploadPutParams = z.infer<typeof UploadPutParamsSchema>;
+
+// POST /v1/jobs gains {uploadId, budget, idempotencyKey} next to the frozen
+// v1 multipart body (kept for v1 clients). resumeOf is the only sanctioned
+// cross-job SAM-cache reuse; default scoping is per job, deleted with it.
+export const JobBudgetSchema = z.object({
+  maxSamFrames: z.number().int().positive().max(240),
+});
+export type JobBudget = z.infer<typeof JobBudgetSchema>;
+
+export const CreateJobV11RequestSchema = z.object({
+  manifest: ManifestSchema,
+  uploadId: z.string().min(1).optional(),
+  budget: JobBudgetSchema.optional(),
+  idempotencyKey: z.string().min(1).max(128).optional(),
+  resumeOf: z.string().min(1).optional(),
+});
+export type CreateJobV11Request = z.infer<typeof CreateJobV11RequestSchema>;
+
+// GET /v1/jobs/:id/events (SSE, backed by append-only R2 event records in
+// W11-05; server holds ≤25 s then the client reconnects with Last-Event-ID).
+// Every event carries a string id so resume replays exactly what follows it.
+export const CheckpointEventStatusSchema = z.enum(["scouted", "grounded", "skipped"]);
+export type CheckpointEventStatus = z.infer<typeof CheckpointEventStatusSchema>;
+
+export const StageEventSchema = z.object({
+  id: z.string().min(1),
+  type: z.literal("stage"),
+  stage: JobStageSchema,
+  updatedAt: z.number().int().nonnegative(),
+});
+
+export const CheckpointEventSchema = z.object({
+  id: z.string().min(1),
+  type: z.literal("checkpoint"),
+  nodeId: JobIdSchema,
+  status: CheckpointEventStatusSchema,
+  candidates: z.array(CandidateSchema),
+});
+
+export const UsageEventSchema = z.object({
+  id: z.string().min(1),
+  type: z.literal("usage"),
+  usage: JobUsageSchema,
+});
+
+export const CompleteEventSchema = z.object({
+  id: z.string().min(1),
+  type: z.literal("complete"),
+  result: JobResultSchema,
+});
+
+export const ErrorEventSchema = z.object({
+  id: z.string().min(1),
+  type: z.literal("error"),
+  error: z.string().min(1),
+});
+
+export const JobEventSchema = z.discriminatedUnion("type", [
+  StageEventSchema,
+  CheckpointEventSchema,
+  UsageEventSchema,
+  CompleteEventSchema,
+  ErrorEventSchema,
+]);
+export type JobEvent = z.infer<typeof JobEventSchema>;

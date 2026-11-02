@@ -3,6 +3,19 @@ import type { WorkflowStep as RuntimeWorkflowStep } from "cloudflare:workers";
 import { app } from "./index";
 import { EchoPipeline } from "./pipeline";
 import { JobResultSchema } from "./types";
+import {
+  CheckpointEventSchema,
+  CompleteEventSchema,
+  CreateJobV11RequestSchema,
+  CreateUploadRequestSchema,
+  CreateUploadResponseSchema,
+  ErrorEventSchema,
+  JobBudgetSchema,
+  JobEventSchema,
+  StageEventSchema,
+  UploadPutParamsSchema,
+  UsageEventSchema,
+} from "./types";
 
 const TOKEN = "test-token-123";
 
@@ -385,6 +398,163 @@ describe("DELETE /v1/jobs/:id", () => {
     const res = await app.request(`/v1/jobs/${jobId}`, { headers: auth }, env);
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ ok: false, error: "job_not_found" });
+  });
+});
+
+describe("v1.1 contract freeze (W10-06)", () => {
+  const SHA =
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+  it("accepts a well-formed upload create request", () => {
+    const parsed = CreateUploadRequestSchema.parse({
+      files: [
+        { name: "kf_n2_0", sha256: SHA, bytes: 41250 },
+        { name: "clip_n2", sha256: SHA, bytes: 80120 },
+      ],
+    });
+    expect(parsed.files).toHaveLength(2);
+  });
+
+  it("rejects empty, oversized, mis-hashed, and mis-named upload file lists", () => {
+    expect(() =>
+      CreateUploadRequestSchema.parse({ files: [] }),
+    ).toThrow();
+    expect(() =>
+      CreateUploadRequestSchema.parse({
+        files: Array.from({ length: 61 }, (_, i) => ({
+          name: `kf_${i.toString().padStart(2, "0")}`,
+          sha256: SHA,
+          bytes: 10,
+        })),
+      }),
+    ).toThrow();
+    expect(() =>
+      CreateUploadRequestSchema.parse({
+        files: [{ name: "kf_n2_0", sha256: "not-a-hash", bytes: 10 }],
+      }),
+    ).toThrow();
+    expect(() =>
+      CreateUploadRequestSchema.parse({
+        files: [{ name: "KF-BAD!", sha256: SHA, bytes: 10 }],
+      }),
+    ).toThrow();
+  });
+
+  it("parses the upload create response with a resumable missing[]", () => {
+    const parsed = CreateUploadResponseSchema.parse({
+      ok: true,
+      uploadId: "11111111-1111-1111-1111-111111111111",
+      missing: ["clip_n2"],
+    });
+    expect(parsed.missing).toEqual(["clip_n2"]);
+  });
+
+  it("parses upload PUT params and rejects bad file names", () => {
+    expect(
+      UploadPutParamsSchema.parse({ uploadId: "some-upload-id", name: "kf_n2_0" }).name,
+    ).toBe("kf_n2_0");
+    expect(() =>
+      UploadPutParamsSchema.parse({ uploadId: "some-upload-id", name: "EVIL!" }),
+    ).toThrow();
+  });
+
+  it("caps the SAM frame budget at 240", () => {
+    expect(JobBudgetSchema.parse({ maxSamFrames: 240 }).maxSamFrames).toBe(240);
+    expect(JobBudgetSchema.parse({ maxSamFrames: 1 }).maxSamFrames).toBe(1);
+    expect(() => JobBudgetSchema.parse({ maxSamFrames: 241 })).toThrow();
+    expect(() => JobBudgetSchema.parse({ maxSamFrames: 0 })).toThrow();
+  });
+
+  it("accepts a manifest-only v1.1 job create (v1-equivalent)", () => {
+    const parsed = CreateJobV11RequestSchema.parse({ manifest: validManifest() });
+    expect(parsed.uploadId).toBeUndefined();
+    expect(parsed.budget).toBeUndefined();
+    expect(parsed.resumeOf).toBeUndefined();
+  });
+
+  it("accepts a full v1.1 job create with upload, budget, idempotency, resume", () => {
+    const parsed = CreateJobV11RequestSchema.parse({
+      manifest: validManifest(),
+      uploadId: "22222222-2222-2222-2222-222222222222",
+      budget: { maxSamFrames: 120 },
+      idempotencyKey: "idempotent-client-key-1",
+      resumeOf: "33333333-3333-3333-3333-333333333333",
+    });
+    expect(parsed.budget).toEqual({ maxSamFrames: 120 });
+    expect(parsed.idempotencyKey).toBe("idempotent-client-key-1");
+  });
+
+  it("rejects a v1.1 job create that exceeds the frame budget", () => {
+    expect(() =>
+      CreateJobV11RequestSchema.parse({
+        manifest: validManifest(),
+        budget: { maxSamFrames: 241 },
+      }),
+    ).toThrow();
+    expect(() =>
+      CreateJobV11RequestSchema.parse({
+        manifest: validManifest(),
+        idempotencyKey: "",
+      }),
+    ).toThrow();
+  });
+
+  it("parses every SSE event shape through the union", () => {
+    const events = [
+      { id: "1", type: "stage", stage: "scouting", updatedAt: 7 },
+      { id: "2", type: "checkpoint", nodeId: "n2", status: "scouted", candidates: [] },
+      { id: "3", type: "checkpoint", nodeId: "n2", status: "grounded", candidates: [] },
+      { id: "4", type: "checkpoint", nodeId: "n2", status: "skipped", candidates: [] },
+      { id: "5", type: "usage", usage: { samFrames: 12, scoutMs: 300 } },
+      {
+        id: "6",
+        type: "complete",
+        result: {
+          jobId: "job-1",
+          models: { scout: "workers-ai", ground: "none" },
+          checkpoints: [{ nodeId: "n2", candidates: [] }],
+          usage: { scoutMs: 21000 },
+        },
+      },
+      { id: "7", type: "error", error: "scout exploded" },
+    ];
+    for (const e of events) {
+      expect(() => JobEventSchema.parse(e)).not.toThrow();
+    }
+    expect(StageEventSchema.parse(events[0]).stage).toBe("scouting");
+    expect(CheckpointEventSchema.parse(events[1]).status).toBe("scouted");
+    expect(UsageEventSchema.parse(events[4]).usage).toEqual({ samFrames: 12, scoutMs: 300 });
+    expect(CompleteEventSchema.parse(events[5]).result.jobId).toBe("job-1");
+    expect(ErrorEventSchema.parse(events[6]).error).toBe("scout exploded");
+  });
+
+  it("requires resumable event ids and known checkpoint statuses", () => {
+    expect(() =>
+      JobEventSchema.parse({ type: "stage", stage: "scouting", updatedAt: 7 }),
+    ).toThrow();
+    expect(() =>
+      JobEventSchema.parse({
+        id: "9",
+        type: "checkpoint",
+        nodeId: "n2",
+        status: "polishing",
+        candidates: [],
+      }),
+    ).toThrow();
+    expect(() =>
+      JobEventSchema.parse({ id: "10", type: "unknown-shape" }),
+    ).toThrow();
+  });
+
+  it("still accepts the frozen v1 multipart job create (202)", async () => {
+    const media = new FakeR2();
+    const pipeline = new FakePipeline();
+    const res = await postJob(envFor(media, pipeline), validManifest());
+
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { ok: boolean; jobId: string };
+    expect(body.ok).toBe(true);
+    expect(pipeline.instances.has(body.jobId)).toBe(true);
   });
 });
 
