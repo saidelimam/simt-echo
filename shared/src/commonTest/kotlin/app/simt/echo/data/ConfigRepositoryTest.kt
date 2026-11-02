@@ -57,6 +57,32 @@ class ConfigRepositoryTest {
     }
 
     @Test
+    fun learnedStrideRoundTrips() {
+        configs.setLearnedStride(1.1, 6)
+        assertEquals(1.1, configs.get().learnedStepK)
+        assertEquals(6, configs.get().learnedStrideLegs)
+    }
+
+    @Test
+    fun absurdStoredLearnedStrideDegrades() {
+        configs.set(EchoConfig(learnedStepK = 48.0, learnedStrideLegs = -2))
+        assertEquals(null, configs.get().learnedStepK)
+        assertEquals(0, configs.get().learnedStrideLegs)
+        // The step-K default still applies alongside the learned fallback.
+        configs.set(EchoConfig(stepK = 48.0, learnedStepK = 1.1, learnedStrideLegs = 3))
+        assertEquals(0.48, configs.get().stepK)
+        assertEquals(1.1, configs.get().learnedStepK)
+        assertEquals(3, configs.get().learnedStrideLegs)
+    }
+
+    @Test
+    fun setLearnedStrideClamps() {
+        configs.setLearnedStride(48.0, -1)
+        assertEquals(1.5, configs.get().learnedStepK)
+        assertEquals(0, configs.get().learnedStrideLegs)
+    }
+
+    @Test
     fun genericDocStoreServesOtherDocuments() {
         val flags = JsonDocStore(
             store = store,

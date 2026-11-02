@@ -103,6 +103,10 @@ fun SettingsScreen(
                                 CosmosSecondaryButton(label = "Reset", onClick = viewModel::resetK)
                             }
                             ui.calibrationNote?.let { Text(text = it) }
+                            Text(
+                                text = "Stride learned from ${ui.strideLearnedLegs} legs",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
                         }
                     },
                 ),

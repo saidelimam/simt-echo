@@ -29,9 +29,18 @@ import kotlin.random.Random
 class GhostFilter(
     route: EchoRoute,
     seed: Long = DEFAULT_SEED,
+    /**
+     * Stride-scale prior mean (W12-03): the per-device learned K seeds
+     * the `k` spread at construction; the default 1.0 is the unlearned
+     * prior. Implausible values fall back to 1.0. Additive — sampling,
+     * geometry and phases are untouched.
+     */
+    kPriorMean: Double = 1.0,
 ) {
     private val geometry = RouteGeometry(route)
     private var random = Random(seed)
+    private val kPrior: Double =
+        if (kPriorMean.isFinite() && kPriorMean in STRIDE_K_MIN..STRIDE_K_MAX) kPriorMean else 1.0
 
     private val sA = DoubleArray(PARTICLE_COUNT)
     private val kA = DoubleArray(PARTICLE_COUNT)
@@ -70,7 +79,7 @@ class GhostFilter(
         spareValid = false
         for (i in 0 until PARTICLE_COUNT) {
             sA[i] = (startS + gauss() * INIT_S_SD).coerceIn(0.0, geometry.totalLengthM)
-            kA[i] = gauss() * K_PRIOR_SD + 1.0
+            kA[i] = gauss() * K_PRIOR_SD + kPrior
             bA[i] = gauss() * B_PRIOR_SD_RAD
             wA[i] = 1.0 / PARTICLE_COUNT
         }
@@ -263,6 +272,10 @@ class GhostFilter(
 
         /** Landmark hard-anchor half-window, metres. */
         const val ANCHOR_HALF_M = 1.0
+
+        /** Learned-k prior band (W12-03): the W4-02 plausible K band. */
+        const val STRIDE_K_MIN = 0.15
+        const val STRIDE_K_MAX = 1.5
 
         private const val PI = kotlin.math.PI
     }
