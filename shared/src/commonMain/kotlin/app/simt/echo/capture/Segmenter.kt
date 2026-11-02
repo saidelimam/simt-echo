@@ -14,7 +14,6 @@ import app.simt.echo.model.StartAnchor
 import app.simt.echo.model.TurnDir
 import kotlin.math.abs
 import kotlin.math.cos
-import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
@@ -300,12 +299,7 @@ private class Geo(private val samples: List<CaptureSample>) {
         samples.mapNotNull { it.p }.firstOrNull() ?: 1013.25
 }
 
-/** Standard atmosphere: h = 44330 · (1 − (p/p0)^(1/5.255)), metres. */
-private fun hPaToM(p: Double, p0: Double): Double =
-    44330.0 * (1.0 - (p / p0).pow(1.0 / 5.255))
-
-/**
- * Step 3 walk over the smoothed series. Keeps the rolling leg heading
+/** Step 3 walk over the smoothed series. Keeps the rolling leg heading
  * (circular mean of the last [cfg.legHeadingWindowM]); opens a turn once the
  * smoothed yaw deviates more than [cfg.turnOpenDeviationDeg] for
  * [cfg.turnOpenDistanceM]; closes it when the yaw has moved less than

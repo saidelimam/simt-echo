@@ -100,6 +100,7 @@ class GhostFilter(
             is Observation.Heading -> observeHeading(obs.yawPlusOffsetRad, obs.quality01)
             is Observation.Turn -> observeTurn(obs.dir)
             is Observation.Anchor -> anchorAt(obs.nodeS)
+            is Observation.Level -> observeLevel(obs.nodeS)
         }
     }
 
@@ -152,6 +153,16 @@ class GhostFilter(
             wA[i] = 1.0 / PARTICLE_COUNT
         }
         updateStats()
+    }
+
+    /**
+     * Level-change confirm (W12-08): the barometer crossed ±2.2 m at a
+     * LEVEL_CHANGE node, so the horizontal belief collapses to the node
+     * exactly like a landmark confirm — stride scale and heading bias
+     * survive.
+     */
+    fun observeLevel(nodeS: Double) {
+        anchorAt(nodeS)
     }
 
     private fun normalizeAndMaybeResample() {

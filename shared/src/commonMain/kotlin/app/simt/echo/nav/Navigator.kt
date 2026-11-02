@@ -10,6 +10,7 @@ import app.simt.echo.model.NodeType
 import app.simt.echo.model.RouteLeg
 import app.simt.echo.model.RouteNode
 import app.simt.echo.model.TurnDir
+import app.simt.echo.model.defaultCue
 import app.simt.echo.nav.ghost.GhostFilter
 import app.simt.echo.nav.ghost.Observation
 import app.simt.echo.nav.ghost.RouteGeometry
@@ -86,6 +87,14 @@ class Navigator(
     private var uncertainInstruction: String? = null
     private var offRouteInstruction: String? = null
 
+    /**
+     * Live level awareness (W12-08): relative-pressure Δh from the
+     * leg-start baseline. Reset on every leg transition; confirmed node
+     * ids persist for the route so the cue keeps its ✓.
+     */
+    private val levelAwareness = LevelAwareness(config.levelThresholdM)
+    private val confirmedLevelNodeIds = mutableSetOf<String>()
+
     /** Recent (distance, raw yaw) for corridor snapping. */
     private val yawTrail = mutableListOf<Pair<Double, Double>>()
 
@@ -142,6 +151,7 @@ class Navigator(
         yawTrail.clear()
         legYaws.clear()
         prevOdoM = dist
+        levelAwareness.resetLeg()
         ghost?.let {
             // Route position is known exactly at alignment: odometer
             // domain (dist) is replaced by route domain (s = 0).
@@ -168,6 +178,7 @@ class Navigator(
             it.observe(Observation.Heading(yaw + yawOffset, update.headingQuality))
         }
         applyCorridorSnapping(update)
+        levelAwareness.onSample(update.pressureHpa, update.stepCount)?.let { onLevelEvent(it) }
         val detected = turnDetector.onSample(update.tNs, update.yawRad)
         if (detected != null) {
             onTurnDetected(detected)
@@ -262,6 +273,27 @@ class Navigator(
         }
     }
 
+    /**
+     * Barometer crossing (W12-08): the walker's |Δh| since the leg start
+     * passed 2.2 m, so the current LEVEL_CHANGE target confirms itself —
+     * a filter observation on GHOST plus an anchor event on both engines.
+     * A sign mismatch against the node's [RouteNode.levelDelta] (route
+     * says up, pressure says down) stays unconfirmed rather than
+     * anchoring the wrong belief.
+     */
+    private fun onLevelEvent(event: LevelAwareness.LevelEvent) {
+        val target = targetNode ?: return
+        if (target.type != NodeType.LEVEL_CHANGE) return
+        if (target.levelDelta != 0 && (event.deltaHM > 0.0) != (target.levelDelta > 0)) return
+        if (!confirmedLevelNodeIds.add(target.id)) return
+        ghost?.let {
+            val nodeS = geometry.nodeS(target.id) ?: it.meanS
+            it.observe(Observation.Level(nodeS))
+        }
+        emit(NavEvent.Anchor(AnchorKind.LEVEL, target.id, absoluteS))
+        emit(NavEvent.Haptic(HapticPattern.CONFIRM))
+    }
+
     private fun onNotYet() {
         if (phase != NavPhase.CONFIRM) return
         // Dismissed, not confirmed: keep walking this leg; auto-advance only
@@ -296,6 +328,7 @@ class Navigator(
         yawTrail.clear()
         legYaws.clear()
         prevOdoM = dist
+        levelAwareness.resetLeg()
         ghost?.let {
             val s = geometry.legStartS(legIndex)
             legStartDist = s
@@ -329,6 +362,7 @@ class Navigator(
         lastAnchorLegIndex = legIndex
         confirmAutoAdvanceProgress = null
         legYaws.clear()
+        levelAwareness.resetLeg()
         setPhase(NavPhase.WALK)
     }
 
@@ -461,9 +495,12 @@ class Navigator(
 
     private fun instructionFor(target: RouteNode?, landmark: Landmark?): String = when (phase) {
         NavPhase.ALIGN -> route.start.alignmentHint
-        NavPhase.WALK -> if (target?.type == NodeType.DESTINATION && isLastLeg &&
-            remaining <= config.navArrivePromptM
-        ) "You're here — ${target.label}" else "Walk straight · ${ceil(remaining.coerceAtLeast(0.0)).toInt()} m"
+        NavPhase.WALK -> when {
+            target?.type == NodeType.LEVEL_CHANGE -> levelCueFor(target)
+            target?.type == NodeType.DESTINATION && isLastLeg &&
+                remaining <= config.navArrivePromptM -> "You're here — ${target.label}"
+            else -> "Walk straight · ${ceil(remaining.coerceAtLeast(0.0)).toInt()} m"
+        }
         NavPhase.APPROACH -> {
             val dir = turnWord(target?.turn)
             val place = landmark?.title ?: target?.label ?: "the turn"
@@ -483,5 +520,26 @@ class Navigator(
         TurnDir.RIGHT -> "right"
         TurnDir.U_TURN -> "around"
         null -> "ahead"
+    }
+
+    /**
+     * Level cue (W12-08): the stamped cue until the barometer confirms,
+     * then the cue confirms itself ("Down 1 level ✓"). The only new copy
+     * is the confirmation marker; the words come from the node's
+     * [RouteNode.levelDelta] like [defaultCue].
+     */
+    private fun levelCueFor(node: RouteNode): String =
+        if (node.id in confirmedLevelNodeIds) confirmedLevelCue(node)
+        else node.cue.ifEmpty { defaultCue(node) }
+
+    private fun confirmedLevelCue(node: RouteNode): String {
+        val floors = abs(node.levelDelta)
+        return when {
+            floors == 0 -> "Change level ✓"
+            node.levelDelta > 0 && floors == 1 -> "Up 1 level ✓"
+            node.levelDelta > 0 -> "Up $floors levels ✓"
+            floors == 1 -> "Down 1 level ✓"
+            else -> "Down $floors levels ✓"
+        }
     }
 }

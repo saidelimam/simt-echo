@@ -30,6 +30,8 @@ enum class NavPhase {
 enum class AnchorKind {
     TURN,
     LANDMARK,
+    /** Barometer-confirmed LEVEL_CHANGE node (W12-08 self-confirm). */
+    LEVEL,
 }
 
 /** Immutable snapshot the Navigate screen renders. */
