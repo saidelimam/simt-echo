@@ -15,7 +15,6 @@ import kotlinx.coroutines.flow.merge
 import okio.Path
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
-import kotlin.random.Random
 
 /** What the Share screen shows: the QR URI plus where we are serving. */
 data class OfferInfo(
@@ -37,7 +36,7 @@ class TransferService(
     private val transport: PeerTransport,
     private val routes: RouteRepository,
     private val store: FileStore,
-    private val randomBytes: (Int) -> ByteArray = { size -> Random.nextBytes(size) },
+    private val randomBytes: (Int) -> ByteArray = ::secureRandomBytes,
     private val nowMs: () -> Long = { 0L },
     /** Internet relay (W4-05); null until W3-02 supplies Worker config. */
     private val relay: RelayClient? = null,

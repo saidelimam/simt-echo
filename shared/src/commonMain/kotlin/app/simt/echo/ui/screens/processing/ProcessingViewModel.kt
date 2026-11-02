@@ -68,6 +68,13 @@ data class ConsentInfo(
     val photos: Int,
     val clips: Int,
     val samEnabled: Boolean,
+    /**
+     * True only when an on-device face detector is wired into the upload
+     * path (plan W11-04). The face-filter sentence in [consentCopy] renders
+     * only then — production passes no detector today, and the copy must
+     * not promise a pre-filter that is not active (audit W14-04).
+     */
+    val faceFilterActive: Boolean = false,
 )
 
 /** Processing screen phase (plan §8.3): consent → stages → Ready. */
@@ -94,12 +101,13 @@ data class ProcessingUiState(
 /** Plan consent copy (W3-02 verbatim): files, retention, training tier, shape. */
 fun consentCopy(info: ConsentInfo): String {
     val clips = if (info.samEnabled) " (and ${info.clips} short silent clips if SAM is enabled)" else ""
+    val face = if (info.faceFilterActive) " " + FACE_FILTER_DISCLOSURE else ""
     return "Send ${info.photos} photos$clips to cloud AI on Cloudflare " +
         "(Meta's Llama 4 Scout on Workers AI; Meta Model API if enabled) via SIMT ECHO's server " +
         "to suggest landmarks. Files are deleted within 24 h (or now, from this screen). " +
         "If the Meta Model API is enabled, its standard tier is used, not the contributor tier " +
-        "whose inputs may be used for training. Your route shape stays on this phone. " +
-        FACE_FILTER_DISCLOSURE
+        "whose inputs may be used for training. Your route shape stays on this phone." +
+        face
 }
 
 /**
@@ -211,7 +219,7 @@ class ProcessingViewModel(
                 }
             }
             val checkpoints = route.nodes.count { it.type != NodeType.START && it.captureTMs != null }
-            counts = ConsentInfo(photos, if (sam) checkpoints else 0, sam)
+            counts = ConsentInfo(photos, if (sam) checkpoints else 0, sam, faceFilterActive = faceDetector != null)
             // Fresh skeleton for the constellation: the route is known,
             // no events have been seen in this session yet.
             lastRoute = route

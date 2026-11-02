@@ -95,8 +95,18 @@ class FacePrivacyTest {
 
     @Test
     fun consentCopyDisclosesTheFaceFilterAndKeepsTheBaseCopy() {
-        val copy = consentCopy(ConsentInfo(photos = 3, clips = 1, samEnabled = true))
+        val copy = consentCopy(ConsentInfo(photos = 3, clips = 1, samEnabled = true, faceFilterActive = true))
         assertTrue(copy.contains(FACE_FILTER_DISCLOSURE), "export preview must disclose the filter")
+        assertTrue(copy.startsWith("Send 3 photos"), "W3-02 base copy stays byte-identical")
+        assertTrue(copy.contains("Your route shape stays on this phone."))
+    }
+
+    @Test
+    fun consentCopyOmitsTheFaceFilterWhenNoDetectorIsWired() {
+        // Production passes no detector today: the copy must not promise a
+        // pre-filter that is not active (audit W14-04).
+        val copy = consentCopy(ConsentInfo(photos = 3, clips = 1, samEnabled = true))
+        assertTrue(!copy.contains(FACE_FILTER_DISCLOSURE), "inactive filter must not be promised")
         assertTrue(copy.startsWith("Send 3 photos"), "W3-02 base copy stays byte-identical")
         assertTrue(copy.contains("Your route shape stays on this phone."))
     }

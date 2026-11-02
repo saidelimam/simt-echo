@@ -3,6 +3,7 @@ package app.simt.echo
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import app.simt.echo.platform.currentEpochMs
 import app.simt.echo.ui.EchoApp
 import app.simt.echo.ui.atmosphere.ProvideCosmosMotionAmbient
 
@@ -29,6 +30,16 @@ class MainActivity : ComponentActivity() {
             ProvideCosmosMotionAmbient {
                 EchoApp(graph)
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Expiry purge on resume (audit 0007 R3, closed in W14-04): a route
+        // that expired while the app sat in the background vanishes before
+        // its row can render. Missing storage is a no-op, never a crash.
+        runCatching {
+            (application as EchoApplication).graph.purgeExpiredRoutes(currentEpochMs())
         }
     }
 }

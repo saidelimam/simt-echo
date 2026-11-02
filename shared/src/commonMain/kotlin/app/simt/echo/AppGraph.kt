@@ -47,6 +47,16 @@ class AppGraph(
     val routeRepository: RouteRepository by lazy { RouteRepository(fileStore) }
     val draftRepository: DraftRepository by lazy { DraftRepository(fileStore) }
 
+    /**
+     * Deletes routes whose privacy expiry has passed (audit 0007 R3, closed
+     * in W14-04). Called at process start (`EchoApplication.onCreate`) and
+     * on every foreground return (`MainActivity.onResume`), so a route that
+     * expires while the app sits in the background is gone before its row
+     * can render — share/export paths stay fail-closed regardless.
+     * @return how many routes were purged.
+     */
+    fun purgeExpiredRoutes(nowMs: Long): Int = routeRepository.purgeExpired(nowMs)
+
     /** Persisted tunables (W4-02): capture, navigation and Settings all
      * read the calibrated step-K from here — never a hard-coded default. */
     val configRepository: ConfigRepository by lazy { ConfigRepository(fileStore) }

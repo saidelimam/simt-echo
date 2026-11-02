@@ -28,7 +28,7 @@ class EchoApplication : Application() {
         // Receiver expiry (plan W3-08): routes whose time has come vanish
         // on start. Missing storage is a no-op, never a crash at launch.
         runCatching {
-            graph.routeRepository.purgeExpired(System.currentTimeMillis())
+            graph.purgeExpiredRoutes(System.currentTimeMillis())
         }
     }
 }
