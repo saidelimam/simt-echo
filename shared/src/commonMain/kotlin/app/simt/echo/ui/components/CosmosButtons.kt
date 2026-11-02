@@ -23,14 +23,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
+import app.simt.echo.ui.atmosphere.LocalEchoRipples
 import app.simt.echo.ui.theme.EchoExtras
 import app.simt.echo.ui.theme.EchoTouchOther
 
@@ -68,13 +72,28 @@ fun CosmosPrimaryButton(
         Brush.horizontalGradient(listOf(extras.ember, extras.rose))
     }
     var focused by remember { mutableStateOf(false) }
+    // Ripple motif (luminous-freeze §4): a press sends a ripple across the
+    // echo field from this command's centre. Position is kept outside
+    // state — reading it never recomposes.
+    val ripples = LocalEchoRipples.current
+    val centerInRoot = remember { FloatArray(2) }
     Surface(
-        onClick = { if (!loading) onClick() },
+        onClick = {
+            if (!loading) {
+                ripples?.emit(Offset(centerInRoot[0], centerInRoot[1]))
+                onClick()
+            }
+        },
         enabled = enabled && !loading,
         shape = shape,
         color = Color.Transparent,
         contentColor = MaterialTheme.colorScheme.onPrimary,
         modifier = modifier
+            .onGloballyPositioned { coordinates ->
+                val center = coordinates.boundsInRoot().center
+                centerInRoot[0] = center.x
+                centerInRoot[1] = center.y
+            }
             .sizeIn(minWidth = EchoTouchOther, minHeight = EchoTouchOther)
             .background(gradient, shape)
             .testTag("$CosmosButtonTag:$label")
