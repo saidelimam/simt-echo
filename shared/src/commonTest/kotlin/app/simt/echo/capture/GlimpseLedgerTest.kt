@@ -2,7 +2,6 @@ package app.simt.echo.capture
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -44,7 +43,6 @@ class GlimpseLedgerTest {
         luma: ByteArray,
         tNs: Long = 0L,
         jpeg: (() -> ByteArray?)? = null,
-        releaseFn: () -> Unit = {},
     ): FrameSample = FrameSample(
         tNs = tNs,
         width = W,
@@ -52,7 +50,6 @@ class GlimpseLedgerTest {
         decimation = 1,
         luma = luma,
         jpeg = jpeg,
-        releaseFn = releaseFn,
     )
 
     private class FakeStore : LedgerStore {
@@ -275,31 +272,6 @@ class GlimpseLedgerTest {
         assertEquals(3.3, entry.odometerM, 1e-12)
         assertTrue(entry.score > 0.0)
         assertEquals(ledger.bucketFor(3.3), entry.bucketIndex)
-    }
-
-    @Test
-    fun offerReleasesTheSampleExactlyOnce() {
-        var releases = 0
-        val ledger = GlimpseLedger()
-        ledger.offer(sample(sharpLuma(), releaseFn = { releases++ }), odometerM = 0.1)
-        ledger.offer(sample(blurredLuma(), releaseFn = { releases++ }), odometerM = 0.1)
-        assertEquals(2, releases)
-    }
-
-    @Test
-    fun offerReleasesTheSampleWhenPersistenceThrows() {
-        var releases = 0
-        val failingStore = object : LedgerStore {
-            override fun persist(bucketIndex: Long, tNs: Long, jpeg: ByteArray): String? = error("disk full")
-        }
-        val ledger = GlimpseLedger(store = failingStore)
-        assertFailsWith<IllegalStateException> {
-            ledger.offer(
-                sample(sharpLuma(), jpeg = { byteArrayOf(1) }, releaseFn = { releases++ }),
-                odometerM = 0.1,
-            )
-        }
-        assertEquals(1, releases)
     }
 
     @Test

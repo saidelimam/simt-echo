@@ -84,6 +84,7 @@ class CaptureSession(
     private var collectJob: Job? = null
     private var autosaveJob: Job? = null
     private var resumedDraftId: String? = null
+    private var ledger: RecordingLedger? = null
 
     /** Preview is live; [start] may be called. */
     fun ready() {
@@ -117,8 +118,9 @@ class CaptureSession(
     }
 
     /**
-     * Creates the draft, takes the start photo, starts motion + video.
-     * Legal only from READY; anything else is a programmer error.
+     * Creates the draft, starts motion + video and arms the glimpse ledger
+     * (the start photo is produced later from the ledger). Legal only from
+     * READY; anything else is a programmer error.
      */
     suspend fun start() {
         check(_state.value == CaptureState.READY) { "start() from ${_state.value}" }
@@ -128,11 +130,22 @@ class CaptureSession(
         // Calibrated geometry in, raw sensors out: the configured step K
         // reaches any calibratable source (W4-02); others ignore it.
         (motion as? StepCalibratable)?.stepK = config.stepK
+        val recordingLedger = RecordingLedger(drafts, id, camera.frameTap)
+        ledger = recordingLedger
         // Subscribe before motion starts so no early step is lost.
         collectJob = scope.launch { motion.updates.collect(::onUpdate) }
-        camera.takePhoto(drafts.draftFilePath(id, START_PHOTO))
         motion.start()
-        videoStartNs = camera.startVideo(drafts.draftFilePath(id, VIDEO_FILE))
+        recordingLedger.attach()
+        try {
+            videoStartNs = camera.startVideo(drafts.draftFilePath(id, VIDEO_FILE))
+        } catch (e: Throwable) {
+            // A failed start leaves nothing running: the session stays READY
+            // and a retry must not stack a second collector or consumer.
+            recordingLedger.detach()
+            collectJob?.cancel()
+            motion.stop()
+            throw e
+        }
         _state.value = CaptureState.RECORDING
         autosaveJob = scope.launch {
             while (isActive) {
@@ -160,10 +173,16 @@ class CaptureSession(
     suspend fun beginFinish() {
         check(_state.value == CaptureState.RECORDING) { "beginFinish() from ${_state.value}" }
         _state.value = CaptureState.FINISHING
+        ledger?.detach()
         collectJob?.cancel()
         autosaveJob?.cancel()
         motion.stop()
-        camera.stopVideo()
+        try {
+            camera.stopVideo()
+        } finally {
+            // Frames stopped with the consumer; keep what the ledger kept.
+            ledger?.persist()
+        }
     }
 
     /**
@@ -187,6 +206,7 @@ class CaptureSession(
     }
 
     private fun onUpdate(update: MotionUpdate) {
+        ledger?.onMotion(update)
         motionSourceName = update.source
         if (startElapsedNs == 0L) startElapsedNs = update.tNs
         val isHeartbeat = update.tNs - lastSampleNs >= HEARTBEAT_NS

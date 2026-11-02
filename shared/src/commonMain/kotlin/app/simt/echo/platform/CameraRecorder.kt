@@ -22,9 +22,6 @@ interface CameraRecorder {
     @Composable
     fun Preview(modifier: Modifier, onError: (String) -> Unit = {})
 
-    /** Single still into [out], e.g. the start photo. */
-    suspend fun takePhoto(out: Path): Path
-
     /**
      * Starts silent video into [out].
      * @return `tNs` of the recording start on the [MotionUpdate] clock,
@@ -36,7 +33,8 @@ interface CameraRecorder {
     suspend fun stopVideo(): Path
 
     /**
-     * Throttled analysed frames (plan W10-03 Frame Tap). Graphs without
+     * Throttled analysed frames (plan W10-03 Frame Tap): register a
+     * [app.simt.echo.capture.FrameConsumer] to receive them. Graphs without
      * analysis report [NoOpFrameTap]; fakes inherit it, so existing tests
      * compile and behave unchanged.
      */

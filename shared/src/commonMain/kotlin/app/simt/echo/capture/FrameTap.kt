@@ -1,29 +1,47 @@
 package app.simt.echo.capture
 
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.emptyFlow
-
 /**
  * Frame Tap seam (plan W10-03): the phone watches its own camera cheaply.
  *
  * Frames arrive on the motion clock (`tNs`, `elapsedRealtimeNanos` base, so
  * they align with IMU `event.timestamp` once [TimestampAlignment] holds),
  * each carrying a decimated luma view for sharpness/novelty scoring. The
- * full frame is JPEG-encoded lazily — only when a consumer (W11-01 ledger)
- * actually keeps the frame — never for every analysed frame.
+ * full frame is JPEG-encoded lazily — only when the consumer (W11-01
+ * ledger) actually keeps the frame — never for every analysed frame.
+ *
+ * Delivery is a synchronous sink, not a stream: the analyzer thread calls
+ * [FrameConsumer.onFrame] and the sample is valid only for the duration of
+ * that call. That is what makes the lazy JPEG possible (the camera image is
+ * closed when analysis returns) and what makes the pooled luma buffer
+ * leak-free by construction: the analyzer returns it to [LumaBufferPool]
+ * itself after the consumer returns, so a consumer can neither forget nor
+ * double-release it, and a slow consumer drops frames (keep-latest at the
+ * camera) instead of queueing them.
  *
  * Hot-path contract: the analyzer thread never suspends and never allocates
- * per camera frame. Decimation scratch comes from [LumaBufferPool] (three
- * slots); [FrameRateGovernor] drops frames before any copy; emission uses a
- * non-suspending `tryEmit` with keep-latest overflow, so a slow ledger
- * drops frames instead of back-pressuring the camera.
+ * per camera frame beyond the sample itself. Decimation scratch comes from
+ * [LumaBufferPool] (three slots); [FrameRateGovernor] drops frames before
+ * any copy; with no consumer registered the analyzer does no work at all.
  */
 interface FrameTap {
-    /** Throttled analysed frames; empty until the platform binds analysis. */
-    val frames: Flow<FrameSample>
+    /**
+     * Registers the single sink invoked on the analysis thread, or clears it
+     * with null. Takes effect for the next frame; thread-safe.
+     */
+    fun setConsumer(consumer: FrameConsumer?)
 }
 
-/** One analysed frame. */
+/** Sink for [FrameTap] frames; runs on the analysis thread and must not block long. */
+fun interface FrameConsumer {
+    /**
+     * Handles [sample] synchronously. The sample, its [FrameSample.luma] and
+     * its [FrameSample.jpeg] are valid only until this call returns: copy
+     * anything needed, never retain the sample.
+     */
+    fun onFrame(sample: FrameSample)
+}
+
+/** One analysed frame, valid only inside [FrameConsumer.onFrame]. */
 class FrameSample(
     /** Frame time on the motion clock (already offset-corrected). */
     val tNs: Long,
@@ -34,21 +52,17 @@ class FrameSample(
     val decimation: Int,
     /**
      * Decimated Y plane, row-major, `(width / decimation) ×
-     * (height / decimation)` bytes. Pooled while a ledger holds it: call
-     * [release] when done, exactly once.
+     * (height / decimation)` bytes. Pooled and recycled after the consumer
+     * returns: never retain it.
      */
     val luma: ByteArray,
     /**
-     * Lazy JPEG of the full frame, encoded on first call only. Null when
-     * the source kept no full-frame copy (the common case for dropped or
-     * ledger-ignored frames).
+     * Encodes the full frame as a JPEG on each call (≤ 960 px long side,
+     * quality 80, upright). Only callable inside [FrameConsumer.onFrame];
+     * null when the source cannot encode (tests, ledger-ignored frames).
      */
     val jpeg: (() -> ByteArray?)? = null,
-    private val releaseFn: () -> Unit = {},
 ) {
-    /** Returns the pooled buffer; no-op for heap-owned samples. */
-    fun release() = releaseFn()
-
     override fun equals(other: Any?): Boolean =
         other is FrameSample &&
             tNs == other.tNs &&
@@ -69,7 +83,7 @@ class FrameSample(
 
 /** [FrameTap] with no frames: graphs without analysis, previews, iOS. */
 object NoOpFrameTap : FrameTap {
-    override val frames: Flow<FrameSample> = emptyFlow()
+    override fun setConsumer(consumer: FrameConsumer?) = Unit
 }
 
 /**
@@ -120,8 +134,8 @@ class FrameRateGovernor(val baseIntervalNs: Long) {
 /**
  * Fixed pool of reusable luma buffers (three slots, plan W10-03).
  * Preallocated once; [acquire] returns null when all slots are out (the
- * caller drops the frame — keep-latest semantics), never grows. Thread-safe:
- * the analyzer thread acquires while the ledger thread releases.
+ * caller drops the frame — keep-latest semantics), never grows. Thread-safe.
+ * Prefer [withBuffer], which makes release unforgettable.
  */
 class LumaBufferPool(val slots: Int = POOL_SLOTS, val bufferSize: Int) {
     private val lock = PoolLock()
@@ -149,6 +163,21 @@ class LumaBufferPool(val slots: Int = POOL_SLOTS, val bufferSize: Int) {
         }
     }
 
+    /**
+     * Runs [block] on a free buffer and returns it to the pool afterwards,
+     * even when [block] throws. Returns false (block not run) when every
+     * slot is out: the caller drops the frame.
+     */
+    inline fun withBuffer(block: (ByteArray) -> Unit): Boolean {
+        val buffer = acquire() ?: return false
+        try {
+            block(buffer)
+        } finally {
+            release(buffer)
+        }
+        return true
+    }
+
     /** Free slots; tests and ledger-full telemetry only. */
     fun freeCount(): Int = lock.withLock { inUse.count { !it } }
 
@@ -163,9 +192,8 @@ class LumaBufferPool(val slots: Int = POOL_SLOTS, val bufferSize: Int) {
  *
  * @param isRealtime true when `SENSOR_INFO_TIMESTAMP_SOURCE` is REALTIME:
  * frames already share the IMU/motion clock and [offsetNs] is zero.
- * @param offsetNs added to every raw frame timestamp when the source is
- * not REALTIME: recorded at bind time and applied in [alignTimestamp], so
- * the ledger never silently drifts from motion.
+ * @param offsetNs added to every raw frame timestamp by [alignTimestamp];
+ * zero for REALTIME (see [timestampAlignmentFor] for other sources).
  */
 data class TimestampAlignment(val isRealtime: Boolean, val offsetNs: Long) {
     companion object {
@@ -174,12 +202,22 @@ data class TimestampAlignment(val isRealtime: Boolean, val offsetNs: Long) {
     }
 }
 
+/**
+ * Alignment for a camera whose timestamp source is REALTIME or not. Only
+ * REALTIME frames share the motion clock; for any other source no honest
+ * offset exists (it differs per device and drifts), so the result is null —
+ * the tap is unusable and the platform binds without analysis rather than
+ * pretending an offset of zero.
+ */
+fun timestampAlignmentFor(sourceIsRealtime: Boolean): TimestampAlignment? =
+    if (sourceIsRealtime) TimestampAlignment.REALTIME else null
+
 /** Applies [TimestampAlignment.offsetNs] to a raw frame timestamp. */
 fun alignTimestamp(rawNs: Long, alignment: TimestampAlignment): Long = rawNs + alignment.offsetNs
 
 /**
- * Mutual exclusion for [LumaBufferPool]: the analyzer thread acquires while
- * the ledger thread releases. Android uses a [ReentrantLock][java.util.concurrent.locks.ReentrantLock],
+ * Mutual exclusion for [LumaBufferPool] and for state shared between the
+ * analyzer thread and a consumer (see [RecordingLedger]). Android uses a [ReentrantLock][java.util.concurrent.locks.ReentrantLock],
  * iOS an `NSRecursiveLock` — same contract, platform lock.
  */
 internal expect class PoolLock() {

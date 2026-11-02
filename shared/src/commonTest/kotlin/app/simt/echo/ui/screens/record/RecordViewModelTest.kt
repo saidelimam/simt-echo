@@ -59,8 +59,6 @@ class RecordViewModelTest {
         @androidx.compose.runtime.Composable
         override fun Preview(modifier: androidx.compose.ui.Modifier, onError: (String) -> Unit) = Unit
 
-        override suspend fun takePhoto(out: Path): Path = out
-
         override suspend fun startVideo(out: Path): Long {
             this.out = out
             return 0L

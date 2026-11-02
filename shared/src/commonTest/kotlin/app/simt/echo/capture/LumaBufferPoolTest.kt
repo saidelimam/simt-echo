@@ -2,6 +2,8 @@ package app.simt.echo.capture
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
@@ -48,5 +50,35 @@ class LumaBufferPoolTest {
     fun buffersHaveTheRequestedSize() {
         val pool = LumaBufferPool(bufferSize = 1_024)
         assertEquals(1_024, assertNotNull(pool.acquire()).size)
+    }
+
+    @Test
+    fun withBufferReturnsTheSlotWhenTheBlockCompletes() {
+        val pool = LumaBufferPool(bufferSize = 16)
+        var ran = false
+        assertTrue(pool.withBuffer { ran = true })
+        assertTrue(ran)
+        assertEquals(3, pool.freeCount())
+    }
+
+    @Test
+    fun withBufferReturnsTheSlotWhenTheBlockThrows() {
+        val pool = LumaBufferPool(bufferSize = 16)
+        repeat(10) {
+            assertFailsWith<IllegalStateException> { pool.withBuffer { error("consumer failed") } }
+        }
+        // Ten failing consumers later nothing leaked: the old DROP_LATEST
+        // flow stranded a buffer per dropped frame and starved after three.
+        assertEquals(3, pool.freeCount())
+    }
+
+    @Test
+    fun withBufferSkipsTheBlockWhenEverySlotIsOut() {
+        val pool = LumaBufferPool(bufferSize = 16)
+        repeat(3) { assertNotNull(pool.acquire()) }
+        var ran = false
+        assertFalse(pool.withBuffer { ran = true })
+        assertFalse(ran)
+        assertEquals(0, pool.freeCount())
     }
 }

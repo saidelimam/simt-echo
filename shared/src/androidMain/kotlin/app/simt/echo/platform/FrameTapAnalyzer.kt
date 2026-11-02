@@ -1,6 +1,8 @@
 package app.simt.echo.platform
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Matrix
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.os.Build
@@ -8,6 +10,7 @@ import android.os.PowerManager
 import android.util.Log
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
+import app.simt.echo.capture.FrameConsumer
 import app.simt.echo.capture.FrameRateGovernor
 import app.simt.echo.capture.FrameSample
 import app.simt.echo.capture.FrameTap
@@ -15,9 +18,9 @@ import app.simt.echo.capture.LumaBufferPool
 import app.simt.echo.capture.ThermalState
 import app.simt.echo.capture.TimestampAlignment
 import app.simt.echo.capture.alignTimestamp
-import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
+import app.simt.echo.capture.timestampAlignmentFor
+import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -25,26 +28,33 @@ import java.util.concurrent.Executors
  * Frame Tap platform source (plan W10-03).
  *
  * A single [ImageAnalysis.Analyzer] on a dedicated single-thread executor
- * feeds [FrameTap.frames]. Hot-path contract: no suspension, no per-frame
- * allocation. Frames are dropped before any copy when nobody subscribes
- * (the W11-01 ledger is the first subscriber), when [FrameRateGovernor]
- * holds them back, or when all three pooled buffers are checked out —
- * keep-latest semantics matching `STRATEGY_KEEP_ONLY_LATEST`.
+ * hands frames to the registered [FrameConsumer] synchronously. Frames are
+ * dropped before any copy when no consumer is registered, when
+ * [FrameRateGovernor] holds them back, or when all three pooled buffers are
+ * checked out — keep-latest semantics matching `STRATEGY_KEEP_ONLY_LATEST`.
  *
- * Full-frame JPEG is intentionally not retained here: [FrameSample.jpeg]
- * stays null until the ledger (W11-01) owns retention, encoding, and the
- * matching [FrameSample.release] discipline.
+ * Ownership is leak-free by construction: the pooled luma buffer is lent to
+ * the consumer for the duration of the call and returned in a `finally`, and
+ * the camera image closes only after that, so [FrameSample.jpeg] can encode
+ * the full frame (≤ 960 px, quality 80, upright) while the image is still
+ * open — and only for frames the consumer chooses to keep. A consumer that
+ * throws costs one dropped frame, never the analyzer thread.
  */
 class FrameTapSource(
     private val governor: FrameRateGovernor,
     private val thermalNow: () -> ThermalState = { ThermalState.NORMAL },
     private val alignmentNow: () -> TimestampAlignment = { TimestampAlignment.REALTIME },
 ) : FrameTap {
-    private val _frames = MutableSharedFlow<FrameSample>(
-        extraBufferCapacity = 1,
-        onBufferOverflow = BufferOverflow.DROP_LATEST,
-    )
-    override val frames: Flow<FrameSample> = _frames
+    @Volatile
+    private var consumer: FrameConsumer? = null
+
+    /** True while a consumer is registered; analysis-only graphs bind only then. */
+    val hasConsumer: Boolean
+        get() = consumer != null
+
+    override fun setConsumer(consumer: FrameConsumer?) {
+        this.consumer = consumer
+    }
 
     @Volatile
     private var pool: LumaBufferPool? = null
@@ -57,21 +67,21 @@ class FrameTapSource(
 
     val analyzer = ImageAnalysis.Analyzer { image ->
         try {
-            // No ledger subscribed yet: zero work beyond closing the frame.
-            if (_frames.subscriptionCount.value == 0) return@Analyzer
+            // No consumer: zero work beyond closing the frame.
+            val sink = consumer ?: return@Analyzer
             val tNs = alignTimestamp(image.imageInfo.timestamp, alignmentNow())
             if (tNs - lastThermalCheckNs >= THERMAL_POLL_NS) {
                 cachedThermal = runCatching { thermalNow() }.getOrDefault(ThermalState.NORMAL)
                 lastThermalCheckNs = tNs
             }
             if (!governor.shouldEmit(tNs, cachedThermal)) return@Analyzer
-            emitDecimated(image, tNs)
+            deliver(image, tNs, sink)
         } finally {
             image.close()
         }
     }
 
-    private fun emitDecimated(image: ImageProxy, tNs: Long) {
+    private fun deliver(image: ImageProxy, tNs: Long, sink: FrameConsumer) {
         val plane = image.planes.firstOrNull() ?: return
         val downW = image.width / DECIMATION
         val downH = image.height / DECIMATION
@@ -83,33 +93,23 @@ class FrameTapSource(
             current = LumaBufferPool(bufferSize = need)
             pool = current
         }
-        val owned = current.acquire() ?: return // Pool exhausted: drop, keep-latest.
         try {
-            val src = plane.buffer
-            val rowStride = plane.rowStride
-            val pixelStride = plane.pixelStride
-            var dst = 0
-            var y = 0
-            while (y < image.height) {
-                val rowBase = y * rowStride
-                var x = 0
-                while (x < image.width) {
-                    owned[dst++] = src.get(rowBase + x * pixelStride)
-                    x += DECIMATION
-                }
-                y += DECIMATION
+            // Pool exhausted: withBuffer drops the frame, keep-latest.
+            current.withBuffer { luma ->
+                decimateLuma(plane.buffer, plane.rowStride, plane.pixelStride, downW, downH, DECIMATION, luma)
+                sink.onFrame(
+                    FrameSample(
+                        tNs = tNs,
+                        width = image.width,
+                        height = image.height,
+                        decimation = DECIMATION,
+                        luma = luma,
+                        jpeg = { image.toLedgerJpeg() },
+                    ),
+                )
             }
-            val sample = FrameSample(
-                tNs = tNs,
-                width = image.width,
-                height = image.height,
-                decimation = DECIMATION,
-                luma = owned,
-            ) { current.release(owned) }
-            if (!_frames.tryEmit(sample)) current.release(owned)
         } catch (e: Exception) {
-            Log.d(TAG, "Frame Tap copy failed, frame dropped", e)
-            current.release(owned)
+            Log.w(TAG, "Frame Tap frame dropped", e)
         }
     }
 
@@ -123,6 +123,67 @@ class FrameTapSource(
         const val THERMAL_POLL_NS = 5_000_000_000L
     }
 }
+
+/**
+ * Copies every [decimation]-th pixel of the Y plane into [dst] as exactly
+ * [downW] × [downH] row-major samples (the caller sizes both from
+ * `width / decimation`, so a ragged edge is cropped, never overrun).
+ */
+internal fun decimateLuma(
+    src: ByteBuffer,
+    rowStride: Int,
+    pixelStride: Int,
+    downW: Int,
+    downH: Int,
+    decimation: Int,
+    dst: ByteArray,
+) {
+    var out = 0
+    for (row in 0 until downH) {
+        val rowBase = row * decimation * rowStride
+        for (col in 0 until downW) {
+            dst[out++] = src.get(rowBase + col * decimation * pixelStride)
+        }
+    }
+}
+
+/**
+ * Output size for a kept-frame JPEG: the long side capped at [maxSide],
+ * aspect ratio preserved, never upscaled, never below 1 px.
+ */
+internal fun jpegTargetSize(width: Int, height: Int, maxSide: Int): Pair<Int, Int> {
+    val longSide = maxOf(width, height)
+    if (longSide <= maxSide) return width to height
+    val scale = maxSide.toDouble() / longSide
+    return maxOf(1, (width * scale).toInt()) to maxOf(1, (height * scale).toInt())
+}
+
+/**
+ * Encodes this frame for the ledger: upright (rotated by the image's
+ * `rotationDegrees`), long side ≤ [LEDGER_JPEG_MAX_SIDE], quality
+ * [LEDGER_JPEG_QUALITY]. Must run before the image closes. A failed encode
+ * degrades to a metadata-only ledger entry (null), never a crash.
+ */
+internal fun ImageProxy.toLedgerJpeg(): ByteArray? = try {
+    val source = toBitmap()
+    val (w, h) = jpegTargetSize(source.width, source.height, LEDGER_JPEG_MAX_SIDE)
+    val matrix = Matrix().apply {
+        postScale(w.toFloat() / source.width, h.toFloat() / source.height)
+        postRotate(imageInfo.rotationDegrees.toFloat())
+    }
+    val upright = Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true)
+    val out = ByteArrayOutputStream()
+    upright.compress(Bitmap.CompressFormat.JPEG, LEDGER_JPEG_QUALITY, out)
+    if (upright !== source) upright.recycle()
+    source.recycle()
+    out.toByteArray()
+} catch (e: Exception) {
+    Log.w(TAG, "Ledger JPEG encode failed, metadata only", e)
+    null
+}
+
+private const val LEDGER_JPEG_MAX_SIDE = 960
+private const val LEDGER_JPEG_QUALITY = 80
 
 /** Dedicated single-thread executor for analysis (plan W10-03). */
 internal fun newAnalysisExecutor(): ExecutorService =
@@ -149,27 +210,24 @@ internal fun Context.currentThermalState(): ThermalState {
 
 /**
  * Verifies `SENSOR_INFO_TIMESTAMP_SOURCE` is REALTIME so frame timestamps
- * share the IMU/motion clock (plan W10-03). Anything else records a
- * non-realtime alignment: the offset is calibrated against first frames by
- * the W11-01 ledger on-device (no honest static estimate exists), and every
- * frame is still corrected through [alignTimestamp], never silently raw.
+ * share the IMU/motion clock (plan W10-03). Returns null when they cannot
+ * be placed on that clock — a non-REALTIME source, or one that cannot be
+ * read — so the recorder binds without analysis (`LEDGER_OFF`) instead of
+ * scoring frames against the wrong odometer.
  */
-internal fun queryTimestampAlignment(context: Context): TimestampAlignment = runCatching {
-    val manager = context.getSystemService(CameraManager::class.java) ?: return TimestampAlignment.REALTIME
+internal fun queryTimestampAlignment(context: Context): TimestampAlignment? = runCatching {
+    val manager = context.getSystemService(CameraManager::class.java) ?: return null
     val backId = manager.cameraIdList.firstOrNull { id ->
         runCatching {
             manager.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING) ==
                 CameraCharacteristics.LENS_FACING_BACK
         }.getOrDefault(false)
-    } ?: return TimestampAlignment.REALTIME
+    } ?: return null
     val source = manager.getCameraCharacteristics(backId)
         .get(CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE)
-    if (source == CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME) {
-        TimestampAlignment.REALTIME
-    } else {
-        Log.w(TAG, "Camera timestamp source is not REALTIME (source=$source); offset calibrated by ledger")
-        TimestampAlignment(isRealtime = false, offsetNs = 0L)
-    }
-}.getOrDefault(TimestampAlignment.REALTIME)
+    val alignment = timestampAlignmentFor(source == CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME)
+    if (alignment == null) Log.w(TAG, "Camera timestamp source is not REALTIME (source=$source); ledger off")
+    alignment
+}.getOrNull()
 
 private const val TAG = "EchoFrameTap"

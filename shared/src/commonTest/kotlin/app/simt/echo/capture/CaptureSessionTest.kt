@@ -18,6 +18,8 @@ import okio.Path.Companion.toPath
 import okio.fakefilesystem.FakeFileSystem
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.test.assertFailsWith
@@ -44,20 +46,26 @@ class CaptureSessionTest {
         override fun stop() = Unit
     }
 
+    private class FakeFrameTap : FrameTap {
+        var consumer: FrameConsumer? = null
+            private set
+        override fun setConsumer(consumer: FrameConsumer?) {
+            this.consumer = consumer
+        }
+    }
+
     private class FakeCamera : CameraRecorder {
-        var photoPath: Path? = null
+        val tap = FakeFrameTap()
+        override val frameTap: FrameTap = tap
         var videoPath: Path? = null
         var stopCalls = 0
+        var startFailure: Exception? = null
 
         @androidx.compose.runtime.Composable
         override fun Preview(modifier: androidx.compose.ui.Modifier, onError: (String) -> Unit) = Unit
 
-        override suspend fun takePhoto(out: Path): Path {
-            photoPath = out
-            return out
-        }
-
         override suspend fun startVideo(out: Path): Long {
+            startFailure?.let { throw it }
             videoPath = out
             return VIDEO_START_NS
         }
@@ -157,7 +165,8 @@ class CaptureSessionTest {
         runCurrent() // let the motion collector subscribe
         assertEquals(CaptureState.RECORDING, session.state.value)
         assertTrue(motion.started)
-        assertTrue(camera.photoPath.toString().endsWith("drafts/draft-1/start.jpg"))
+        // No still is taken: the start photo is derived from the ledger later.
+        assertFalse(drafts.draftFileExists("draft-1", CaptureSession.START_PHOTO))
         assertTrue(camera.videoPath.toString().endsWith("drafts/draft-1/video.mp4"))
 
         // Step at 0.6 s, heartbeat at 1.1 s, step at 1.2 s.
@@ -227,6 +236,72 @@ class CaptureSessionTest {
         session.mark()
         assertTrue(haptics.played.isEmpty())
         assertEquals(0, session.hud.value.marks)
+    }
+
+    private fun sharpSample(tNs: Long, jpeg: ByteArray) = FrameSample(
+        tNs = tNs,
+        width = 32,
+        height = 32,
+        decimation = 1,
+        luma = ByteArray(32 * 32) { i -> (if (((i % 32) / 4 + (i / 32) / 4) % 2 == 0) 200 else 40).toByte() },
+        jpeg = { jpeg },
+    )
+
+    @Test
+    fun ledgerFedByTheFrameTapIsPersistedIntoTheDraft() = runTest {
+        val drafts = DraftRepository(FileStore(FakeFileSystem(), "/data".toPath()))
+        val motion = FakeMotion()
+        val camera = FakeCamera()
+        val session = newSession(motion, camera, FakeHaptics(), drafts, this)
+        session.ready()
+        session.start()
+        runCurrent()
+        val consumer = assertNotNull(camera.tap.consumer, "recording registers a frame consumer")
+
+        motion.emit(update(600_000_000L, 0.1, step = true, count = 1))
+        runCurrent()
+        consumer.onFrame(sharpSample(650_000_000L, byteArrayOf(1, 2, 3)))
+        motion.emit(update(1_200_000_000L, 0.7, step = true, count = 2))
+        runCurrent()
+        consumer.onFrame(sharpSample(1_250_000_000L, byteArrayOf(4, 5)))
+
+        session.finish("Walk", "Door")
+
+        val entries = assertNotNull(drafts.loadGlimpseEntries("draft-1"))
+        assertEquals(listOf(0L, 1L), entries.map { it.bucketIndex })
+        assertEquals(listOf("glimpse/0.jpg", "glimpse/1.jpg"), entries.map { it.jpegPath })
+        assertEquals(listOf<Byte>(1, 2, 3), drafts.readDraftFile("draft-1", "glimpse/0.jpg")?.toList())
+        assertEquals(listOf<Byte>(4, 5), drafts.readDraftFile("draft-1", "glimpse/1.jpg")?.toList())
+    }
+
+    @Test
+    fun frameConsumerIsUnregisteredAsSoonAsFinishBegins() = runTest {
+        val drafts = DraftRepository(FileStore(FakeFileSystem(), "/data".toPath()))
+        val camera = FakeCamera()
+        val session = newSession(FakeMotion(), camera, FakeHaptics(), drafts, this)
+        session.ready()
+        assertNull(camera.tap.consumer)
+        session.start()
+        assertNotNull(camera.tap.consumer)
+
+        session.beginFinish()
+
+        assertNull(camera.tap.consumer)
+    }
+
+    @Test
+    fun failedStartLeavesNothingRunning() = runTest {
+        val drafts = DraftRepository(FileStore(FakeFileSystem(), "/data".toPath()))
+        val motion = FakeMotion()
+        val camera = FakeCamera().apply { startFailure = IllegalStateException("no camera") }
+        val session = newSession(motion, camera, FakeHaptics(), drafts, this)
+        session.ready()
+
+        assertFailsWith<IllegalStateException> { session.start() }
+
+        assertNull(camera.tap.consumer)
+        assertTrue(motion.stopped)
+        assertEquals(CaptureState.READY, session.state.value)
     }
 
     private companion object {

@@ -64,8 +64,8 @@ sealed interface LedgerOffer {
 /**
  * Narrow persistence seam for kept-frame JPEGs.
  *
- * The platform implements this with a file write to
- * `drafts/<routeId>/glimpse/` (frame already scaled to ≤ 960 px and
+ * The recording implements this with a draft file write
+ * (`glimpse/<bucket>.jpg`; the frame is already scaled to ≤ 960 px and
  * encoded at quality 80 before it reaches here — that transcode is
  * platform work, outside this pure module). [persist] returns the stored
  * path for [GlimpseEntry.jpegPath], or null to keep metadata only.
@@ -88,10 +88,11 @@ object NoOpLedgerStore : LedgerStore {
  * first frame at a score wins regardless of later duplicates. Novelty is
  * measured against the ledger-wide most-recently-kept hash.
  *
- * Ownership: [offer] takes the sample — it calls [FrameSample.release]
- * exactly once before returning, since the ledger retains scores and
- * hashes but never the luma buffer. The JPEG lambda is invoked only when
- * the frame is kept (never for dropped frames).
+ * Ownership: [offer] only reads the sample and never retains it — the
+ * ledger keeps scores and hashes, not the luma buffer, and the analyzer
+ * recycles the buffer when the frame consumer returns. The JPEG lambda is
+ * invoked only when the frame is kept (never for dropped frames), so it
+ * must be offered from inside [FrameConsumer.onFrame].
  *
  * Allocation: the [FrameQuality] scoring path allocates nothing, and the
  * route median is maintained incrementally (binary insertion into a sorted
@@ -111,14 +112,6 @@ class GlimpseLedger(
      * when its bucket is empty or its score strictly beats the incumbent.
      */
     fun offer(sample: FrameSample, odometerM: Double, omegaRadPerSec: Double = 0.0): LedgerOffer {
-        try {
-            return score(sample, odometerM, omegaRadPerSec)
-        } finally {
-            sample.release()
-        }
-    }
-
-    private fun score(sample: FrameSample, odometerM: Double, omegaRadPerSec: Double): LedgerOffer {
         val planeW = sample.width / sample.decimation.coerceAtLeast(1)
         val planeH = sample.height / sample.decimation.coerceAtLeast(1)
         val sharp = FrameQuality.sharpness(sample.luma, planeW, planeH)

@@ -26,8 +26,6 @@ private class StubCameraRecorder : CameraRecorder {
     @Composable
     override fun Preview(modifier: Modifier, onError: (String) -> Unit) = Unit
 
-    override suspend fun takePhoto(out: Path): Path = out
-
     override suspend fun startVideo(out: Path): Long {
         lastOut = out
         return 0L
