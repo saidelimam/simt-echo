@@ -13,4 +13,15 @@ data class JobRecord(
     val jobId: String,
     val status: String,
     val updatedAtMs: Long,
+    /**
+     * Hash-first upload session the job was created from (plan W11-08),
+     * kept for diagnostics after the create. Null for legacy multipart
+     * submits and for records written before v1.1.
+     */
+    val uploadId: String? = null,
+    /**
+     * Last SSE event id seen while watching the job (plan W11-08), so a
+     * restart resumes the stream without replaying delivered partials.
+     */
+    val lastEventId: String? = null,
 )

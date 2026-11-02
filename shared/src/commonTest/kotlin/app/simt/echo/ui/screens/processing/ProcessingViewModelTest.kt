@@ -20,16 +20,24 @@ import app.simt.echo.model.RouteLeg
 import app.simt.echo.model.RouteNode
 import app.simt.echo.model.StartAnchor
 import app.simt.echo.model.TurnDir
-import app.simt.echo.transfer.CloudApi
 import app.simt.echo.transfer.EchoApiError
+import app.simt.echo.transfer.JobEvent
 import app.simt.echo.transfer.JobPoll
 import app.simt.echo.transfer.JobRecord
 import app.simt.echo.transfer.JobStage
 import app.simt.echo.transfer.UploadFile
+import app.simt.echo.transfer.UploadFileRef
+import app.simt.echo.transfer.CreatedUpload
+import app.simt.echo.transfer.V11CloudApi
+import app.simt.echo.transfer.uploadTimeoutMs
 import app.simt.echo.ui.copy.aiUnavailableCopy
 import app.simt.echo.ui.copy.processingErrorCopy
 import app.simt.echo.ui.copy.processingJobErrorCopy
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -97,16 +105,55 @@ class ProcessingViewModelTest {
         var polls: ArrayDeque<Result<JobPoll>> = ArrayDeque(),
         var submitError: EchoApiError? = null,
         var deleteError: EchoApiError? = null,
-    ) : CloudApi {
+        /** Names the server already holds (resume-skips-present scripts). */
+        var staged: MutableSet<String> = mutableSetOf(),
+        /** One flow per [watchEvents] call; empty when exhausted. */
+        var flows: ArrayDeque<Flow<JobEvent>> = ArrayDeque(),
+    ) : V11CloudApi {
         val submits = mutableListOf<Pair<String, List<UploadFile>>>()
         val deletes = mutableListOf<String>()
+        val puts = mutableListOf<UploadFile>()
+        val jobCreates = mutableListOf<Triple<String, String, String>>()
+        val uploadCreates = mutableListOf<List<UploadFileRef>>()
+        val watchIds = mutableListOf<String?>()
         var samCalls = 0
         var getCalls = 0
+        private var lastRefs: List<UploadFileRef> = emptyList()
 
         override suspend fun submit(manifestJson: String, files: List<UploadFile>): String {
             submitError?.let { throw it }
             submits += manifestJson to files
             return "job-1"
+        }
+
+        override suspend fun createUpload(files: List<UploadFileRef>): CreatedUpload {
+            lastRefs = files
+            uploadCreates += files
+            val missing = files.map { it.name } - staged
+            return CreatedUpload("upload-1", missing)
+        }
+
+        override suspend fun uploadMissing(uploadId: String): List<String> {
+            val held = staged + puts.map { it.id }
+            return lastRefs.map { it.name } - held
+        }
+
+        override suspend fun putUploadFile(uploadId: String, file: UploadFile) {
+            puts += file
+        }
+
+        override suspend fun createJob(manifestJson: String, uploadId: String, idempotencyKey: String): String {
+            submitError?.let { throw it }
+            jobCreates += Triple(manifestJson, uploadId, idempotencyKey)
+            // Legacy assertions read submits: the created job carries the
+            // bytes actually PUT, exactly what the multipart path attached.
+            submits += manifestJson to puts.toList()
+            return "job-1"
+        }
+
+        override fun watchEvents(jobId: String, lastEventId: String?): Flow<JobEvent> {
+            watchIds += lastEventId
+            return flows.removeFirstOrNull() ?: emptyFlow()
         }
 
         override suspend fun get(jobId: String): JobPoll {
@@ -599,5 +646,159 @@ class ProcessingViewModelTest {
         assertIs<ProcessingPhase.Failed>(vm.ui.value.phase)
         assertEquals(0, api.samCalls)
         assertTrue(api.submits.isEmpty())
+    }
+
+    // ── W11-08: hash-first upload, event stream, partials ──────────────
+
+    private fun candidateJson(candidateId: String, title: String, rank: Double = 0.9): String =
+        """{"candidateId":"$candidateId","title":"$title","description":"A landmark","cue":"Look for it","samPhrase":"$title","keyframeId":"kf_n1_0","box":[412,230,590,900],"frameW":720,"frameH":1280,"rank":$rank,"source":"AI_GROUNDED","models":"muse-spark-1.3 + sam-3.1"}"""
+
+    @Test
+    fun resumeSkipsAlreadyStagedFiles() = runTest(dispatcher) {
+        val h = harness()
+        val api = FakeCloudApi(
+            polls = ArrayDeque(listOf(complete())),
+            staged = mutableSetOf("kf_n1_0", "clip_n1"),
+        )
+        val vm = h.vm(api)
+        advanceUntilIdle()
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
+        // The server's missing[] drives the PUTs: staged bytes never
+        // leave the phone again.
+        val putIds = api.puts.map { it.id }.toSet()
+        assertFalse(putIds.contains("kf_n1_0"), putIds.toString())
+        assertFalse(putIds.contains("clip_n1"), putIds.toString())
+        assertTrue(putIds.contains("clip_n2"), putIds.toString())
+        val declared = api.uploadCreates.single().map { it.name }.toSet()
+        assertEquals(declared - api.staged, putIds)
+        // The job was created once against the resumed session.
+        assertEquals("upload-1", api.jobCreates.single().second)
+        assertEquals("complete", h.drafts.loadJobRecord("draft-1")?.status)
+    }
+
+    @Test
+    fun idempotentRetryReusesKey() = runTest(dispatcher) {
+        val h = harness()
+        val api = FakeCloudApi(
+            polls = ArrayDeque(listOf(errored("scout down"), complete())),
+        )
+        val vm = h.vm(api)
+        advanceUntilIdle()
+        vm.send()
+        advanceUntilIdle()
+        assertIs<ProcessingPhase.Failed>(vm.ui.value.phase)
+
+        vm.retry()
+        advanceUntilIdle()
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
+        assertEquals(2, api.jobCreates.size)
+        // Same manifest bytes → same idempotency key: the retry replays
+        // the create instead of grounding twice.
+        assertEquals(api.jobCreates[0].first, api.jobCreates[1].first)
+        assertEquals(api.jobCreates[0].third, api.jobCreates[1].third)
+        val (manifest, _, key) = api.jobCreates[0]
+        assertEquals(sha256Hex(manifest.encodeToByteArray()), key)
+    }
+
+    @Test
+    fun streamReconnectResumesFromLastEventId() = runTest(dispatcher) {
+        val h = harness()
+        val checkpoint = JobEvent.Checkpoint(
+            id = "evt-1",
+            nodeId = "n1",
+            status = "grounded",
+            candidatesRaw = "[${candidateJson("n1_0", "Red pillar")}]",
+        )
+        val api = FakeCloudApi().apply {
+            flows = ArrayDeque(
+                listOf(
+                    flow {
+                        emit(checkpoint)
+                        throw EchoApiError.Network(RuntimeException("drop"))
+                    },
+                    flowOf(JobEvent.Complete("evt-2", null)),
+                ),
+            )
+        }
+        val vm = h.vm(api)
+        advanceUntilIdle()
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
+        // The reconnect carried Last-Event-ID past the delivered event.
+        assertEquals(listOf(null, "evt-1"), api.watchIds)
+        assertTrue(api.getCalls == 0, "stream covered the job; no fallback poll")
+        // The partial landed before the drop and survived to Ready.
+        assertEquals(listOf("n1"), vm.partials.value.keys.toList())
+        assertEquals("Red pillar", vm.partials.value.getValue("n1").single().title)
+    }
+
+    @Test
+    fun fallbackPollingProgressesWhenStreamDown() = runTest(dispatcher) {
+        val h = harness()
+        val api = FakeCloudApi(
+            polls = ArrayDeque(
+                listOf(
+                    Result.success(JobPoll("queued", JobStage.QUEUED)),
+                    running(JobStage.GROUNDING),
+                    complete(),
+                ),
+            ),
+        ).apply {
+            flows = ArrayDeque(listOf(flow { throw EchoApiError.Network(RuntimeException("down")) }))
+        }
+        val vm = h.vm(api)
+        advanceUntilIdle()
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
+        assertEquals(3, api.getCalls)
+        assertEquals("complete", h.drafts.loadJobRecord("draft-1")?.status)
+    }
+
+    @Test
+    fun partialCheckpointsMergeWithoutTouchingGeometry() = runTest(dispatcher) {
+        val h = harness()
+        val routeBefore = h.drafts.loadDraftRoute("draft-1")
+        assertNotNull(routeBefore)
+        val api = FakeCloudApi().apply {
+            flows = ArrayDeque(
+                listOf(
+                    flowOf(
+                        JobEvent.Checkpoint(
+                            "evt-1", "n1", "grounded",
+                            "[${candidateJson("n1_0", "Red pillar")}]",
+                        ),
+                        JobEvent.Checkpoint(
+                            "evt-2", "n2", "grounded",
+                            "[${candidateJson("n2_0", "Blue door")}]",
+                        ),
+                    ),
+                    flowOf(JobEvent.Complete("evt-3", null)),
+                ),
+            )
+        }
+        val vm = h.vm(api)
+        advanceUntilIdle()
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
+        val partials = vm.partials.value
+        assertEquals(setOf("n1", "n2"), partials.keys)
+        assertEquals("Red pillar", partials.getValue("n1").single().title)
+        assertEquals("Blue door", partials.getValue("n2").single().title)
+        // AI candidates never mutate geometry: the draft route is identical.
+        assertEquals(routeBefore, h.drafts.loadDraftRoute("draft-1"))
+        // Partials persisted for Review while the job ran.
+        assertNotNull(h.drafts.loadPartialResult("draft-1"))
     }
 }

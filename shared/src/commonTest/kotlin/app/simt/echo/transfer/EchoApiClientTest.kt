@@ -11,6 +11,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -170,5 +171,130 @@ class EchoApiClientTest {
             respond("""{"ok":true,"version":"0.1.0","metaKeyConfigured":false}""", HttpStatusCode.OK)
         })
         assertTrue(!off.samEnabled())
+    }
+
+    // ── W11-08: hash-first upload, job create, event stream ────────────
+
+    @Test
+    fun uploadTimeoutIsSizedToTheFile() {
+        // Floor 30 s, then +1 s per 100 KB chunk (ceil).
+        assertEquals(30_000L, uploadTimeoutMs(0L))
+        assertEquals(31_000L, uploadTimeoutMs(1L))
+        assertEquals(31_000L, uploadTimeoutMs(102_400L))
+        assertEquals(32_000L, uploadTimeoutMs(102_401L))
+        assertEquals(30_000L + 103_000L, uploadTimeoutMs(10L * 1024L * 1024L))
+    }
+
+    @Test
+    fun createUploadPostsHashesAndReturnsMissing() = runTest {
+        var path = ""
+        var body = ""
+        val api = client({ request ->
+            path = request.url.encodedPath
+            body = request.body.toByteArray().decodeToString()
+            assertEquals(HttpMethod.Post, request.method)
+            respond(
+                """{"ok":true,"uploadId":"up-1","missing":["clip_n1"]}""",
+                HttpStatusCode.OK,
+                headersOf(HttpHeaders.ContentType, "application/json"),
+            )
+        })
+        val created = api.createUpload(
+            listOf(
+                UploadFileRef("kf_n1_0", "a".repeat(64), 512L),
+                UploadFileRef("clip_n1", "b".repeat(64), 1_000_000L),
+            ),
+        )
+        assertEquals("up-1", created.uploadId)
+        assertEquals(listOf("clip_n1"), created.missing)
+        assertEquals("/v1/uploads", path)
+        assertTrue(body.contains(""""sha256":"${"a".repeat(64)}""""), body)
+    }
+
+    @Test
+    fun uploadStatusListsMissing() = runTest {
+        var path = ""
+        val api = client({ request ->
+            path = request.url.encodedPath
+            respond("""{"ok":true,"uploadId":"up-1","missing":[]}""", HttpStatusCode.OK)
+        })
+        assertEquals(emptyList<String>(), api.uploadMissing("up-1"))
+        assertEquals("/v1/uploads/up-1", path)
+    }
+
+    @Test
+    fun putSendsBytesAndMapsShaMismatchToStale() = runTest {
+        var path = ""
+        var method: HttpMethod? = null
+        var bytes = byteArrayOf()
+        val api = client({ request ->
+            path = request.url.encodedPath
+            method = request.method
+            bytes = request.body.toByteArray()
+            respond("""{"ok":true,"name":"kf_n1_0"}""", HttpStatusCode.OK)
+        })
+        api.putUploadFile("up-1", UploadFile("kf_n1_0", "image/jpeg", byteArrayOf(1, 2, 3)))
+        assertEquals("/v1/uploads/up-1/kf_n1_0", path)
+        assertEquals(HttpMethod.Put, method)
+        assertTrue(bytes.contentEquals(byteArrayOf(1, 2, 3)))
+
+        val stale = client({
+            respond("""{"ok":false,"error":"sha_mismatch"}""", HttpStatusCode.BadRequest)
+        })
+        assertFailsWith<EchoApiError.UploadStale> {
+            stale.putUploadFile("up-1", UploadFile("kf_n1_0", "image/jpeg", byteArrayOf(9)))
+        }
+    }
+
+    @Test
+    fun createJobSendsIdempotencyKey() = runTest {
+        var body = ""
+        val api = client({ request ->
+            body = request.body.toByteArray().decodeToString()
+            respond("""{"ok":true,"jobId":"job-7"}""", HttpStatusCode.Accepted)
+        })
+        val jobId = api.createJob("""{"schema":1}""", "up-1", "idem-key-1")
+        assertEquals("job-7", jobId)
+        assertTrue(body.contains(""""uploadId":"up-1""""), body)
+        assertTrue(body.contains(""""idempotencyKey":"idem-key-1""""), body)
+        assertTrue(body.contains(""""manifest":{"schema":1}"""), body)
+    }
+
+    @Test
+    fun watchEventsParsesFramesAndSendsLastEventId() = runTest {
+        val seenIds = mutableListOf<String?>()
+        val api = client({ request ->
+            seenIds += request.headers["Last-Event-ID"]
+            assertEquals("/v1/jobs/job-1/events", request.url.encodedPath)
+            assertEquals("text/event-stream", request.headers[HttpHeaders.Accept])
+            respond(
+                "id: evt-1\ndata: {\"id\":\"evt-1\",\"type\":\"stage\",\"stage\":\"scouting\"}\n\n" +
+                    "id: evt-2\ndata: {\"id\":\"evt-2\",\"type\":\"checkpoint\"," +
+                    "\"nodeId\":\"n1\",\"status\":\"grounded\",\"candidates\":[]}\n\n" +
+                    "data: [DONE]\n\n",
+                HttpStatusCode.OK,
+                headersOf(HttpHeaders.ContentType, "text/event-stream"),
+            )
+        })
+        val events = api.watchEvents("job-1", "evt-0").toList()
+        assertEquals(listOf<String?>("evt-0"), seenIds)
+        assertEquals(2, events.size)
+        assertEquals(JobEvent.Stage("evt-1", JobStage.SCOUTING), events[0])
+        val checkpoint = events[1] as JobEvent.Checkpoint
+        assertEquals("n1", checkpoint.nodeId)
+        assertEquals("[]", checkpoint.candidatesRaw)
+    }
+
+    @Test
+    fun parseSseSkipsDoneAndMalformedFrames() {
+        val events = parseSseEvents(
+            "data: [DONE]\n\n" +
+                "data: not json\n\n" +
+                "id: e1\ndata: {\"id\":\"e1\",\"type\":\"complete\",\"result\":{\"jobId\":\"j\"}}\n\n",
+        )
+        assertEquals(1, events.size)
+        val complete = events.single() as JobEvent.Complete
+        assertEquals("e1", complete.id)
+        assertTrue(complete.resultRaw!!.contains("jobId"), complete.resultRaw!!)
     }
 }

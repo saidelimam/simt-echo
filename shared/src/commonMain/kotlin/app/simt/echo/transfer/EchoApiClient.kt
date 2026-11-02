@@ -1,14 +1,22 @@
 package app.simt.echo.transfer
 
 import io.ktor.client.HttpClient
+import io.ktor.client.plugins.timeout
 import io.ktor.client.request.delete
 import io.ktor.client.request.forms.formData
 import io.ktor.client.request.forms.submitFormWithBinaryData
 import io.ktor.client.request.get
+import io.ktor.client.request.post
+import io.ktor.client.request.put
+import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
 import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
+import io.ktor.http.contentType
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -59,6 +67,13 @@ sealed class EchoApiError(message: String) : Exception(message) {
     class Unauthorized : EchoApiError("Not authorized by the ECHO server.")
     class RateLimited : EchoApiError("Too many requests. Try again in a minute.")
     class PayloadTooLarge : EchoApiError("Upload is larger than the server accepts.")
+    /**
+     * The hash-first upload session is unusable (expired, unknown, a file
+     * outside the declaration, or bytes that miss their declared SHA-256).
+     * Callers clear the persisted session and start a fresh one; the job
+     * itself is never touched.
+     */
+    class UploadStale(val code: String) : EchoApiError("Upload session is stale: $code")
     class JobNotFound(val jobId: String) : EchoApiError("Job $jobId is gone.")
     class NotConfigured : EchoApiError("Cloud AI is not configured on this build.")
     class Server(val status: Int, val body: String) : EchoApiError("Server error $status.")
@@ -81,6 +96,36 @@ private data class PollResponse(
 
 @Serializable
 private data class HealthResponse(val ok: Boolean = false, val metaKeyConfigured: Boolean = false)
+
+@Serializable
+private data class UploadFileRefDto(val name: String, val sha256: String, val bytes: Long)
+
+@Serializable
+private data class CreateUploadRequest(val files: List<UploadFileRefDto>)
+
+@Serializable
+private data class CreateUploadResponse(
+    val ok: Boolean = false,
+    val uploadId: String = "",
+    val missing: List<String> = emptyList(),
+)
+
+@Serializable
+private data class UploadStatusResponse(
+    val ok: Boolean = false,
+    val uploadId: String = "",
+    val missing: List<String> = emptyList(),
+)
+
+@Serializable
+private data class CreateJobV11Response(val ok: Boolean = false, val jobId: String = "")
+
+@Serializable
+private data class CreateJobV11Request(
+    val manifest: JsonElement,
+    val uploadId: String,
+    val idempotencyKey: String,
+)
 
 private val apiJson = Json { ignoreUnknownKeys = true }
 
@@ -116,7 +161,7 @@ class EchoApiClient(
     private val http: HttpClient,
     private val baseUrl: String,
     private val appToken: String,
-) : CloudApi {
+) : CloudApi, V11CloudApi {
     private fun configured() {
         if (baseUrl.isBlank() || appToken.isBlank()) throw EchoApiError.NotConfigured()
         // The bearer token and the photos travel together: never in
@@ -220,11 +265,165 @@ class EchoApiClient(
         }
     }
 
-    private fun isAllowedBaseUrl(url: String): Boolean {
-        if (url.startsWith("https://")) return true
+    /**
+     * Declares file hashes (`POST /v1/uploads`). Returns the upload id
+     * plus the files the server still needs.
+     */
+    override suspend fun createUpload(files: List<UploadFileRef>): CreatedUpload {
+        configured()
+        val request = CreateUploadRequest(files.map { UploadFileRefDto(it.name, it.sha256, it.bytes) })
+        val response = try {
+            http.post("$baseUrl/v1/uploads") {
+                contentType(ContentType.Application.Json)
+                headers.append(HttpHeaders.Authorization, "Bearer $appToken")
+                setBody(apiJson.encodeToString(CreateUploadRequest.serializer(), request))
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            throw EchoApiError.Network(e)
+        }
+        val body = response.bodyAsText()
+        if (response.status.value != 200) throwUploadError(response.status.value, body)
+        val parsed = runCatching { apiJson.decodeFromString<CreateUploadResponse>(body) }.getOrNull()
+            ?: throw EchoApiError.Server(200, body)
+        if (parsed.uploadId.isEmpty()) throw EchoApiError.Server(200, body)
+        return CreatedUpload(parsed.uploadId, parsed.missing)
+    }
+
+    /** Files the server does not hold yet (`GET /v1/uploads/:id`). */
+    override suspend fun uploadMissing(uploadId: String): List<String> {
+        configured()
+        val response = try {
+            http.get("$baseUrl/v1/uploads/$uploadId") {
+                headers.append(HttpHeaders.Authorization, "Bearer $appToken")
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            throw EchoApiError.Network(e)
+        }
+        val body = response.bodyAsText()
+        if (response.status.value != 200) throwUploadError(response.status.value, body)
+        return runCatching { apiJson.decodeFromString<UploadStatusResponse>(body) }.getOrNull()?.missing
+            ?: throw EchoApiError.Server(200, body)
+    }
+
+    /**
+     * PUTs one file's raw bytes. The per-request deadline is sized to
+     * the file ([uploadTimeoutMs]) via the platform client's `HttpTimeout`
+     * plugin; the 20 s platform default still bounds every other call. A
+     * hash mismatch means the bytes no longer match the declaration (e.g.
+     * reforged after process death) and surfaces as
+     * [EchoApiError.UploadStale].
+     */
+    override suspend fun putUploadFile(uploadId: String, file: UploadFile) {
+        configured()
+        val deadlineMs = uploadTimeoutMs(file.bytes.size.toLong())
+        val response = try {
+            http.put("$baseUrl/v1/uploads/$uploadId/${file.id}") {
+                headers.append(HttpHeaders.Authorization, "Bearer $appToken")
+                contentType(ContentType.parse(file.mime))
+                setBody(file.bytes)
+                timeout { requestTimeoutMillis = deadlineMs }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            throw EchoApiError.Network(e)
+        }
+        if (response.status.value != 200) throwUploadError(response.status.value, response.bodyAsText())
+    }
+
+    /**
+     * Creates the job against staged blobs (JSON `POST /v1/jobs` with
+     * `uploadId` + `idempotencyKey`). A repeated create with the same
+     * key returns the original job id without touching staging.
+     */
+    override suspend fun createJob(manifestJson: String, uploadId: String, idempotencyKey: String): String {
+        configured()
+        val manifest = runCatching { apiJson.parseToJsonElement(manifestJson) }.getOrNull()
+            ?: throw EchoApiError.InvalidManifest("unparseable manifest")
+        val request = apiJson.encodeToString(
+            CreateJobV11Request.serializer(),
+            CreateJobV11Request(manifest, uploadId, idempotencyKey),
+        )
+        val response = try {
+            http.post("$baseUrl/v1/jobs") {
+                contentType(ContentType.Application.Json)
+                headers.append(HttpHeaders.Authorization, "Bearer $appToken")
+                setBody(request)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            throw EchoApiError.Network(e)
+        }
+        val body = response.bodyAsText()
+        if (response.status.value != 202) throwJobCreateError(response.status.value, body)
+        val jobId = runCatching { apiJson.decodeFromString<CreateJobV11Response>(body).jobId }.getOrNull()
+        if (jobId.isNullOrEmpty()) throw EchoApiError.Server(202, body)
+        return jobId
+    }
+
+    /**
+     * One SSE read of `GET /v1/jobs/:id/events` from `lastEventId`
+     * (`Last-Event-ID` header). The server holds the connection briefly;
+     * the caller reconnects for liveness and falls back to polling when
+     * the endpoint (or the network) is down. A 404 means the job is gone.
+     */
+    override fun watchEvents(jobId: String, lastEventId: String?): Flow<JobEvent> = flow {
+        configured()
+        val response = try {
+            http.get("$baseUrl/v1/jobs/$jobId/events") {
+                headers.append(HttpHeaders.Accept, "text/event-stream")
+                if (lastEventId != null) headers.append("Last-Event-ID", lastEventId)
+                headers.append(HttpHeaders.Authorization, "Bearer $appToken")
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            throw EchoApiError.Network(e)
+        }
+        val body = response.bodyAsText()
+        if (response.status.value == 404) throw EchoApiError.JobNotFound(jobId)
+        if (response.status.value != 200) throw EchoApiError.Server(response.status.value, body)
+        parseSseEvents(body).forEach { emit(it) }
+    }
+
+    private fun isAllowedBaseUrl(url: String): Boolean {        if (url.startsWith("https://")) return true
         if (!url.startsWith("http://")) return false
         val host = url.removePrefix("http://").substringBefore('/').substringBefore(':')
         return host == "localhost" || host == "127.0.0.1" || host == "10.0.2.2"
+    }
+
+    private fun throwUploadError(status: Int, body: String): Nothing {
+        val code = runCatching { apiJson.decodeFromString<ErrorResponse>(body).error }.getOrNull()
+        throw when {
+            status == 401 -> EchoApiError.Unauthorized()
+            status == 429 -> EchoApiError.RateLimited()
+            status == 413 -> EchoApiError.PayloadTooLarge()
+            code == "upload_expired" || code == "upload_not_found" ||
+                code == "unknown_file" || code == "sha_mismatch" ||
+                code == "upload_incomplete" -> EchoApiError.UploadStale(code ?: "unknown")
+            code == "consent_required" -> EchoApiError.ConsentRequired()
+            code == "invalid_manifest" || code == "invalid_request" -> EchoApiError.InvalidManifest(body)
+            else -> EchoApiError.Server(status, body)
+        }
+    }
+
+    private fun throwJobCreateError(status: Int, body: String): Nothing {
+        val code = runCatching { apiJson.decodeFromString<ErrorResponse>(body).error }.getOrNull()
+        throw when {
+            status == 401 -> EchoApiError.Unauthorized()
+            status == 429 -> EchoApiError.RateLimited()
+            status == 413 -> EchoApiError.PayloadTooLarge()
+            code == "upload_expired" || code == "upload_not_found" ||
+                code == "upload_incomplete" -> EchoApiError.UploadStale(code ?: "unknown")
+            code == "consent_required" -> EchoApiError.ConsentRequired()
+            code == "invalid_manifest" || code == "invalid_request" -> EchoApiError.InvalidManifest(body)
+            else -> EchoApiError.Server(status, body)
+        }
     }
 
     private fun throwSubmitError(status: Int, body: String): Nothing {

@@ -3,6 +3,7 @@ package app.simt.echo.data
 import app.simt.echo.capture.GlimpseEntry
 import app.simt.echo.model.CaptureLog
 import app.simt.echo.transfer.JobRecord
+import app.simt.echo.transfer.UploadRecord
 import app.simt.echo.model.EchoJson
 import app.simt.echo.model.EchoRoute
 import kotlinx.serialization.encodeToString
@@ -100,6 +101,45 @@ class DraftRepository(private val store: FileStore) {
         store.deleteRecursively("$DRAFTS_DIR/$draftId/$JOB_FILE")
     }
 
+    /**
+     * Persists the hash-first upload session (`upload.json`, plan
+     * W11-08) so a restart resumes with `PUT missing[]` instead of
+     * re-uploading. Cleared when the job is created.
+     */
+    fun saveUploadRecord(draftId: String, record: UploadRecord) {
+        store.writeText("$DRAFTS_DIR/$draftId/$UPLOAD_FILE", EchoJson.encodeToString(record))
+    }
+
+    /** The persisted upload session, or null when never started, consumed, or corrupt. */
+    fun loadUploadRecord(draftId: String): UploadRecord? {
+        val text = store.readText("$DRAFTS_DIR/$draftId/$UPLOAD_FILE") ?: return null
+        return runCatching { EchoJson.decodeFromString<UploadRecord>(text) }.getOrNull()
+    }
+
+    /** Clears the persisted upload session (job created, stale restart). */
+    fun clearUploadRecord(draftId: String) {
+        store.deleteRecursively("$DRAFTS_DIR/$draftId/$UPLOAD_FILE")
+    }
+
+    /**
+     * Persists accumulated partial checkpoint candidates
+     * (`partials.json`, plan W11-08) as they land on the event stream,
+     * so Review can render them before the job completes. Stored as the
+     * raw `AiJobResult`-shaped JSON; this repository stays AI-agnostic.
+     */
+    fun savePartialResult(draftId: String, resultJson: String) {
+        store.writeText("$DRAFTS_DIR/$draftId/$PARTIALS_FILE", resultJson)
+    }
+
+    /** The persisted partial result JSON, or null when none has landed. */
+    fun loadPartialResult(draftId: String): String? =
+        store.readText("$DRAFTS_DIR/$draftId/$PARTIALS_FILE")
+
+    /** Clears persisted partials (job finished, draft consumed, retry). */
+    fun clearPartialResult(draftId: String) {
+        store.deleteRecursively("$DRAFTS_DIR/$draftId/$PARTIALS_FILE")
+    }
+
     /** Draft ids with a capture present, newest directory name last. */
     fun listDraftIds(): List<String> =
         store.list(DRAFTS_DIR).map { it.name }.sorted()
@@ -125,6 +165,8 @@ class DraftRepository(private val store: FileStore) {
     private companion object {
         const val DRAFTS_DIR = "drafts"
         const val JOB_FILE = "job.json"
+        const val UPLOAD_FILE = "upload.json"
+        const val PARTIALS_FILE = "partials.json"
         const val GLIMPSE_ENTRIES_FILE = "glimpse/entries.json"
     }
 }
