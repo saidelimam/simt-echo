@@ -106,7 +106,7 @@ log; every README/claim citation needs device + SHA + numbers.
 | G-PERF-05 | Record jank ≤ +1 pp vs W10-01 baseline; 0 preview stalls | `record30s` benchmark + `EchoJank` summaries | W14-01 (this harness) |
 | G-PERF-06 | Frame Tap ≤ 6 ms median, ≤ 8 Hz, thermal-adaptive | Device evidence in-slice | W10-03 |
 | G-PERF-07 | Ghost filter update ≤ 1 ms / step event (256 particles) | Host timing + device confirm | W12-02 |
-| G-PERF-08 | Navigate battery ≤ 6 % / 10 min, screen on | `navigateSimulate60s` + `dumpsys batterystats` | W14-01 (this harness) |
+| G-PERF-08 | Navigate battery ≤ 6 % / 10 min, screen on | `dumpsys batterystats` over a real 10 min Navigate walk (`navigateSimulate60s` only dwells on Home until a fixture route can be seeded) | W14-01 |
 | G-PERF-09 | Job status 1 stream (+ ≤ 5 fallback polls) | Client instrumentation | W11-08 |
 | G-PERF-10 | Visual match precision ≥ 0.95 at chosen τ | Recorded pair set | W12-05 |
 

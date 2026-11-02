@@ -23,10 +23,11 @@ import org.junit.runner.RunWith
  * `additionalTestOutputDir`. They never run on the host and are not
  * pre-commit gates (ADR-017).
  *
- * Screen targeting is deliberately shallow: the journeys assert the app
- * launches and stays alive under the workload. Once navigation test tags
- * land (W13 slices), extend [dwellOnJourney] call sites with selectors
- * that push into Record / Navigate-Simulate.
+ * Journeys drive the real UI by visible text: [record30s] opens Record and
+ * starts a take. [navigateSimulate60s] cannot yet reach Navigate-Simulate —
+ * that needs a saved route, and a benchmark has no way to seed one — so it
+ * measures Home under the same dwell and `docs/perf.md` marks G-PERF-08
+ * unmeasured until a fixture route exists.
  */
 @RunWith(AndroidJUnit4::class)
 class EchoBenchmarks {
@@ -84,11 +85,15 @@ class EchoBenchmarks {
             compilationMode = CompilationMode.Partial(),
             startupMode = StartupMode.WARM,
             iterations = 2,
-            setupBlock = { pressHome() },
+            setupBlock = {
+                pressHome()
+                // Record binds the camera; without the grant the permission
+                // prompt, not Record, would be what gets measured.
+                device.executeShellCommand("pm grant $TARGET_PACKAGE android.permission.CAMERA")
+            },
             measureBlock = {
                 startActivityAndWait()
-                // TODO(nav-tags): push into the Record screen here once its
-                // test tag lands, so the 30 s covers Preview + Frame Tap.
+                startRecording()
                 dwell(seconds = 30)
             },
         )
@@ -110,22 +115,32 @@ class EchoBenchmarks {
             setupBlock = { pressHome() },
             measureBlock = {
                 startActivityAndWait()
-                // TODO(nav-tags): push into Navigate-Simulate here once its
-                // test tag lands, so the 60 s covers the instrument + aura.
                 dwell(seconds = 60)
             },
         )
     }
 
+    /** Home → Record → Start, by visible text; fails loudly if a step never appears. */
+    private fun MacrobenchmarkScope.startRecording() {
+        clickWhenVisible("Record")
+        clickWhenVisible("Start")
+    }
+
+    private fun MacrobenchmarkScope.clickWhenVisible(text: String) {
+        val target = device.wait(Until.findObject(By.text(text)), UI_TIMEOUT_MS)
+            ?: error("\"$text\" never appeared; the journey would measure the wrong screen")
+        target.click()
+        device.waitForIdle()
+    }
+
     private fun MacrobenchmarkScope.dwell(seconds: Int) {
-        // Chunked sleeps keep the device watchdog-friendly; frame metrics
-        // accumulate across the whole measure block.
+        // Frame metrics accumulate across the whole measure block; sleeping in
+        // short chunks keeps the instrumentation responsive without spinning.
         val deadline = System.currentTimeMillis() + seconds * 1000L
-        while (System.currentTimeMillis() < deadline) {
-            device.wait(Until.gone(By.pkg(device.launcherPackageName)), 5_000)
-            device.waitForIdle()
-        }
+        while (System.currentTimeMillis() < deadline) Thread.sleep(DWELL_CHUNK_MS)
     }
 }
 
 private const val TARGET_PACKAGE = "app.simt.echo"
+private const val UI_TIMEOUT_MS = 10_000L
+private const val DWELL_CHUNK_MS = 500L
