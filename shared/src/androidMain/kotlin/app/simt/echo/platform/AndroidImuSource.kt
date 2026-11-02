@@ -150,6 +150,6 @@ class BuiltInPdrMotionSource internal constructor(
         imuThread?.quitSafely()
         imuThread = null
         forwardScope.coroutineContext.cancelChildren()
-        while (pipe.tryReceive().isSuccess) Unit
+        while (pipe.tryReceive().getOrNull() != null) { /* drop the stale update */ }
     }
 }
