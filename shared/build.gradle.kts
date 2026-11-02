@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.testing.Test
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -126,4 +128,64 @@ kotlin {
             }
         }
     }
+}
+
+afterEvaluate {
+    val androidHostTest = tasks.named<Test>("testAndroidHostTest")
+    val baselineArtifact = rootProject.file("docs/perf/accuracy-baseline.json")
+    androidHostTest.configure {
+        systemProperty("simt.repositoryRoot", rootProject.projectDir.absolutePath)
+        inputs.file(baselineArtifact).withPropertyName("accuracyBaseline").withPathSensitivity(PathSensitivity.RELATIVE)
+    }
+
+    fun registerSimWorldBaselineTask(
+        taskName: String,
+        methodName: String,
+        taskDescription: String,
+        walkCount: Int? = null,
+        recordBaseline: Boolean = false,
+    ) {
+        tasks.register<Test>(taskName) {
+            group = "verification"
+            description = taskDescription
+            testClassesDirs = androidHostTest.get().testClassesDirs
+            classpath = androidHostTest.get().classpath
+            useJUnit()
+            filter {
+                includeTestsMatching("app.simt.echo.sim.MonteCarloBaselineHostTest.$methodName")
+            }
+            systemProperty("simt.repositoryRoot", rootProject.projectDir.absolutePath)
+            walkCount?.let { systemProperty("simt.baseline.walks", it) }
+            if (recordBaseline) {
+                systemProperty("simt.baseline.record", "true")
+                outputs.upToDateWhen { false }
+                outputs.doNotCacheIf("Baseline recording must execute fresh seeded trials") { true }
+            } else {
+                inputs.file(baselineArtifact).withPropertyName("accuracyBaseline").withPathSensitivity(PathSensitivity.RELATIVE)
+            }
+            testLogging {
+                events("passed", "failed")
+                showStandardStreams = true
+            }
+        }
+    }
+
+    registerSimWorldBaselineTask(
+        taskName = "simWorldFastBaseline",
+        methodName = "seededBaselinePasses",
+        taskDescription = "Run the seeded 100-walk LINEAR/GHOST simulation baseline gate.",
+        walkCount = 100,
+    )
+    registerSimWorldBaselineTask(
+        taskName = "simWorldFullBaseline",
+        methodName = "seededBaselinePasses",
+        taskDescription = "Manually run the seeded 500-walk LINEAR/GHOST simulation baseline gate.",
+        walkCount = 500,
+    )
+    registerSimWorldBaselineTask(
+        taskName = "simWorldRecordBaseline",
+        methodName = "recordBaseline",
+        taskDescription = "Record seeded 100- and 500-walk simulation metrics to the committed baseline artifact.",
+        recordBaseline = true,
+    )
 }
