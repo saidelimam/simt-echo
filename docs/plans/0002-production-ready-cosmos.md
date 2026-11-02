@@ -215,7 +215,7 @@ with device model + build SHA. No slice is Complete on a partial pass.
 | W7-03 | Complete | Purge demo Home; real routes/drafts only, honest empty state | F (T) | E | W7-02 | 9f4756890e003642a347290bde7f758546588837 · test: ./gradlew :shared:testAndroidHostTest |
 | W7-04 | Complete | Close the loop: RouteDetail → Align → Navigate + Simulate | T (S) | E | W7-03 | 741d42ffdcaf6a2e8ce378d25ab762f7f4dbc714 |
 | W7-05 | Complete | Record → Review handoff (Finish lands in Review, named drafts) | F (T) | B | W7-03 | 841c74d20c5a1ae5e0add906137b7192a1361013 |
-| W7-06 | Queued | Human copy & error taxonomy (no ids, epochs, or exceptions) | F (T) | E | W7-01 | — |
+| W7-06 | Complete | Human copy & error taxonomy (no ids, epochs, or exceptions) | F (T) | E | W7-01 | 74c0d428e3349edef4aec065ee1366608e93c9ac |
 | W7-07 | Queued | AI-unavailable honesty when the worker is unconfigured | F (S) | D | W7-06 | — |
 | W7-08 | Queued | Share/Receive failure recovery & offer lifecycle | F (T) | E | W7-06 | — |
 | W7-09 | Queued | Headless user-journey tests for the full core loop | T | F | W7-04, W7-05, W7-08 | — |
