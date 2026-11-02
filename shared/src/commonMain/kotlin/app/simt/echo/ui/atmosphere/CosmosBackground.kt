@@ -50,7 +50,7 @@ internal const val COSMOS_DRIFT_PERIOD_MS = 96_000
 internal const val COSMOS_DRIFT_AMPLITUDE_FRACTION = 0.015f
 internal const val COSMOS_TWINKLE_PERIOD_MS = 2_600
 
-private const val DEG_TO_RAD = (Math.PI / 180.0).toFloat()
+private const val DEG_TO_RAD = (kotlin.math.PI / 180.0).toFloat()
 
 @Composable
 fun CosmosBackground(
@@ -59,6 +59,8 @@ fun CosmosBackground(
     tier: CosmosMotionTier = cosmosMotionTier(),
     parallaxRotationDegrees: () -> Float = { 0f },
     frozen: Boolean = false,
+    /** False draws the starfield only, over another field (W13-01 EchoField). */
+    drawField: Boolean = true,
 ) {
     val colorScheme = MaterialTheme.colorScheme
     val animated = tier == CosmosMotionTier.FULL && !frozen
@@ -158,13 +160,15 @@ fun CosmosBackground(
         Canvas(modifier = Modifier.fillMaxSize().testTag(CosmosBackgroundTestTag)) {
             if (isLight) {
                 // Daylight Nebula: flat background, no starfield/nebula [P-R C27].
-                drawRect(color = palette.voidCenter)
+                if (drawField) drawRect(color = palette.voidCenter)
                 return@Canvas
             }
-            drawRect(brush = voidBrush)
-            drawRect(brush = topGlowBrush)
+            if (drawField) {
+                drawRect(brush = voidBrush)
+                drawRect(brush = topGlowBrush)
+            }
 
-            if (showNebula) {
+            if (drawField && showNebula) {
                 val driftRad = (drift?.value ?: 0f) * DEG_TO_RAD
                 val shortEdge = minOf(size.width, size.height)
                 val orbitRange = shortEdge * COSMOS_DRIFT_AMPLITUDE_FRACTION

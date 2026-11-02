@@ -81,7 +81,7 @@ immediately with the same information (Cosmos C17, inherited).
 
 | Motif | Signal | FULL | REDUCED | STATIC |
 |---|---|---|---|---|
-| **ripple** | Step event, confirmation, primary-command press (touch point) | Ring from origin to 0.6 × short edge in 900 ms, alpha 0.45 → 0, ≤ 4 alive, edge band only on Record | One 150 ms opacity flash, no travel | None (text/haptic carry it) |
+| **ripple** | Step event, confirmation, primary-command press (touch point) | Ring from origin to 0.6 × short edge in 900 ms, alpha 0.45 → 0, ≤ 4 alive, edge band only on Record | None — the command's own pressed state carries it | None (text/haptic carry it) |
 | **echo** | Brand idle (Home hero) | An outline echo leaves the mark every 2.4 s | Static three echoes | Foot + Echo 1 |
 | **bloom** | Node passed, arrival, sigil reveal | Scale 0 → 1 on `spatialExpressive` + 6 short rays fading | Fade in | Final state |
 | **trace** | Path shown for the first time (sigil, unfold, mask) | Draw along length, 600–1200 ms by length, Transform easing | Whole path fades in, 150 ms | Whole path |
@@ -98,15 +98,16 @@ The Cosmos background becomes a living field [Luminous]:
 
 - **Shader** (API 33+, AGSL `RuntimeShader`): two-octave domain-warped
   aurora in the scheme's ember/rose/violet, confined to a **horizon band**
-  (top ~38 % of the screen) and a faint **floor glow** (bottom deck area);
-  the body band stays the flat void. Uniforms: `time` (FULL only),
+  (top 30 % of the screen) and a faint **floor glow** (bottom deck area);
+  the body band stays the flat void. The horizon band is 30 % of the
+  screen height, so curtains end above the first line of screen copy. Uniforms: `time` (FULL only),
   `tilt` (device tilt, ±12 dp parallax, low-passed), `ripples[4]`
   (centre, age) so the ripple motif bends the aurora where it passes.
 - **Stars** stay the Cosmos edge band (inherited algorithm), now offset by
   tilt parallax.
 - **Fallback**: API 29–32 and STATIC tier draw the inherited Canvas
   background with the same horizon gradient, no animation.
-- **Daylight**: a "dawn" horizon — the same band at ≤ 30 % alpha in
+- **Daylight**: a "dawn" horizon — the same band blended ≤ 55 % toward pastel stops
   `#FFD9B8 → #F3E0F7`, no stars, no floor glow, body flat (§9 D1).
 - **Cost**: shader created once, uniforms only per frame, ≤ 2 ms GPU on
   the mid device (W14-01 measures).

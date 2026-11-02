@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -34,11 +35,12 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import app.simt.echo.ui.EchoRoute
-import app.simt.echo.ui.atmosphere.CosmosBackground
 import app.simt.echo.ui.atmosphere.CosmosMotionDurations
 import app.simt.echo.ui.atmosphere.CosmosMotionEasings
 import app.simt.echo.ui.atmosphere.CosmosMotionTier
-import app.simt.echo.ui.atmosphere.CosmosVariant
+import app.simt.echo.ui.atmosphere.EchoField
+import app.simt.echo.ui.atmosphere.EchoRippleState
+import app.simt.echo.ui.atmosphere.LocalEchoRipples
 import app.simt.echo.ui.atmosphere.cosmosMotionTier
 import app.simt.echo.ui.brand.EchoMark
 import app.simt.echo.ui.components.CosmosIconButton
@@ -158,24 +160,29 @@ fun EchoShell(
     receiveEnabled: Boolean = true,
     content: @Composable () -> Unit,
 ) {
+    // The echo field (W13-01) and every command that ripples across it
+    // share one ripple state per shell.
+    val ripples = remember { EchoRippleState() }
     Box(modifier = modifier.fillMaxSize().testTag(EchoShellTag)) {
-        CosmosBackground(variant = CosmosVariant.Panel)
-        Column(modifier = Modifier.fillMaxSize()) {
-            TopChrome(
-                config = config,
-                onBack = onBack,
-                onClose = onClose,
-                onSettings = onSettings,
-            )
-            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                content()
+        EchoField(ripples = ripples)
+        CompositionLocalProvider(LocalEchoRipples provides ripples) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                TopChrome(
+                    config = config,
+                    onBack = onBack,
+                    onClose = onClose,
+                    onSettings = onSettings,
+                )
+                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    content()
+                }
+                PrimaryDeck(
+                    onRecord = onRecord,
+                    onReceive = onReceive,
+                    recordEnabled = recordEnabled,
+                    receiveEnabled = receiveEnabled,
+                )
             }
-            PrimaryDeck(
-                onRecord = onRecord,
-                onReceive = onReceive,
-                recordEnabled = recordEnabled,
-                receiveEnabled = receiveEnabled,
-            )
         }
     }
 }
