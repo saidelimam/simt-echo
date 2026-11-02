@@ -224,7 +224,7 @@ with device model + build SHA. No slice is Complete on a partial pass.
 | W7-12 | Complete | Wave 7 exit gate: offline core loop proven on one device | S | F | W7-09, W7-10, W7-11 | 8d15207ab7e29fa08ce1ddb4cfdd6f94417bd556 |
 | W8-01 | Complete | Cosmos adoption freeze (tokens, accents, non-adoptions) | S | A | W7-12 | c2f98799ff0c95aceab4c414043c202067cd785b |
 | W8-02 | Complete | Cosmos tokens & theme in code + contrast gate | F (T) | E | W8-01 | 233d5111913041e0e13437f2d2f4287b0ace70fb |
-| W8-03 | Queued | Cosmos atmosphere: background, canopy, motion tiers | T | E | W8-02 | — |
+| W8-03 | Complete | Cosmos atmosphere: background, canopy, motion tiers | T | E | W8-02 | 88628f07a8ec3d39257afb7fe96a18cae0c2ae76 |
 | W8-04 | Queued | Cosmos component library (commands, fields, dialogs, states) | F (T) | E | W8-02, W8-03 | — |
 | W8-05 | Queued | App shell & navigation grammar (chrome, back, transitions) | T (S) | A | W8-04 | — |
 | W8-06 | Queued | Home in Cosmos (route records, first-run, recovery) | T | E | W8-05 | — |
