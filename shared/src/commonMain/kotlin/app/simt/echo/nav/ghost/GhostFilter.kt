@@ -110,6 +110,7 @@ class GhostFilter(
             is Observation.Turn -> observeTurn(obs.dir)
             is Observation.Anchor -> anchorAt(obs.nodeS)
             is Observation.Level -> observeLevel(obs.nodeS)
+            is Observation.Magnetic -> observeMagnetic(obs.s)
         }
     }
 
@@ -172,6 +173,23 @@ class GhostFilter(
      */
     fun observeLevel(nodeS: Double) {
         anchorAt(nodeS)
+    }
+
+    /**
+     * Magnetic-signature fix (W12-04): soft Gaussian (σ [MAG_SIGMA_M]) on
+     * the distance to the matched route position [s], with a [MAG_FLOOR]
+     * elsewhere so a stale or drifted signature reads as uninformative
+     * rather than collapsing the filter — the same floor pattern as
+     * [observeTurn]. Never a hard anchor: unlike a confirmed landmark, a
+     * steel signature can move with its furniture.
+     */
+    fun observeMagnetic(s: Double) {
+        if (!s.isFinite()) return
+        for (i in 0 until PARTICLE_COUNT) {
+            val d = sA[i] - s
+            wA[i] *= exp(-d * d / (2.0 * MAG_SIGMA_M * MAG_SIGMA_M)) + MAG_FLOOR
+        }
+        normalizeAndMaybeResample()
     }
 
     private fun normalizeAndMaybeResample() {
@@ -283,6 +301,12 @@ class GhostFilter(
 
         /** Landmark hard-anchor half-window, metres. */
         const val ANCHOR_HALF_M = 1.0
+
+        /** Magnetic-fix Gaussian σ, metres (W12-04): the ±1 m match claim. */
+        const val MAG_SIGMA_M = 1.0
+
+        /** Magnetic likelihood floor far from the matched position. */
+        const val MAG_FLOOR = 1e-4
 
         /** Learned-k prior band (W12-03): the W4-02 plausible K band. */
         const val STRIDE_K_MIN = 0.15

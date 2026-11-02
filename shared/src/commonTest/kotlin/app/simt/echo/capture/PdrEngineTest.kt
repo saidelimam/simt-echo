@@ -113,4 +113,24 @@ class PdrEngineTest {
         source.start()
         source.stop()
     }
+
+    @Test
+    fun magneticFeedReducesToMagnitudeAndVertical() = runTest {
+        val engine = PdrEngine()
+        engine.start()
+        val collected = mutableListOf<app.simt.echo.platform.MotionUpdate>()
+        val job = launch { engine.updates.collect { collected += it } }
+        runCurrent() // let the collector subscribe before emissions start
+        // Magnetometer before any rotation matrix: dropped, no vertical yet.
+        engine.onMagnetic(MagSample(tNs = 1L, bx = 30.0, by = 20.0, bz = 40.0))
+        // Identity rotation: world-up is device-z, so vertical == bz.
+        engine.onRotation(RotSample(tNs = 2L, r = identityMatrix()))
+        engine.onMagnetic(MagSample(tNs = 3L, bx = 30.0, by = 40.0, bz = 0.0))
+        engine.onRotation(RotSample(tNs = 4L, r = identityMatrix()))
+        runCurrent() // deliver buffered emissions to the collector
+        job.cancel()
+        val last = collected.last()
+        assertEquals(50.0, last.magMag!!, 1e-9)
+        assertEquals(0.0, last.magVert!!, 1e-9)
+    }
 }

@@ -22,6 +22,14 @@ data class MotionUpdate(
      * (1.0 = fully trusted). Replay and older producers leave the default.
      */
     val headingQuality: Double = 1.0,
+    /**
+     * Magnetic signature at emit time (W12-04): total-field magnitude |B|
+     * and gravity-aligned vertical component, µT. Null without a
+     * magnetometer (or before the first game-rotation sample aligns it).
+     * Replay forwards what the log carries; older logs carry nothing.
+     */
+    val magMag: Double? = null,
+    val magVert: Double? = null,
 )
 
 /**

@@ -65,6 +65,12 @@ class PdrEngine(
     // Latest barometer reading; null without a sensor.
     private var pressureHpa: Double? = null
 
+    // Latest magnetometer reduction (W12-04); null without the sensor or
+    // before the first game-rotation matrix aligns the vertical.
+    private var lastRotMatrix: FloatArray? = null
+    private var magMag: Double? = null
+    private var magVert: Double? = null
+
     /**
      * Heading quality estimator (W12-01). Fed additively from the same
      * samples; step detection and yaw above are untouched. W12-02 reads
@@ -88,6 +94,9 @@ class PdrEngine(
         clockOffsetNs = null
         sawFirstEvent = false
         pressureHpa = null
+        lastRotMatrix = null
+        magMag = null
+        magVert = null
         headingQuality.reset()
         running = true
     }
@@ -110,6 +119,7 @@ class PdrEngine(
     fun onRotation(sample: RotSample, wallNowNs: Long = sample.tNs) {
         if (!running) return
         val tNs = correctNs(sample.tNs, wallNowNs)
+        lastRotMatrix = sample.r.copyOf()
         val (heading, camera) = headingRad(sample.r, cameraAxis)
         val axisSwitched = camera != cameraAxis
         cameraAxis = camera
@@ -122,6 +132,20 @@ class PdrEngine(
     fun onPressure(sample: PressureSample) {
         if (!running) return
         pressureHpa = sample.hPa
+    }
+
+    /**
+     * Magnetometer feed (W12-04): `TYPE_MAGNETIC_FIELD` at GAME rate.
+     * Reduced immediately to |B| and the gravity-aligned vertical via the
+     * latest game-rotation matrix — raw axes never persist. Samples before
+     * the first rotation matrix are dropped (no honest vertical yet).
+     * Step detection, yaw and pressure above are untouched.
+     */
+    fun onMagnetic(sample: MagSample) {
+        if (!running) return
+        val r = lastRotMatrix ?: return
+        magMag = magneticMagnitude(sample.bx, sample.by, sample.bz)
+        magVert = magneticVertical(sample.bx, sample.by, sample.bz, r)
     }
 
     fun onAccelerometer(sample: ImuSample, wallNowNs: Long = sample.tNs) {
@@ -174,6 +198,8 @@ class PdrEngine(
         pressureHpa = pressureHpa,
         source = SOURCE,
         headingQuality = headingQuality.quality,
+        magMag = magMag,
+        magVert = magVert,
     )
 
     private companion object {

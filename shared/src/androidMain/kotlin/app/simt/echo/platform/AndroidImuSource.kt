@@ -9,6 +9,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.SystemClock
 import app.simt.echo.capture.ImuSample
+import app.simt.echo.capture.MagSample
 import app.simt.echo.capture.PdrEngine
 import app.simt.echo.capture.StepCalibratable
 import app.simt.echo.capture.PressureSample
@@ -30,7 +31,7 @@ import kotlinx.coroutines.launch
  * W0-01 decision: §6.1–6.2 is implemented natively in `capture/`,
  * following the step/heading approach copied from the solved track
  * code in `simt-app` — vendored, ECHO-owned, no dependency. Accelerometer + game rotation
- * vector at game rate (~50 Hz), barometer at UI rate; sensor events feed
+ * vector + magnetometer at game rate (~50 Hz), barometer at UI rate; sensor events feed
  * the engine directly, in delivery order.
  *
  * Threading (W10-02 G2): sensors register on a dedicated
@@ -90,6 +91,15 @@ class BuiltInPdrMotionSource(context: Context) : MotionSource, StepCalibratable 
                     PressureSample(tNs = event.timestamp, hPa = event.values[0].toDouble()),
                 )
 
+                Sensor.TYPE_MAGNETIC_FIELD -> engine.onMagnetic(
+                    MagSample(
+                        tNs = event.timestamp,
+                        bx = event.values[0].toDouble(),
+                        by = event.values[1].toDouble(),
+                        bz = event.values[2].toDouble(),
+                    ),
+                )
+
                 else -> Unit
             }
         }
@@ -107,6 +117,7 @@ class BuiltInPdrMotionSource(context: Context) : MotionSource, StepCalibratable 
         imuHandler = handler
         register(Sensor.TYPE_ACCELEROMETER, SensorManager.SENSOR_DELAY_GAME, handler)
         register(Sensor.TYPE_GAME_ROTATION_VECTOR, SensorManager.SENSOR_DELAY_GAME, handler)
+        register(Sensor.TYPE_MAGNETIC_FIELD, SensorManager.SENSOR_DELAY_GAME, handler)
         register(Sensor.TYPE_PRESSURE, SensorManager.SENSOR_DELAY_NORMAL, handler)
     }
 
