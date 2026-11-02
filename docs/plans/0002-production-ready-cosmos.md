@@ -218,7 +218,7 @@ with device model + build SHA. No slice is Complete on a partial pass.
 | W7-06 | Complete | Human copy & error taxonomy (no ids, epochs, or exceptions) | F (T) | E | W7-01 | 74c0d428e3349edef4aec065ee1366608e93c9ac |
 | W7-07 | Complete | AI-unavailable honesty when the worker is unconfigured | F (S) | D | W7-06 | 4884127a145a59750b8465d547572b034e709de7 |
 | W7-08 | Complete | Share/Receive failure recovery & offer lifecycle | F (T) | E | W7-06 | 318f122eb4e864a9772fcbadbd92d3be117398ba |
-| W7-09 | Queued | Headless user-journey tests for the full core loop | T | F | W7-04, W7-05, W7-08 | — |
+| W7-09 | Complete | Headless user-journey tests for the full core loop | T | F | W7-04, W7-05, W7-08 | 23d9dd636219df03a474b1e88d3ba25e344dcda6 |
 | W7-10 | Complete | Corrupt/missing storage never crashes startup or screens | F (T) | A | W7-02 | f73c967d4b4a7fbaa816a8c3697ec266ecb18683 |
 | W7-11 | Complete | Repo truth: README, tracker states, stale scaffolding removed | L (F) | F | W7-01 | 72c8c1cbde400ddbf19614a5e03e9d7b7a495fdf |
 | W7-12 | Queued | Wave 7 exit gate: offline core loop proven on one device | S | F | W7-09, W7-10, W7-11 | — |
