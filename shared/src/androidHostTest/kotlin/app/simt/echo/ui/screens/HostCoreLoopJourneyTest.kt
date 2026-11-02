@@ -3,6 +3,7 @@ package app.simt.echo.ui.screens
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -181,7 +182,7 @@ class HostCoreLoopJourneyTest {
             EchoNavHost(graph = graph, navController = nav)
         }
 
-        compose.onNodeWithText("Short hop (fixture)", substring = true).performClick()
+        compose.onNodeWithTag("CosmosRecord:Short hop (fixture)").performClick()
         compose.onNodeWithText("Simulate walk").performClick()
         compose.runOnIdle {
             assertEquals(
@@ -225,7 +226,9 @@ class HostCoreLoopJourneyTest {
             EchoNavHost(graph = graph, navController = nav)
         }
 
-        compose.onNodeWithText("Untitled draft · Draft").performClick()
+        // W8-06: drafts are Cosmos records (title + Draft badge), not the
+        // pre-Cosmos "name · Draft" buttons — same destination, new row.
+        compose.onNodeWithTag("CosmosRecord:Untitled draft").performClick()
         compose.waitUntil(timeoutMillis = 10_000) {
             compose.onAllNodesWithText("Journey draft walk").fetchSemanticsNodes().isNotEmpty()
         }
