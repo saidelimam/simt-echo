@@ -147,7 +147,9 @@ class ManifestFrameFlagsTest {
             route = route,
             log = testLog(),
             specs = specs,
-            clips = mapOf("n3" to ClipInfo("/clip.mp4".toPath(), frameCount = 12, durationMs = 3_000L)),
+            clips = mapOf(
+                "n3" to ForgedClip(ClipInfo("/clip.mp4".toPath(), frameCount = 12, durationMs = 3_000L), ClipWindow(0L, 3_000L)),
+            ),
             consent = ManifestConsent(true, 0L),
             frameFlags = mapOf(
                 "kf_n3_0" to FrameFlags(faceFree = false),

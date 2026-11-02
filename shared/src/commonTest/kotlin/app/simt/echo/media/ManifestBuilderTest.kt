@@ -1,6 +1,7 @@
 package app.simt.echo.media
 
 import app.simt.echo.Fixtures
+import app.simt.echo.capture.GlimpseEntry
 import app.simt.echo.model.CaptureLog
 import app.simt.echo.model.CaptureSample
 import app.simt.echo.model.EchoRoute
@@ -220,7 +221,7 @@ class ManifestBuilderTest {
     fun manifestIncludesClipWhenSamEnabled() {
         val route = timedRoute()
         val clips = mapOf(
-            "n1" to ClipInfo("clips/n1.mp4".toPath(), 50, 5_000L),
+            "n1" to ForgedClip(ClipInfo("clips/n1.mp4".toPath(), 50, 5_000L), ClipWindow(36_000L, 41_000L)),
         )
         val manifest = ManifestBuilder.build(
             route = route,
@@ -236,6 +237,40 @@ class ManifestBuilderTest {
         assertEquals(50, clip?.frameCount)
         assertEquals(5_000L, clip?.durationMs)
         assertNull(manifest.checkpoints.first { it.nodeId == "n2" }.clip)
+    }
+
+    @Test
+    fun manifestDescribesTheWindowActuallyForgedNotThePlannedOne() {
+        val route = timedRoute()
+        // A 3 s fallback transcode, [t - 2250, t + 750], not the planned t - 4000..t + 1000.
+        val forged = ForgedClip(ClipInfo("clips/n1.mp4".toPath(), 12, 3_000L), ClipWindow(37_750L, 40_750L))
+        val manifest = ManifestBuilder.build(
+            route = route,
+            log = testLog(),
+            specs = keyframeSpecs(route.nodes),
+            clips = mapOf("n1" to forged),
+            consent = ManifestConsent(true, 0L),
+        )
+        val n1 = manifest.checkpoints.first { it.nodeId == "n1" }
+        assertEquals(37_750L, n1.clip?.startMs)
+        assertEquals(40_750L, n1.clip?.endMs)
+        // Approach samples cover that same window every 500 ms, not 50 samples.
+        assertEquals(37_750L, n1.approach.first().tMs)
+        assertEquals(40_750L, n1.approach.last().tMs)
+        assertEquals(7, n1.approach.size)
+        // A node with no clip keeps the planned window for its approach samples.
+        val n2 = manifest.checkpoints.first { it.nodeId == "n2" }
+        assertEquals(56_000L, n2.approach.first().tMs)
+        assertEquals(61_000L, n2.approach.last().tMs)
+    }
+
+    @Test
+    fun stripClipWindowSpansFirstToLastFrameRelativeToVideoStart() {
+        fun frame(tNs: Long) = GlimpseEntry(0, tNs, 0.0, 1.0, 1.0, 0L, "glimpse/b.jpg")
+        val strip = listOf(frame(12_500_000_000L), frame(13_000_000_000L), frame(15_250_000_000L))
+        assertEquals(ClipWindow(2_500L, 5_250L), stripClipWindow(strip, videoStartNs = 10_000_000_000L))
+        // Never negative, never inverted.
+        assertEquals(ClipWindow(0L, 0L), stripClipWindow(listOf(frame(5_000_000_000L)), videoStartNs = 10_000_000_000L))
     }
 
     @Test

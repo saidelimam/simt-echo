@@ -13,8 +13,8 @@ import app.simt.echo.capture.approachStrip
 import app.simt.echo.data.DraftRepository
 import app.simt.echo.media.ClipFrame
 import app.simt.echo.media.ClipInfo
-import app.simt.echo.media.ClipWindow
 import app.simt.echo.media.ForgeSource
+import app.simt.echo.media.ForgedClip
 import app.simt.echo.media.KeyframeSpec
 import app.simt.echo.media.Manifest
 import app.simt.echo.media.ManifestBuilder
@@ -24,7 +24,6 @@ import app.simt.echo.media.buildFrameMap
 import app.simt.echo.media.clipFileName
 import app.simt.echo.media.clipId
 import app.simt.echo.media.clipSidecarFileName
-import app.simt.echo.media.clipSidecarId
 import app.simt.echo.media.encodeFrameMap
 import app.simt.echo.media.ensureKeyframes
 import app.simt.echo.media.failClosedFrameFlags
@@ -33,6 +32,7 @@ import app.simt.echo.media.keyframeSpecs
 import app.simt.echo.media.ledgerJpegName
 import app.simt.echo.media.selectForgeSource
 import app.simt.echo.media.sha256Hex
+import app.simt.echo.media.stripClipWindow
 import app.simt.echo.media.stripFallbackWindow
 import app.simt.echo.model.EchoJson
 import app.simt.echo.model.EchoRoute
@@ -296,7 +296,7 @@ class ProcessingViewModel(
         val route = checkNotNull(drafts.loadDraftRoute(draftId)) { "Draft is gone." }
         val log = checkNotNull(drafts.loadCapture(draftId)) { "Capture log is gone." }
         val specs = keyframeSpecs(route.nodes)
-        val clips = cutClips(route)
+        val clips = cutClips(route, log.videoStartNs)
         // Fail closed (W11-04): with a detector, a keyframe whose bytes are
         // not a scanned ledger frame (absent/corrupt ledger, video-filled or
         // recaptured slot) is flagged and withheld rather than uploaded blind.
@@ -717,22 +717,38 @@ class ProcessingViewModel(
      * the image-sequence forge, with a `frames.json` sidecar mapping output
      * frame index → (tNs, odometer m) so `visibleFromM` is exact. Fallback:
      * a 3 s video transcode with an empty-frames sidecar — honest about the
-     * unknown map. Every sidecar carries the clip's SHA-256.
+     * unknown map. Every sidecar carries the clip's SHA-256 and stays local
+     * (the worker does not read it yet; see [collectFiles]).
+     *
+     * Each clip is returned with the video-relative window it actually
+     * covers, so the manifest describes the clip that uploads. A fallback
+     * window that collapses (`end <= start`, e.g. clamped past the video's
+     * end) is skipped rather than cut empty.
      *
      * Clip ends clamp to the video duration (W10-02 G5), and forges are
      * cached per forge path: a second Send reuses the file on disk instead
      * of re-encoding it. A cache entry is only trusted while its output file
      * still exists.
      */
-    private suspend fun cutClips(route: EchoRoute): Map<String, ClipInfo> {
+    private suspend fun cutClips(route: EchoRoute, videoStartNs: Long): Map<String, ForgedClip> {
         if (!counts.samEnabled) return emptyMap()
         val videoFile = CaptureSession.VIDEO_FILE
         val video = drafts.draftFilePath(draftId, videoFile)
         val hasVideo = drafts.draftFileExists(draftId, videoFile)
         if (!hasVideo && !media.supportsStripForge) return emptyMap()
         val ledger = drafts.loadGlimpseEntries(draftId) ?: emptyList()
-        val durationMs = if (hasVideo) runCatching { media.videoDurationMs(video) }.getOrNull() else null
-        val out = mutableMapOf<String, ClipInfo>()
+        val durationMs = if (hasVideo) {
+            try {
+                media.videoDurationMs(video)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null
+            }
+        } else {
+            null
+        }
+        val out = mutableMapOf<String, ForgedClip>()
         for (node in route.nodes) {
             val t = node.captureTMs ?: continue
             if (node.type == NodeType.START) continue
@@ -753,14 +769,21 @@ class ProcessingViewModel(
                             drafts.draftFilePath(draftId, file),
                         )
                     }
-                    writeSidecar(node.id, file, source = "image-strip", map = buildFrameMap(kept))
-                    out[node.id] = info
+                    // The frame map is exact only while output frame i is
+                    // strip entry i; a forge that dropped frames cannot say.
+                    if (info.frameCount == kept.size) {
+                        writeSidecar(node.id, file, source = "image-strip", map = buildFrameMap(kept))
+                    } else {
+                        writeSidecar(node.id, file, source = "video-transcode", map = emptyList())
+                    }
+                    out[node.id] = ForgedClip(info, stripClipWindow(kept, videoStartNs))
                 } else {
                     // The video transcode has no frame seam to scan, so with a
                     // detector configured a node without a cleared strip gets no
                     // clip at all (W11-04) rather than un-scanned frames.
                     if (!hasVideo || faceDetector != null) continue
                     val window = stripFallbackWindow(t, durationMs)
+                    if (window.endMs <= window.startMs) continue
                     val key = "clip:$draftId:${node.id}:${window.startMs}-${window.endMs}"
                     val info = cachedOrForge(key, file) {
                         media.transcodeStripClip(
@@ -771,8 +794,10 @@ class ProcessingViewModel(
                         )
                     }
                     writeSidecar(node.id, file, source = "video-transcode", map = emptyList())
-                    out[node.id] = info
+                    out[node.id] = ForgedClip(info, window)
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 // One bad clip omits that node; the manifest stays valid.
             }
@@ -799,6 +824,8 @@ class ProcessingViewModel(
      * lists, so a keyframe the pre-filter withheld (W11-04) never leaves
      * the phone and is never promised to the worker either. Bad-quality
      * (non-face) frames still upload; the worker drops those boxes itself.
+     * The clip's `frames.json` sidecar stays on the phone until the worker
+     * reads it (W11-10): its allow-list drops the sidecar id today.
      */
     private fun collectFiles(manifest: Manifest, specs: List<KeyframeSpec>): List<UploadFile> {
         val listed = manifest.checkpoints.flatMap { cp -> cp.keyframes.map { it.id } }.toSet()
@@ -812,11 +839,6 @@ class ProcessingViewModel(
             if (cp.clip == null) continue
             val bytes = drafts.readDraftFile(draftId, clipFileName(cp.nodeId)) ?: continue
             files += UploadFile(clipId(cp.nodeId), "video/mp4", bytes)
-            // The exact frame map rides beside its clip (W11-03); the worker
-            // derives the sidecar id from the clip id by convention.
-            drafts.readDraftFile(draftId, clipSidecarFileName(cp.nodeId))?.let { sidecar ->
-                files += UploadFile(clipSidecarId(cp.nodeId), "application/json", sidecar)
-            }
         }
         return files
     }

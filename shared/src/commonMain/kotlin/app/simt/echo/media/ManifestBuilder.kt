@@ -188,8 +188,9 @@ internal fun distanceAt(log: CaptureLog, samples: List<CaptureSample>, tMs: Long
 
 /**
  * Builds the §5.5 [Manifest] for one draft. Checkpoints are all non-START
- * nodes with a capture time; [clips] maps `nodeId` → [ClipInfo] and is empty
- * when SAM is disabled (then `clip` is omitted, plan W3-01). [frameFlags]
+ * nodes with a capture time; [clips] maps `nodeId` → [ForgedClip] (the clip
+ * and the window it covers) and is empty when SAM is disabled (then `clip` is
+ * omitted, plan W3-01). [frameFlags]
  * carries the W11-04 per-frame flags by keyframe id; ids absent from the
  * map keep the keep-defaults (today's manifests behave exactly as before).
  * Keyframes flagged `faceFree = false` are dropped from their checkpoint
@@ -202,7 +203,7 @@ object ManifestBuilder {
         route: EchoRoute,
         log: CaptureLog,
         specs: List<KeyframeSpec>,
-        clips: Map<String, ClipInfo>,
+        clips: Map<String, ForgedClip>,
         consent: ManifestConsent,
         frameFlags: Map<String, FrameFlags> = emptyMap(),
     ): Manifest {
@@ -221,7 +222,7 @@ object ManifestBuilder {
     private fun checkpoint(
         node: RouteNode,
         spec: KeyframeSpec?,
-        clips: Map<String, ClipInfo>,
+        clips: Map<String, ForgedClip>,
         log: CaptureLog,
         frameFlags: Map<String, FrameFlags>,
     ): ManifestCheckpoint? {
@@ -241,14 +242,17 @@ object ManifestBuilder {
             ManifestKeyframe(keyframeId(spec, i), spec.timesMs[i], flags.quality, flags.faceFree, flags.exposureOk)
         }
         val heroId = keyframeId(spec, kept.minBy { abs(it - spec.heroIndex) })
-        val clip = clips[node.id]?.let { info ->
-            val window = clipWindow(t)
+        // The clip and its approach samples describe the window actually
+        // forged, not the planned t-4000..t+1000 one.
+        val forged = clips[node.id]
+        val window = forged?.window ?: clipWindow(t)
+        val clip = forged?.let {
             ManifestClip(
                 id = clipId(node.id),
                 startMs = window.startMs,
                 endMs = window.endMs,
-                frameCount = info.frameCount,
-                durationMs = info.durationMs,
+                frameCount = it.info.frameCount,
+                durationMs = it.info.durationMs,
             )
         }
         return ManifestCheckpoint(
@@ -260,7 +264,7 @@ object ManifestBuilder {
             heroKeyframeId = heroId,
             keyframes = keyframes,
             clip = clip,
-            approach = approachSamples(log, clipWindow(t)),
+            approach = approachSamples(log, window),
         )
     }
 }

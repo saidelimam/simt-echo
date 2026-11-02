@@ -17,9 +17,9 @@ import kotlinx.serialization.encodeToString
  * mapping output frame index → (tNs, odometer m). That map makes
  * [visibleFromM] exact — d_checkpoint − d(first frame where SAM tracks the
  * object) — replacing the old fps estimate. The manifest shape is frozen
- * (W10-06), so the sidecar rides as a separate upload id
- * ([clipSidecarId]); the worker derives it from the clip id by convention
- * (note for W11-08).
+ * (W10-06), so the sidecar is a separate file ([clipSidecarId]). It stays
+ * on the phone until the worker consumes it (W11-10): the worker's upload
+ * allow-list drops it today, so uploading it would only spend bytes.
  *
  * Pure and deterministic: no coroutines (except where noted), no platform
  * imports. The platform encode itself lives behind [MediaTools.forgeStripClip]
@@ -110,6 +110,27 @@ fun clipSidecarFileName(nodeId: String): String = "kf/${clipId(nodeId)}.frames.j
 
 /** Upload field id for one node's sidecar (derived from the clip id). */
 fun clipSidecarId(nodeId: String): String = "${clipId(nodeId)}_frames"
+
+/**
+ * A forged clip plus the video-relative [window] it actually covers. The
+ * manifest describes this window, never an assumed one: the two forge paths
+ * cover different spans (see [stripFallbackWindow], [stripClipWindow]).
+ */
+data class ForgedClip(
+    val info: ClipInfo,
+    val window: ClipWindow,
+)
+
+/**
+ * The video-relative span an image-strip clip covers: first to last strip
+ * frame, capture ns rebased on [videoStartNs]. [strip] is time-ordered and
+ * non-empty; the end never precedes the start.
+ */
+fun stripClipWindow(strip: List<GlimpseEntry>, videoStartNs: Long): ClipWindow {
+    val start = ((strip.first().tNs - videoStartNs) / 1_000_000L).coerceAtLeast(0L)
+    val end = ((strip.last().tNs - videoStartNs) / 1_000_000L).coerceAtLeast(start)
+    return ClipWindow(start, end)
+}
 
 /** Which forge path produces one node's clip. */
 enum class ForgeSource {

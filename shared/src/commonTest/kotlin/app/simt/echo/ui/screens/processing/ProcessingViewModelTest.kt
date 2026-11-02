@@ -397,11 +397,11 @@ class ProcessingViewModelTest {
     }
 
     @Test
-    fun resendAfterRetryReusesCachedClipsAndClampsEndsToDuration() = runTest(dispatcher) {
+    fun resendAfterRetryReusesCachedClipsClampsEndsAndSkipsCollapsedWindows() = runTest(dispatcher) {
         val h = harness()
         val windows = mutableListOf<Pair<Long, Long>>()
         val durationAware: MediaTools = object : MediaTools by h.media {
-            override suspend fun videoDurationMs(video: Path): Long? = 30_000L
+            override suspend fun videoDurationMs(video: Path): Long? = 40_000L
             override suspend fun transcodeStripClip(
                 video: Path,
                 startMs: Long,
@@ -436,29 +436,45 @@ class ProcessingViewModelTest {
 
         assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
         assertEquals(2, api.submits.size)
-        // W10-02 G5: the resend reused the cached cuts — one cut per node
-        // across both sends, never re-encoded.
-        assertEquals(2, windows.size, "expected one cut per node, cache reused: $windows")
-        assertEquals(2, h.media.cut.size)
-        // Clip ends clamp to the video duration (30 s here): n1 at t=40 s
-        // opens the 3 s fallback window [37_750, 40_750] → [37_750, 37_750],
-        // n2 at t=60 s opens [57_750, 60_750] → [57_750, 57_750] (the end
-        // pulls back to the duration, then up to the start — the
-        // stripFallbackWindow never-invert rule, W11-03). Both ends sit below
-        // their raw t+750.
-        assertEquals(
-            listOf(37_750L to 37_750L, 57_750L to 57_750L),
-            windows,
-            "clip windows not clamped to duration: $windows",
-        )
-        // The cached clips still ride the resubmit's manifest.
-        val ids = api.submits[1].second.map { it.id }.toSet()
+        // Clip ends clamp to the video duration (40 s here): n1 at t=40 s
+        // opens the 3 s fallback window [37_750, 40_750] → [37_750, 40_000].
+        // n2 at t=60 s opens [57_750, 60_750], which the clamp collapses
+        // onto its start (57_750 .. 57_750): an empty window is skipped, not
+        // cut. W10-02 G5: the resend reused n1's cached cut, never re-encoded.
+        assertEquals(listOf(37_750L to 40_000L), windows, "clip windows: $windows")
+        assertEquals(1, h.media.cut.size)
+        // The cached clip still rides the resubmit, and its manifest entry
+        // describes the window that was actually cut.
+        val (manifestJson, files) = api.submits[1]
+        val ids = files.map { it.id }.toSet()
         assertTrue(ids.contains("clip_n1"), ids.toString())
-        assertTrue(ids.contains("clip_n2"), ids.toString())
+        assertFalse(ids.contains("clip_n2"), ids.toString())
+        val clip = EchoJson.decodeFromString<Manifest>(manifestJson).checkpoints.single { it.nodeId == "n1" }.clip
+        assertEquals(37_750L, clip?.startMs)
+        assertEquals(40_000L, clip?.endMs)
     }
 
     @Test
-    fun sendWithLedgerStripsForgesClipsAndUploadsSidecars() = runTest(dispatcher) {
+    fun cancellationDuringAClipCutAbortsTheSendInsteadOfBeingSwallowed() = runTest(dispatcher) {
+        val h = harness()
+        val media: MediaTools = object : MediaTools by h.media {
+            override suspend fun transcodeStripClip(video: Path, startMs: Long, endMs: Long, out: Path): ClipInfo =
+                throw kotlinx.coroutines.CancellationException("cancelled mid-cut")
+        }
+        val api = FakeCloudApi(polls = ArrayDeque(listOf(complete())))
+        val vm = h.vm(api, media = media)
+        advanceUntilIdle()
+        vm.send()
+        advanceUntilIdle()
+
+        // A swallowed cancellation would carry on and upload without clips.
+        assertTrue(api.jobCreates.isEmpty())
+        assertTrue(api.puts.isEmpty())
+        assertIs<ProcessingPhase.Uploading>(vm.ui.value.phase)
+    }
+
+    @Test
+    fun sendWithLedgerStripsForgesClipsAndKeepsSidecarsLocal() = runTest(dispatcher) {
         val h = harness()
         // Ledger strips inside each node's [d − 8, d + 1] window (W11-02).
         h.drafts.saveGlimpseEntries(
@@ -508,9 +524,11 @@ class ProcessingViewModelTest {
         val ids = api.submits.single().second.map { it.id }.toSet()
         assertTrue(ids.contains("clip_n1"), ids.toString())
         assertTrue(ids.contains("clip_n2"), ids.toString())
-        assertTrue(ids.contains(clipSidecarId("n1")), ids.toString())
-        assertTrue(ids.contains(clipSidecarId("n2")), ids.toString())
-        // The sidecar maps output frame index → (tNs, odometer m) exactly.
+        // The worker's allow-list drops the sidecar and nothing reads it yet
+        // (W11-10): it stays on the phone, not in the upload.
+        assertFalse(ids.contains(clipSidecarId("n1")), ids.toString())
+        assertFalse(ids.contains(clipSidecarId("n2")), ids.toString())
+        // The local sidecar maps output frame index → (tNs, odometer m) exactly.
         val raw = checkNotNull(h.drafts.readDraftFile("draft-1", clipSidecarFileName("n1")))
         val sidecar = decodeFrameMap(raw.decodeToString())
         assertEquals("image-strip", sidecar.source)
@@ -518,6 +536,41 @@ class ProcessingViewModelTest {
         assertEquals(10_000_000_000L, sidecar.frames[0].tNs)
         assertEquals(18.0, sidecar.frames[0].odometerM, 1e-9)
         assertEquals(sha256Hex("forged".encodeToByteArray()), sidecar.clipSha256)
+        // The manifest describes the strip actually forged: first to last
+        // frame, video-relative (videoStartNs is 0 in this fixture), not t-4000..t+1000.
+        val manifest = EchoJson.decodeFromString<Manifest>(api.submits.single().first)
+        val n1 = manifest.checkpoints.single { it.nodeId == "n1" }.clip
+        assertEquals(10_000L, n1?.startMs)
+        assertEquals(11_000L, n1?.endMs)
+        assertEquals(2, n1?.frameCount)
+    }
+
+    @Test
+    fun forgeThatDroppedFramesWritesAnHonestEmptyFrameMap() = runTest(dispatcher) {
+        val h = harness()
+        seedLedger(h)
+        val media: MediaTools = object : MediaTools by h.media {
+            override val supportsStripForge: Boolean = true
+
+            override suspend fun forgeStripClip(frames: List<Path>, out: Path): ClipInfo {
+                h.fileSystem.write(out) { write("forged".encodeToByteArray()) }
+                // The encoder kept fewer frames than it was given.
+                return ClipInfo(out, frameCount = frames.size - 1, durationMs = 250L)
+            }
+        }
+        val api = FakeCloudApi(polls = ArrayDeque(listOf(complete())))
+        val vm = h.vm(api, media = media)
+        advanceUntilIdle()
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
+        val sidecar = decodeFrameMap(
+            checkNotNull(h.drafts.readDraftFile("draft-1", clipSidecarFileName("n1"))).decodeToString(),
+        )
+        // Output frame i is no longer strip entry i, so no exact map is claimed.
+        assertEquals("video-transcode", sidecar.source)
+        assertTrue(sidecar.frames.isEmpty())
     }
 
     @Test
