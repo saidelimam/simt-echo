@@ -19,7 +19,6 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
-import kotlinx.coroutines.withContext
 import okio.FileSystem
 import okio.Path
 import okio.Path.Companion.toPath
@@ -33,13 +32,14 @@ import kotlin.test.assertTrue
 /**
  * W10-02 G1 gate: no [MediaTools] work runs on the Main dispatcher.
  *
- * [ConfinedFake] mirrors `AndroidMediaTools`' confinement (decode and file
- * IO on IO, bitmap scaling on Default — both injected); the test drives it
+ * The real [ConfinedMediaTools] wraps a [RecordingMediaTools] delegate that
+ * notes which dispatcher each call ran on. The test drives the decorator
  * from Main exactly like `ProcessingViewModel` does (`ensureKeyframes` plus
- * direct crop/clip/duration calls) and asserts every recorded execution
- * landed elsewhere. It also pins the batch discipline: keyframe extraction
- * for a route goes out as a single [MediaTools.extractFrames] call, which is
- * what lets the Android actual open one retriever per batch.
+ * direct crop/duration calls) and asserts the delegate never ran there. It
+ * also pins the batch discipline: keyframe extraction for a route goes out
+ * as a single [MediaTools.extractFrames] call, which is what lets the
+ * Android actual open one retriever per batch, and that the Transformer
+ * operations keep the caller's dispatcher (they need its looper, plan W3-01).
  */
 class MediaToolsDispatchersTest {
 
@@ -60,17 +60,15 @@ class MediaToolsDispatchersTest {
         val dispatcher: CoroutineDispatcher?,
     )
 
-    private class ConfinedFake(
-        private val io: CoroutineDispatcher,
-        private val cpu: CoroutineDispatcher,
-        private val fileSystem: FileSystem,
-    ) : MediaTools {
+    /** Delegate that records the dispatcher of every call and writes stub files. */
+    private class RecordingMediaTools(private val fileSystem: FileSystem) : MediaTools {
         val ops = mutableListOf<Op>()
         var batchCalls = 0
         var framesWritten = 0
+        override var supportsStripForge = true
 
-        private fun note(name: String, context: kotlin.coroutines.CoroutineContext) {
-            ops += Op(name, context[ContinuationInterceptor] as? CoroutineDispatcher)
+        private suspend fun note(name: String) {
+            ops += Op(name, coroutineContext[ContinuationInterceptor] as? CoroutineDispatcher)
         }
 
         override suspend fun extractFrame(video: Path, atMs: Long, maxSide: Int, out: Path) {
@@ -79,28 +77,21 @@ class MediaToolsDispatchersTest {
 
         override suspend fun extractFrames(video: Path, frames: List<FrameRequest>) {
             batchCalls++
-            withContext(io) {
-                for (frame in frames) {
-                    note("extractFrame", coroutineContext)
-                    frame.out.parent?.let { fileSystem.createDirectories(it) }
-                    fileSystem.write(frame.out) { write("frame${frame.atMs}".encodeToByteArray()) }
-                    framesWritten++
-                }
+            for (frame in frames) {
+                note("extractFrame")
+                frame.out.parent?.let { fileSystem.createDirectories(it) }
+                fileSystem.write(frame.out) { write("frame${frame.atMs}".encodeToByteArray()) }
+                framesWritten++
             }
         }
 
-        override suspend fun videoDurationMs(video: Path): Long? = withContext(io) {
-            note("videoDurationMs", coroutineContext)
-            60_000L
+        override suspend fun videoDurationMs(video: Path): Long? {
+            note("videoDurationMs")
+            return 60_000L
         }
 
         override suspend fun cropJpeg(input: Path, box: CropBox, maxSide: Int, out: Path) {
-            withContext(io) { note("cropJpeg-decode", coroutineContext) }
-            withContext(cpu) { note("cropJpeg-scale", coroutineContext) }
-            withContext(io) {
-                out.parent?.let { fileSystem.createDirectories(it) }
-                fileSystem.write(out) { write("crop".encodeToByteArray()) }
-            }
+            note("cropJpeg")
         }
 
         override suspend fun cutClip(
@@ -109,11 +100,19 @@ class MediaToolsDispatchersTest {
             endMs: Long,
             maxFps: Int,
             out: Path,
-        ): ClipInfo = withContext(io) {
-            note("cutClip", coroutineContext)
-            out.parent?.let { fileSystem.createDirectories(it) }
-            fileSystem.write(out) { write("clip".encodeToByteArray()) }
-            ClipInfo(out, frameCount = 12, durationMs = endMs - startMs)
+        ): ClipInfo {
+            note("cutClip")
+            return ClipInfo(out, frameCount = 12, durationMs = endMs - startMs)
+        }
+
+        override suspend fun forgeStripClip(frames: List<Path>, out: Path): ClipInfo {
+            note("forgeStripClip")
+            return ClipInfo(out, frameCount = frames.size, durationMs = 1_000L)
+        }
+
+        override suspend fun transcodeStripClip(video: Path, startMs: Long, endMs: Long, out: Path): ClipInfo {
+            note("transcodeStripClip")
+            return ClipInfo(out, frameCount = 12, durationMs = endMs - startMs)
         }
     }
 
@@ -141,7 +140,7 @@ class MediaToolsDispatchersTest {
     )
 
     @Test
-    fun mediaWorkNeverRunsOnMain() = runTest(main) {
+    fun blockingMediaWorkNeverRunsOnMain() = runTest(main) {
         val fileSystem = FakeFileSystem()
         val drafts = DraftRepository(FileStore(fileSystem, "/data".toPath()))
         drafts.saveDraftRoute(route())
@@ -150,29 +149,62 @@ class MediaToolsDispatchersTest {
         fileSystem.write(draftDir / "video.mp4") { write("video".encodeToByteArray()) }
 
         val io = StandardTestDispatcher(testScheduler, "echo-io")
-        val cpu = StandardTestDispatcher(testScheduler, "echo-cpu")
-        val media = ConfinedFake(io, cpu, fileSystem)
+        val delegate = RecordingMediaTools(fileSystem)
+        val media = ConfinedMediaTools(delegate, io)
         val video = drafts.draftFilePath("d1", CaptureSession.VIDEO_FILE)
 
         // Called from Main, exactly like ProcessingViewModel does.
         ensureKeyframes(drafts, media, "d1", route())
+        media.extractFrame(video, 1_000L, 512, drafts.draftFilePath("d1", "one.jpg"))
         media.cropJpeg(video, CropBox(0.1f, 0.1f, 0.5f, 0.5f), 512, drafts.draftFilePath("d1", "crop.jpg"))
-        media.cutClip(video, 36_000L, 41_000L, 10, drafts.draftFilePath("d1", "kf/clip_n1.mp4"))
         media.videoDurationMs(video)
         advanceUntilIdle()
 
-        assertTrue(media.ops.isNotEmpty(), "expected media work to run")
-        val onMain = media.ops.filter { it.dispatcher === main }
+        assertTrue(delegate.ops.isNotEmpty(), "expected media work to run")
+        val onMain = delegate.ops.filter { it.dispatcher === main }
         assertTrue(onMain.isEmpty(), "media work ran on Main: $onMain")
+        val offIo = delegate.ops.filter { it.dispatcher !== io }
+        assertTrue(offIo.isEmpty(), "media work ran off the IO dispatcher: $offIo")
+        assertEquals(
+            setOf("extractFrame", "cropJpeg", "videoDurationMs"),
+            delegate.ops.map { it.name }.toSet(),
+        )
 
-        // TURN (3 frames) + DESTINATION (2 frames) in one batch.
-        assertEquals(1, media.batchCalls, "keyframes must go out as a single batch")
-        assertEquals(5, media.framesWritten)
+        // TURN (3 frames) + DESTINATION (2 frames) in one batch, plus the single extractFrame.
+        assertEquals(2, delegate.batchCalls, "ensureKeyframes batches once, plus the single extractFrame call")
+        assertEquals(6, delegate.framesWritten)
+    }
 
-        // Decode on IO, scale on Default — never Main.
-        assertTrue(media.ops.any { it.name == "extractFrame" && it.dispatcher === io })
-        assertTrue(media.ops.any { it.name == "cropJpeg-scale" && it.dispatcher === cpu })
-        assertTrue(media.ops.any { it.name == "cutClip" && it.dispatcher === io })
+    @Test
+    fun transformerOperationsKeepTheCallersDispatcher() = runTest(main) {
+        val io = StandardTestDispatcher(testScheduler, "echo-io")
+        val delegate = RecordingMediaTools(FakeFileSystem())
+        val media = ConfinedMediaTools(delegate, io)
+        val video = "/data/video.mp4".toPath()
+        val out = "/data/out.mp4".toPath()
+
+        // Media3's Transformer needs the caller's looper (plan W3-01).
+        media.cutClip(video, 0L, 1_000L, 10, out)
+        media.forgeStripClip(listOf(out), out)
+        media.transcodeStripClip(video, 0L, 3_000L, out)
+        advanceUntilIdle()
+
+        assertEquals(
+            listOf("cutClip", "forgeStripClip", "transcodeStripClip"),
+            delegate.ops.map { it.name },
+        )
+        assertTrue(delegate.ops.all { it.dispatcher === main }, "ops: ${delegate.ops}")
+    }
+
+    @Test
+    fun forgeSupportComesFromTheDelegate() = runTest(main) {
+        val delegate = RecordingMediaTools(FakeFileSystem())
+        val media = ConfinedMediaTools(delegate, StandardTestDispatcher(testScheduler))
+
+        delegate.supportsStripForge = true
+        assertTrue(media.supportsStripForge)
+        delegate.supportsStripForge = false
+        assertEquals(false, media.supportsStripForge)
     }
 
     @Test
@@ -189,13 +221,13 @@ class MediaToolsDispatchersTest {
         }
 
         val io = StandardTestDispatcher(testScheduler, "echo-io")
-        val cpu = StandardTestDispatcher(testScheduler, "echo-cpu")
-        val media = ConfinedFake(io, cpu, fileSystem)
+        val delegate = RecordingMediaTools(fileSystem)
+        val media = ConfinedMediaTools(delegate, io)
 
         ensureKeyframes(drafts, media, "d1", route())
         advanceUntilIdle()
 
-        assertEquals(0, media.batchCalls, "no missing keyframes, no batch")
-        assertTrue(media.ops.isEmpty())
+        assertEquals(0, delegate.batchCalls, "no missing keyframes, no batch")
+        assertTrue(delegate.ops.isEmpty())
     }
 }

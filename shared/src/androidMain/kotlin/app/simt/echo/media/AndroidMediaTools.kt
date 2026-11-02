@@ -19,15 +19,16 @@ import okio.Path
  * for silent H.264 clips. Frames are rotated to displayed orientation,
  * scaled to [maxSide], and written as JPEG.
  *
- * Threading (W10-02 G1): decode and file IO run on [ioDispatcher], bitmap
- * scaling on [computeDispatcher] — callers on Main stay off the main thread
- * without their own `withContext`. Dispatchers are injectable for host tests.
+ * Threading (W10-02 G1): the blocking decode/file-IO methods run wherever
+ * they are called; [rememberMediaTools] wraps this class in
+ * [ConfinedMediaTools], which moves them onto IO so callers on Main stay off
+ * the main thread. Bitmap scaling hops to [computeDispatcher] here, inside
+ * the decode. The Transformer paths stay on the caller's looper (plan W3-01).
  * A StrictMode run over Record → Processing must show zero main-thread disk
  * reads here (device evidence owed by the closing slice; T reviewer).
  */
 class AndroidMediaTools(
     private val context: Context,
-    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val computeDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) : MediaTools {
 
@@ -40,64 +41,62 @@ class AndroidMediaTools(
      * One retriever for the whole batch (W10-02 G1): keyframe extraction for
      * a route opens `video.mp4` once, not once per frame.
      */
-    override suspend fun extractFrames(video: Path, frames: List<FrameRequest>) =
-        withContext(ioDispatcher) {
-            if (frames.isEmpty()) return@withContext
-            val retriever = MediaMetadataRetriever()
-            try {
-                retriever.setDataSource(video.toString())
-                val durationMs = retriever.durationMs()
-                val rotation = retriever.rotationDegrees()
-                for (frame in frames) {
-                    extractOne(retriever, durationMs, rotation, frame.atMs, frame.maxSide, frame.out)
-                }
-            } finally {
-                retriever.release()
-            }
-        }
-
-    /** Metadata probe only — never decodes a frame (W10-02 G5). */
-    override suspend fun videoDurationMs(video: Path): Long? = withContext(ioDispatcher) {
+    override suspend fun extractFrames(video: Path, frames: List<FrameRequest>) {
+        if (frames.isEmpty()) return
         val retriever = MediaMetadataRetriever()
         try {
             retriever.setDataSource(video.toString())
-            retriever.durationMs().takeIf { it > 0L }
+            val durationMs = retriever.durationMs()
+            val rotation = retriever.rotationDegrees()
+            for (frame in frames) {
+                extractOne(retriever, durationMs, rotation, frame.atMs, frame.maxSide, frame.out)
+            }
         } finally {
             retriever.release()
         }
     }
 
-    override suspend fun cropJpeg(input: Path, box: CropBox, maxSide: Int, out: Path) =
-        withContext(ioDispatcher) {
-            val padded = padBox(box)
-            val full = input.toFile().inputStream().use { stream ->
-                BitmapFactory.decodeStream(stream)
-            } ?: return@withContext
-
-            try {
-                val w = full.width
-                val h = full.height
-                val left = (padded.left * w).toInt().coerceIn(0, w - 1)
-                val top = (padded.top * h).toInt().coerceIn(0, h - 1)
-                val right = (padded.right * w).toInt().coerceIn(left + 1, w)
-                val bottom = (padded.bottom * h).toInt().coerceIn(top + 1, h)
-
-                var cropped = Bitmap.createBitmap(full, left, top, right - left, bottom - top)
-
-                // Scale to maxSide on Default (W10-02 G1).
-                if (cropped.width > maxSide || cropped.height > maxSide) {
-                    val source = cropped
-                    cropped = withContext(computeDispatcher) { source.scaledTo(maxSide) }
-                }
-
-                out.toFile().outputStream().use { os ->
-                    cropped.compress(Bitmap.CompressFormat.JPEG, 85, os)
-                }
-                cropped.recycle()
-            } finally {
-                full.recycle()
-            }
+    /** Metadata probe only — never decodes a frame (W10-02 G5). */
+    override suspend fun videoDurationMs(video: Path): Long? {
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(video.toString())
+            return retriever.durationMs().takeIf { it > 0L }
+        } finally {
+            retriever.release()
         }
+    }
+
+    override suspend fun cropJpeg(input: Path, box: CropBox, maxSide: Int, out: Path) {
+        val padded = padBox(box)
+        val full = input.toFile().inputStream().use { stream ->
+            BitmapFactory.decodeStream(stream)
+        } ?: return
+
+        try {
+            val w = full.width
+            val h = full.height
+            val left = (padded.left * w).toInt().coerceIn(0, w - 1)
+            val top = (padded.top * h).toInt().coerceIn(0, h - 1)
+            val right = (padded.right * w).toInt().coerceIn(left + 1, w)
+            val bottom = (padded.bottom * h).toInt().coerceIn(top + 1, h)
+
+            var cropped = Bitmap.createBitmap(full, left, top, right - left, bottom - top)
+
+            // Scale to maxSide on Default (W10-02 G1).
+            if (cropped.width > maxSide || cropped.height > maxSide) {
+                val source = cropped
+                cropped = withContext(computeDispatcher) { source.scaledTo(maxSide) }
+            }
+
+            out.toFile().outputStream().use { os ->
+                cropped.compress(Bitmap.CompressFormat.JPEG, 85, os)
+            }
+            cropped.recycle()
+        } finally {
+            full.recycle()
+        }
+    }
 
     override suspend fun cutClip(video: Path, startMs: Long, endMs: Long, maxFps: Int, out: Path): ClipInfo {
         // The caller clamped the window to the video duration (W10-02 G5);
@@ -124,7 +123,7 @@ class AndroidMediaTools(
         export(context, out, useForgeBitrate = false) { transformer ->
             transformer.start(edited, out.toString())
         }
-        return describeExport(out, window.endMs - window.startMs, ioDispatcher)
+        return describeExport(out, window.endMs - window.startMs)
     }
 
     /**
