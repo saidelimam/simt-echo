@@ -30,6 +30,13 @@ data class CaptureSample(
     val d: Double,
     val yaw: Double,
     val p: Double? = null,
+    /**
+     * Magnetic signature (W12-04): |B| and gravity-aligned vertical, µT.
+     * Null for samples without a magnetometer reading; pre-W12-04 logs
+     * decode with both null and segment exactly as before.
+     */
+    val mag: Double? = null,
+    val magV: Double? = null,
 )
 
 @Serializable

@@ -181,4 +181,56 @@ class SegmenterTest {
         assertEquals("Fountain", cp.label)
         assertEquals(15.0, cp.atDistanceM, 1e-9)
     }
+
+    @Test
+    fun magneticSamplesBecomeMagProfileOnSave() {
+        // 10 m straight, every 0.5 m sample carrying |B| rising 48→49 µT
+        // and a flat 40 µT vertical: 21 dense buckets, µT×10 quantised.
+        val samples = mutableListOf<CaptureSample>()
+        var t = T0_NS
+        var d = 0.0
+        while (d <= 10.0 + 1e-9) {
+            samples += CaptureSample(
+                tNs = t,
+                d = d,
+                yaw = 0.0,
+                p = null,
+                mag = 48.0 + d * 0.1,
+                magV = 40.0,
+            )
+            d += 0.5
+            t += TICK_NS
+        }
+        val withMag = segment(
+            CaptureLog(
+                draftId = "draft-mag",
+                startedAtEpochMs = 0L,
+                motionSource = "echo_builtin_pdr",
+                videoStartNs = T0_NS,
+                samples = samples,
+                marks = emptyList(),
+                startPhoto = "start.jpg",
+                routeName = "Mag route",
+                destinationLabel = "End",
+            ),
+            EchoConfig(),
+            "r-mag",
+            123L,
+        )
+        val profile = assertNotNull(withMag.perception?.magProfile)
+        assertEquals(21, profile.magnitude.size)
+        assertEquals(21, profile.vertical.size)
+        assertEquals(480.toShort(), profile.magnitude[0])
+        assertEquals(490.toShort(), profile.magnitude[20])
+        assertTrue(profile.vertical.all { it == 400.toShort() })
+
+        // No magnetometer: the route saves without perception, as before.
+        val withoutMag = segment(
+            log(legs = listOf(10.0 to 0.0)),
+            EchoConfig(),
+            "r-nomag",
+            123L,
+        )
+        assertEquals(null, withoutMag.perception?.magProfile)
+    }
 }

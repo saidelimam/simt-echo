@@ -196,6 +196,8 @@ class CaptureSession(
                 d = update.distanceM,
                 yaw = update.yawRad,
                 p = update.pressureHpa,
+                mag = update.magMag,
+                magV = update.magVert,
             )
             lastSampleNs = update.tNs
         }

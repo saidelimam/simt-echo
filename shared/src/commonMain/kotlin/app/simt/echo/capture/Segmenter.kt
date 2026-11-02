@@ -6,12 +6,15 @@ import app.simt.echo.model.CaptureSample
 import app.simt.echo.model.EchoConfig
 import app.simt.echo.model.EchoIds
 import app.simt.echo.model.EchoRoute
+import app.simt.echo.model.MagProfile
 import app.simt.echo.model.NodeType
 import app.simt.echo.model.PathPoint
 import app.simt.echo.model.RouteLeg
 import app.simt.echo.model.RouteNode
+import app.simt.echo.model.RoutePerception
 import app.simt.echo.model.StartAnchor
 import app.simt.echo.model.TurnDir
+import app.simt.echo.model.withPerception
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.roundToInt
@@ -128,17 +131,20 @@ fun segment(log: CaptureLog, cfg: EchoConfig, routeId: String, nowMs: Long): Ech
     }
     val path = smooth.map { PathPoint(it.d, it.x, it.y) }
 
-    return EchoRoute(
-        routeId = routeId,
-        name = log.routeName,
-        createdAtEpochMs = nowMs,
-        creatorLabel = DEFAULT_CREATOR_LABEL,
-        motionSource = log.motionSource,
-        totalLengthM = maxD,
-        start = START_ANCHOR,
-        nodes = nodes,
-        legs = legs,
-        path = path,
+    return withMag(
+        EchoRoute(
+            routeId = routeId,
+            name = log.routeName,
+            createdAtEpochMs = nowMs,
+            creatorLabel = DEFAULT_CREATOR_LABEL,
+            motionSource = log.motionSource,
+            totalLengthM = maxD,
+            start = START_ANCHOR,
+            nodes = nodes,
+            legs = legs,
+            path = path,
+        ),
+        magProfileFromSamples(samples),
     )
 }
 
@@ -406,6 +412,20 @@ private fun turnWord(dir: TurnDir): String = when (dir) {
     TurnDir.LEFT -> "left"
     TurnDir.RIGHT -> "right"
     TurnDir.U_TURN -> "U-turn"
+}
+
+/**
+ * Save wiring (W12-04): attaches the captured magnetic profile to the
+ * fresh route's perception. Null [mag] (no magnetometer data) saves the
+ * route untouched; an over-cap perception (a multi-km walk overflowing
+ * the 64 KB freeze) also saves the route untouched rather than failing
+ * the save — the geometry is the promise, the profile is a bonus.
+ */
+private fun withMag(route: EchoRoute, mag: MagProfile?): EchoRoute {
+    if (mag == null) return route
+    return runCatching {
+        route.withPerception(RoutePerception(magProfile = mag))
+    }.getOrDefault(route)
 }
 
 private fun node(

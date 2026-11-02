@@ -2,9 +2,11 @@ package app.simt.echo.nav
 
 import app.simt.echo.capture.circularMean
 import app.simt.echo.capture.wrapPi
+import app.simt.echo.capture.MagProfiler
 import app.simt.echo.model.EchoConfig
 import app.simt.echo.model.EchoRoute
 import app.simt.echo.model.Landmark
+import app.simt.echo.model.MagProfile
 import app.simt.echo.model.NavigatorEngine
 import app.simt.echo.model.NodeType
 import app.simt.echo.model.RouteLeg
@@ -12,6 +14,7 @@ import app.simt.echo.model.RouteNode
 import app.simt.echo.model.TurnDir
 import app.simt.echo.model.defaultCue
 import app.simt.echo.nav.ghost.GhostFilter
+import app.simt.echo.nav.ghost.MagneticMatch
 import app.simt.echo.nav.ghost.Observation
 import app.simt.echo.nav.ghost.RouteGeometry
 import app.simt.echo.nav.ghost.StrideLearner
@@ -117,6 +120,15 @@ class Navigator(
     /** Recent (distance, raw yaw) for corridor snapping. */
     private val yawTrail = mutableListOf<Pair<Double, Double>>()
 
+    /**
+     * Live magnetic signature (W12-04): the last 10 m observed, bucketed
+     * from motion updates carrying magnetometer data. Matched against the
+     * route's stored mag profile at most once per 0.5 m bucket; silent
+     * when the route has no profile or the device has no magnetometer.
+     */
+    private val magProfiler = MagProfiler()
+    private var lastMagMatchBucket: Int = -1
+
     /** Raw yaws seen on the current leg, for the wrong-start rule. */
     private val legYaws = mutableListOf<Double>()
 
@@ -198,6 +210,7 @@ class Navigator(
         }
         applyCorridorSnapping(update)
         levelAwareness.onSample(update.pressureHpa, update.stepCount)?.let { onLevelEvent(it) }
+        onMagneticUpdate(update)
         val detected = turnDetector.onSample(update.tNs, update.yawRad)
         if (detected != null) {
             onTurnDetected(detected)
@@ -312,6 +325,29 @@ class Navigator(
         }
         emit(NavEvent.Anchor(AnchorKind.LEVEL, target.id, absoluteS))
         emit(NavEvent.Haptic(HapticPattern.CONFIRM))
+    }
+
+    /**
+     * Magnetic-signature fix (W12-04): feeds the live mag samples into the
+     * profiler and, at most once per 0.5 m bucket, matches the last 10 m
+     * against the route's stored mag profile around the Ghost belief. A
+     * passing match is a soft filter observation — never a phase change,
+     * never an anchor event. Silent on LINEAR (no filter), without a
+     * route profile, or without magnetometer data.
+     */
+    private fun onMagneticUpdate(update: MotionUpdate) {
+        val g = ghost ?: return
+        val mag = update.magMag ?: return
+        val vert = update.magVert ?: return
+        val profile = route.perception?.magProfile ?: return
+        magProfiler.onSample(dist, mag, vert)
+        val bucket = (dist / MagProfile.MAG_STEP_M).toInt()
+        if (bucket == lastMagMatchBucket) return
+        lastMagMatchBucket = bucket
+        val (obsMag, obsVert) = magProfiler.lastWindow(MagneticMatch.QUERY_M, dist) ?: return
+        MagneticMatch.match(profile, obsMag, obsVert, g.meanS, g.sigma)?.let {
+            g.observe(Observation.Magnetic(it.estimatedS))
+        }
     }
 
     private fun onNotYet() {

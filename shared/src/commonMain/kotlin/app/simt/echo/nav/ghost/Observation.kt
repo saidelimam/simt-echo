@@ -34,4 +34,13 @@ sealed interface Observation {
      * LEVEL_CHANGE node's along-route [s] like a landmark confirm.
      */
     data class Level(val nodeS: Double) : Observation
+
+    /**
+     * A magnetic-signature fix (W12-04): the last 10 m observed match the
+     * route's stored mag profile at along-route [s] (the walker's
+     * estimated current position from [MagneticMatch]). Soft — a Gaussian
+     * likelihood, never a hard anchor: steel signatures drift with doors
+     * and furniture.
+     */
+    data class Magnetic(val s: Double) : Observation
 }

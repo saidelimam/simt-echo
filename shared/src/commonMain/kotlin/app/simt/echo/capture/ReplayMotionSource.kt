@@ -76,6 +76,8 @@ class ReplayMotionSource(
             isStep = false,
             pressureHpa = interpolatePressure(prev, next, f),
             source = SOURCE,
+            magMag = interpolateNullable(prev.mag, next.mag, f),
+            magVert = interpolateNullable(prev.magV, next.magV, f),
         )
     }
 
@@ -87,7 +89,15 @@ class ReplayMotionSource(
         isStep = isStep,
         pressureHpa = sample.p,
         source = SOURCE,
+        magMag = sample.mag,
+        magVert = sample.magV,
     )
+
+    private fun interpolateNullable(a: Double?, b: Double?, f: Double): Double? {
+        if (a == null) return b
+        if (b == null) return a
+        return a + (b - a) * f
+    }
 
     private fun interpolatePressure(prev: CaptureSample, next: CaptureSample, f: Double): Double? {
         val a = prev.p ?: return next.p
