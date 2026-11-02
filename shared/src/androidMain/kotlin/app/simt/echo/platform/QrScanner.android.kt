@@ -3,13 +3,21 @@ package app.simt.echo.platform
 import android.annotation.SuppressLint
 import android.util.Log
 import androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA
+import androidx.camera.compose.CameraXViewfinder
 import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.Preview
+import androidx.camera.core.SurfaceRequest
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -31,10 +39,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  * `MlKitAnalyzer` sketch is not used: the copied component drives the
  * analyzer directly, which needs no extra `camera-mlkit-vision` artifact.
  *
- * Reports the first `simt-echo://` value once per composition, then
- * unbinds the analysis use case ("stop analysis"). Camera permission flow
- * belongs to W4-03; like Record (W1-03) this fails closed (no scan) when
- * the camera is unavailable.
+ * Shows the live camera (a Preview use case drawn by `CameraXViewfinder`,
+ * like Record) so the user can aim at the other phone's QR; without it the
+ * frame is an empty box. Reports the first `simt-echo://` value once per
+ * composition, then unbinds the use cases ("stop analysis"). Camera
+ * permission flow belongs to W4-03; like Record (W1-03) this fails closed
+ * (no scan) when the camera is unavailable.
  */
 @Composable
 actual fun QrScannerView(
@@ -57,6 +67,8 @@ actual fun QrScannerView(
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .build()
     }
+    val preview = remember { Preview.Builder().build() }
+    var request by remember { mutableStateOf<SurfaceRequest?>(null) }
 
     DisposableEffect(lifecycleOwner) {
         analysis.setAnalyzer(executor) { proxy ->
@@ -81,12 +93,13 @@ actual fun QrScannerView(
                 }
                 .addOnCompleteListener { proxy.close() }
         }
+        preview.setSurfaceProvider { request = it }
         val providerFuture = ProcessCameraProvider.getInstance(context)
         val mainExecutor = ContextCompat.getMainExecutor(context)
         providerFuture.addListener(
             {
                 try {
-                    providerFuture.get().bindToLifecycle(lifecycleOwner, DEFAULT_BACK_CAMERA, analysis)
+                    providerFuture.get().bindToLifecycle(lifecycleOwner, DEFAULT_BACK_CAMERA, preview, analysis)
                 } catch (e: Exception) {
                     Log.d(TAG, "QR scanner bind failed", e)
                 }
@@ -94,6 +107,7 @@ actual fun QrScannerView(
             mainExecutor,
         )
         onDispose {
+            preview.setSurfaceProvider(null)
             analysis.clearAnalyzer()
             scanner.close()
             executor.shutdown()
@@ -105,9 +119,10 @@ actual fun QrScannerView(
         }
     }
 
-    // No preview stream: the Receive screen draws its own rounded cutout
-    // over this analysis-only surface (plan §8.3).
-    Box(modifier = modifier)
+    // The Receive screen draws its rounded cutout and reticle over this (plan §8.3).
+    Box(modifier = modifier) {
+        request?.let { CameraXViewfinder(surfaceRequest = it, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+    }
 }
 
 private const val TAG = "EchoQrScanner"
