@@ -1,9 +1,12 @@
 package app.simt.echo.ui.screens.settings
 
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performScrollTo
 import app.simt.echo.data.ConfigRepository
 import app.simt.echo.data.DraftRepository
 import app.simt.echo.data.FileStore
@@ -84,6 +87,20 @@ class HostSettingsScreenTest {
         compose.waitForIdle()
 
         compose.onNodeWithTag("$CosmosButtonTag:Delete all").assertIsEnabled()
+    }
+
+    /** The footer is the app's statutory page: company, parent org, founder. */
+    @Test
+    fun footerNamesTheCompanyParentOrganisationAndFounder() {
+        compose.setContent {
+            EchoTheme(darkTheme = true) { SettingsScreen(viewModel = viewModel(), onBack = {}) }
+        }
+        compose.waitForIdle()
+
+        compose.onNodeWithText("Said Elimam").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Simt Space").assertExists()
+        compose.onNodeWithText("Quazar Media").assertExists()
+        compose.onNodeWithText("© 2026 Simt Space. All rights reserved.", substring = true).assertExists()
     }
 
     private object QuietSharing : FileSharing {

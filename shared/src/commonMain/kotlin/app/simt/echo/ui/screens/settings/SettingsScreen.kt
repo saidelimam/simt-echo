@@ -251,6 +251,53 @@ fun SettingsScreen(
                 ),
             )
         }
+
+        // Copyright footer: the ownership facts a legal page needs, in the
+        // same section grammar as everything above, then the copyright line
+        // in the quietest type on the screen so it reads as a colophon and
+        // not as another setting.
+        SettingsSection(title = "About") {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                SettingsFact(label = "Company", value = "Simt Space")
+                SettingsFact(label = "Parent organisation", value = "Quazar Media")
+                SettingsFact(label = "Founder", value = "Said Elimam")
+                Text(
+                    text = "ECHO is designed and built by Simt Space, a company of Quazar Media. " +
+                        "© 2026 Simt Space. All rights reserved.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * One footer fact: muted label left, value right-aligned on the same line.
+ * The label takes the weight so a long label can never push the value into
+ * a second line on a narrow screen.
+ */
+@Composable
+private fun SettingsFact(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyLarge,
+        )
     }
 }
 
