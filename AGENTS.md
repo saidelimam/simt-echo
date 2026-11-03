@@ -1,6 +1,6 @@
 <!-- simt:begin -->
 <!-- simt:generated -->
-<!-- simt:sha=e3aed24eabcc9e94f6cfd4f7b75b247f575fd60a -->
+<!-- simt:sha=cadbf6fb6c388f2f81fedab31b78d4e5e240ead2 -->
 <!-- simt:sources=rules/core.md,rules/stacks/android.md,rules/stacks/jvm.md,rules/mdc/intake-questions.mdc,rules/mdc/slice-commit.mdc,rules/mdc/test-gate.mdc -->
 <!-- Generated content. Do not edit by hand - your changes are overwritten.
      Run `simt sync --yes` to regenerate, or `simt check` to see what is stale. -->
