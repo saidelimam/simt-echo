@@ -6,8 +6,10 @@ import app.simt.echo.model.CaptureSample
 import app.simt.echo.model.EchoConfig
 import app.simt.echo.model.Mark
 import app.simt.echo.model.PerceptionMode
+import app.simt.echo.capture.visual.ParallaxProfiler
 import app.simt.echo.capture.visual.VisualMotionFrame
 import app.simt.echo.capture.visual.VisualMotionSource
+import app.simt.echo.capture.visual.withParallax
 import app.simt.echo.platform.CameraRecorder
 import app.simt.echo.platform.HapticPattern
 import app.simt.echo.platform.Haptics
@@ -106,6 +108,7 @@ class CaptureSession(
     private var autosaveJob: Job? = null
     private var resumedDraftId: String? = null
     private var ledger: RecordingLedger? = null
+    private var parallaxProfiler: ParallaxProfiler? = null
     @Volatile private var visualUsed = false
     /** Capture-collector-owned drain result; no source image is retained. */
     var visualFrame: VisualMotionFrame? = null
@@ -159,6 +162,9 @@ class CaptureSession(
         // reaches any calibratable source (W4-02); others ignore it.
         (motion as? StepCalibratable)?.stepK = config.stepK
         (motion as? VisualMotionSource)?.attachVisual(camera.frameTap, config.visualAssist, FrameRateGovernor.RECORD_INTERVAL_NS)
+        val profiler = if (config.visualAssist) ParallaxProfiler() else null
+        parallaxProfiler = profiler
+        profiler?.attachToTap(camera.frameTap, enabled = true)
         val recordingLedger = RecordingLedger(drafts, id, camera.frameTap, onOffer = { _ledgerOffers.tryEmit(it) })
         ledger = recordingLedger
         // Subscribe before motion starts so no early step is lost.
@@ -171,6 +177,8 @@ class CaptureSession(
             // A failed start leaves nothing running: the session stays READY
             // and a retry must not stack a second collector or consumer.
             recordingLedger.detach()
+            profiler?.detachFromTap(camera.frameTap)
+            parallaxProfiler = null
             collectJob?.cancel()
             (motion as? VisualMotionSource)?.detachVisual()
             motion.stop()
@@ -225,6 +233,7 @@ class CaptureSession(
         check(_state.value == CaptureState.RECORDING) { "beginFinish() from ${_state.value}" }
         _state.value = CaptureState.FINISHING
         ledger?.detach()
+        parallaxProfiler?.detachFromTap(camera.frameTap)
         collectJob?.cancel()
         autosaveJob?.cancel()
         visualUsed = visualUsed || (motion as? VisualMotionSource)?.visualAssistActive == true
@@ -246,8 +255,13 @@ class CaptureSession(
         check(_state.value == CaptureState.FINISHING) { "save() from ${_state.value}" }
         val log = buildLog(routeName = routeName, destinationLabel = destinationLabel)
         drafts.saveCapture(log)
+        val segmented = segment(log, config, log.draftId, nowMs())
+        val parallax = parallaxProfiler?.toParallaxProfile(
+            nodeDistancesM = segmented.nodes.map { it.atDistanceM },
+            totalLengthM = segmented.totalLengthM,
+        )
         // Draft routes are keyed by draftId until Save assigns permanence.
-        drafts.saveDraftRoute(segment(log, config, log.draftId, nowMs()))
+        drafts.saveDraftRoute(segmented.withParallax(parallax))
         _state.value = CaptureState.SAVED
         return log
     }
@@ -260,7 +274,15 @@ class CaptureSession(
 
     private fun onUpdate(update: MotionUpdate) {
         ledger?.onMotion(update)
-        if (update.isStep) visualFrame = (motion as? VisualMotionSource)?.drainVisual(update.tNs)
+        val profiler = parallaxProfiler
+        profiler?.onMotion(update)
+        if (update.isStep) {
+            val drained = (motion as? VisualMotionSource)?.drainVisual(update.tNs)
+            visualFrame = drained
+            if (drained != null && profiler != null) {
+                profiler.onEgoAtSpeed(update.distanceM, drained.ego)
+            }
+        }
         visualUsed = visualUsed || (motion as? VisualMotionSource)?.visualAssistActive == true
         motionSourceName = update.source
         if (startElapsedNs == 0L) startElapsedNs = update.tNs

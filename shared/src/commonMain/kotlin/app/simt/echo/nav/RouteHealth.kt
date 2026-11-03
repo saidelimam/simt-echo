@@ -2,6 +2,7 @@ package app.simt.echo.nav
 
 import app.simt.echo.model.EchoRoute
 import app.simt.echo.model.NodeType
+import kotlin.io.encoding.Base64
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -39,29 +40,33 @@ const val BARE_TURN_PENALTY = 10
 const val AMBIGUOUS_TURN_PENALTY = 10
 const val LEVEL_CUE_PENALTY = 5
 const val BARE_DESTINATION_PENALTY = 20
+const val LOW_VISUAL_COVERAGE_PENALTY = 5
 
 const val LONG_LEG_M = 20.0
 const val AMBIGUOUS_WINDOW_M = 6.0
 const val MAX_HEALTH_NUDGES = 3
+const val LOW_VISUAL_TRACKABILITY_THRESHOLD = 0.40
 
 const val BAND_READY = "Ready to share"
 const val BAND_FOLLOWABLE = "Followable — could be clearer"
 const val BAND_ADD_LANDMARKS = "Add landmarks first"
 
-/** Pure result of [routeHealth]: score 0..100, display band, ≤3 nudges. */
+/** Pure result of [routeHealth]: score 0..100, display band, ≤3 nudges, plus W17-01 visual coverage notes. */
 data class HealthResult(
     val score: Int,
     val band: String,
     val nudges: List<String>,
+    val visualCoverageNotes: List<String> = emptyList(),
 )
 
-/** Scores [route] per the W12-07 penalty table. Deterministic, total. */
+/** Scores [route] per the W12-07 + W17-01 penalty table. Deterministic, total. */
 fun routeHealth(route: EchoRoute): HealthResult {
     val byId = route.nodes.associateBy { it.id }
 
-    data class Hit(val penalty: Int, val atDistanceM: Double, val fix: String = "landmark")
+    data class Hit(val penalty: Int, val atDistanceM: Double, val fix: String = "landmark", val customNudge: String? = null)
 
     val hits = mutableListOf<Hit>()
+    val visualNotes = mutableListOf<String>()
 
     for (leg in route.legs) {
         if (leg.lengthM > LONG_LEG_M) {
@@ -116,6 +121,39 @@ fun routeHealth(route: EchoRoute): HealthResult {
         }
     }
 
+    // W17-01 visual coverage: inspect per-leg mean trackability when parallax is present.
+    val parallax = route.perception?.parallax
+    if (parallax != null && parallax.trackability.isNotBlank() && route.legs.isNotEmpty()) {
+        val trackBytes = runCatching { Base64.decode(parallax.trackability) }.getOrNull()
+        if (trackBytes != null && trackBytes.isNotEmpty() && parallax.stepM > 0.0) {
+            route.legs.forEachIndexed { idx, leg ->
+                val from = byId[leg.fromNode]
+                val to = byId[leg.toNode]
+                val startM = from?.atDistanceM ?: 0.0
+                val endM = to?.atDistanceM ?: (startM + leg.lengthM)
+                val b0 = (startM / parallax.stepM).toInt().coerceIn(0, trackBytes.lastIndex)
+                val b1 = ((endM / parallax.stepM).toInt() - 1).coerceIn(b0, trackBytes.lastIndex)
+                var sum = 0.0
+                var count = 0
+                for (b in b0..b1) {
+                    sum += (trackBytes[b].toInt() and 0xFF) / 255.0
+                    count++
+                }
+                val meanTau = if (count > 0) sum / count else 1.0
+                if (meanTau < LOW_VISUAL_TRACKABILITY_THRESHOLD) {
+                    val mid = ((startM + endM) * 0.5).roundToInt()
+                    val note = "Leg ${idx + 1} has little texture (near $mid m) — the follower will rely on steps there"
+                    visualNotes += note
+                    val anchored = from?.landmarkIds?.isNotEmpty() == true ||
+                        to?.landmarkIds?.isNotEmpty() == true
+                    if (!anchored) {
+                        hits += Hit(LOW_VISUAL_COVERAGE_PENALTY, (startM + endM) * 0.5, fix = "landmark")
+                    }
+                }
+            }
+        }
+    }
+
     val score = max(0, FULL_HEALTH_SCORE - hits.sumOf { it.penalty })
     val band = when {
         score >= 80 -> BAND_READY
@@ -128,5 +166,5 @@ fun routeHealth(route: EchoRoute): HealthResult {
         .distinct()
         .take(MAX_HEALTH_NUDGES)
         .map { (fix, metres) -> "Add a $fix near $metres m" }
-    return HealthResult(score, band, nudges)
+    return HealthResult(score, band, nudges, visualNotes)
 }

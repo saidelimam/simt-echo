@@ -2,10 +2,14 @@ package app.simt.echo.nav
 
 import app.simt.echo.model.EchoRoute
 import app.simt.echo.model.NodeType
+import app.simt.echo.model.ParallaxProfile
 import app.simt.echo.model.RouteLeg
 import app.simt.echo.model.RouteNode
+import app.simt.echo.model.RoutePerception
 import app.simt.echo.model.StartAnchor
 import app.simt.echo.model.TurnDir
+import app.simt.echo.model.withPerception
+import kotlin.io.encoding.Base64
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -373,5 +377,34 @@ class RouteHealthTest {
             h.nudges,
         )
         assertTrue(h.nudges.size <= 3)
+    }
+
+    @Test
+    fun lowVisualTrackabilityLegReportsVisualCoverageNoteAndPenalty() {
+        // Leg 1 (0..10 m) has high trackability (220); Leg 2 (10..20 m) has low trackability (30).
+        val track = ByteArray(40) { if (it < 20) 220.toByte() else 30.toByte() }
+        val depth = ByteArray(40) { 10 }
+        val parallax = ParallaxProfile(
+            inverseDepth = Base64.encode(depth),
+            trackability = Base64.encode(track),
+            estimatorId = "echo-parallax-01",
+            intrinsicsClass = "DEFAULT",
+        )
+        val base = route(
+            listOf(
+                node("s", NodeType.START, 0.0, landmarks = listOf("l0")),
+                node("t", NodeType.TURN, 10.0, turn = TurnDir.RIGHT, landmarks = listOf("l1")),
+                node("d", NodeType.DESTINATION, 20.0, label = "Home"),
+            ),
+            listOf(
+                leg("s", "t", 10.0),
+                leg("t", "d", 10.0),
+            ),
+        ).withPerception(RoutePerception(parallax = parallax))
+
+        val h = routeHealth(base)
+        assertEquals(1, h.visualCoverageNotes.size)
+        assertTrue("Leg 2 has little texture" in h.visualCoverageNotes.single())
+        assertTrue("rely on steps there" in h.visualCoverageNotes.single())
     }
 }

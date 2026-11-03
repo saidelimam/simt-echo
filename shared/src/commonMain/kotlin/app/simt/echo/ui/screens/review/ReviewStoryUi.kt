@@ -134,6 +134,13 @@ fun RouteHealthHeader(
                     .height(6.dp)
                     .clip(CircleShape),
             )
+            health.visualCoverageNotes.forEach { note ->
+                Text(
+                    text = note,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             health.nudges.forEach { nudge ->
                 CosmosSecondaryButton(
                     label = nudge,
