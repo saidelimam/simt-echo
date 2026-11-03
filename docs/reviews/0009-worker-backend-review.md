@@ -33,7 +33,7 @@ BLOCK. Tracker rows below are the fix slices; all start `Queued`.
 | id | state | slice | tier | lane | depends on | evidence |
 |---|---|---|---|---|---|---|
 | R9-01 | Complete | F1 shared-token authorization model: design note + tests proving one install cannot read/delete another's job, upload, or relay code | High | auth | — | df3f1b8a4fc2b409193e471631fe5061482d6de3 · test: npm test |
-| R9-02 | Queued | F2 indefinite retention of jobs and relay objects: lifecycle rules + cron sweep; test a terminal job's prefix and an expired relay object are gone without a GET | High | storage | — | |
+| R9-02 | Complete | F2 indefinite retention of jobs and relay objects: lifecycle rules + cron sweep; test a terminal job's prefix and an expired relay object are gone without a GET | High | storage | — | 27a8919f1e229673cab66800221de85f34e47150 · test: npm test |
 | R9-03 | Queued | F3 unbounded manifest fan-out: schema caps (checkpoints, keyframes, approach, strings) + rejection tests at the caps | High | schema | — | |
 | R9-04 | Queued | F3 scout is one Workflow step, so retries/fallbacks re-bill every checkpoint: per-checkpoint steps or persisted per-checkpoint results; test a failure at checkpoint n does not re-call 1..n-1 | High | pipeline | R9-03 | |
 | R9-05 | Queued | F4 spend governance is per-job and estimate-based only: account-level daily cap/kill-switch; samFramesBilled reconciled against vendor usage; alert/runbook note | High | spend | R9-03 | |
