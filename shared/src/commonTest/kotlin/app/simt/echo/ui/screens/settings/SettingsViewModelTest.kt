@@ -284,6 +284,21 @@ class SettingsViewModelTest {
         assertEquals("Nothing to delete.", vm.ui.value.deleteNote)
     }
 
+    @Test
+    fun visualAssistDefaultsOffAndPersistsWhenToggled() {
+        val vm = vm()
+        assertFalse(vm.ui.value.visualAssist, "visualAssist must default to false")
+        assertFalse(configs.get().visualAssist)
+
+        vm.setVisualAssist(true)
+        assertTrue(vm.ui.value.visualAssist)
+        assertTrue(configs.get().visualAssist)
+
+        vm.setVisualAssist(false)
+        assertFalse(vm.ui.value.visualAssist)
+        assertFalse(configs.get().visualAssist)
+    }
+
     /** Records every shareFile call; the result is configurable. */
     private class FakeFileSharing(
         var result: Boolean = true,

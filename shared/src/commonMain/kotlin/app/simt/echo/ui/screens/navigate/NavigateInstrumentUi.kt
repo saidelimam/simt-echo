@@ -35,7 +35,9 @@ import app.simt.echo.ui.components.LandmarkCard
 import app.simt.echo.ui.components.wrapPi
 import app.simt.echo.ui.components.MaskedCropImage
 import app.simt.echo.ui.motion.LuminousSprings
+import app.simt.echo.ui.theme.EchoExtras
 import kotlin.math.PI
+import kotlin.math.roundToInt
 
 const val NavigateMorphArrowTag = "NavigateMorphArrow"
 const val NavigateSigmaAuraTag = "NavigateSigmaAura"
@@ -43,6 +45,8 @@ const val NavigateGlowTagPrefix = "NavigateGlow"
 const val NavigateFingerprintChipTag = "NavigateFingerprintChip"
 const val NavigateRelockRingTag = "NavigateRelockRing"
 const val NavigateLookForThisTag = "NavigateLookForThis"
+const val NavigateVisualLockTag = "NavigateVisualLock"
+const val NavigateVisualNudgeTag = "NavigateVisualNudge"
 
 /**
  * Morphing navigation arrow with its σ aura (plan W13-08).
@@ -73,6 +77,8 @@ fun NavigateMorphArrow(
     modifier: Modifier = Modifier,
     color: Color = MaterialTheme.colorScheme.primary,
     tier: CosmosMotionTier = cosmosMotionTier(),
+    visualLockConfidence01: Float = 0f,
+    visualNudge: String? = null,
 ) {
     val animated = remember { Animatable(arrowRad) }
     LaunchedEffect(arrowRad, tier) {
@@ -99,6 +105,7 @@ fun NavigateMorphArrow(
     }
     val density = LocalDensity.current
     val auraRadiusPx = with(density) { auraRadiusDp.dp.toPx() }
+    val lockColor = EchoExtras.cyan
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = modifier) {
         Canvas(
             modifier = Modifier
@@ -111,6 +118,11 @@ fun NavigateMorphArrow(
                 softness01 = auraSoftness01,
                 dimChrome = dimChrome,
                 dashed = auraDashed,
+            )
+            drawVisualLockRing(
+                color = lockColor,
+                auraRadiusPx = auraRadiusPx,
+                confidence01 = visualLockConfidence01,
             )
             when (shape) {
                 ArrowShape.U_TURN -> drawUTurn(color)
@@ -132,6 +144,23 @@ fun NavigateMorphArrow(
                 text = sigmaLabel,
                 style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier.testTag(NavigateSigmaAuraTag),
+            )
+        }
+        if (visualLockConfidence01 >= 0.5f) {
+            val pct = (visualLockConfidence01 * 100f).roundToInt()
+            Text(
+                text = "Visual lock $pct%",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag(NavigateVisualLockTag),
+            )
+        }
+        if (visualNudge != null) {
+            Text(
+                text = visualNudge,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag(NavigateVisualNudgeTag),
             )
         }
     }
@@ -283,6 +312,8 @@ fun InstrumentArrow(
         dimChrome = instrument.calmMode,
         modifier = modifier,
         color = color,
+        visualLockConfidence01 = instrument.visualLockConfidence01,
+        visualNudge = instrument.visualNudge,
     )
 }
 

@@ -27,6 +27,8 @@ data class SettingsUi(
     val baselineMode: Boolean = false,
     /** Camera HUD on Navigate (W5-02), persisted. */
     val cameraOverlayEnabled: Boolean = false,
+    /** Visual assist (plan W19-01), persisted. */
+    val visualAssist: Boolean = false,
     /** Distance heartbeat while closing on a turn (W13-09), persisted. */
     val turnHeartbeat: Boolean = true,
     /** Opt-in earcons at turns (W13-09), persisted. */
@@ -88,6 +90,7 @@ class SettingsViewModel(
                 stepK = it.stepK,
                 baselineMode = it.baselineMode,
                 cameraOverlayEnabled = it.cameraOverlayEnabled,
+                visualAssist = it.visualAssist,
                 turnHeartbeat = it.turnHeartbeat,
                 earcons = it.earcons,
                 readyUploadMobileData = it.readyUploadMobileData,
@@ -157,6 +160,11 @@ class SettingsViewModel(
     fun setCameraOverlay(enabled: Boolean) {
         configs.update { it.copy(cameraOverlayEnabled = enabled) }
         _ui.update { it.copy(cameraOverlayEnabled = enabled) }
+    }
+
+    fun setVisualAssist(enabled: Boolean) {
+        configs.update { it.copy(visualAssist = enabled) }
+        _ui.update { it.copy(visualAssist = enabled) }
     }
 
     /**

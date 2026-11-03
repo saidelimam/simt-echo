@@ -148,6 +148,18 @@ fun SettingsScreen(
                 rows = listOf(
                     {
                         CosmosRecordRow(
+                            title = "Visual assist",
+                            subtitle = "Uses the camera while you walk, analysed on the phone, no images stored or sent; the route stores only tiny non-image profiles.",
+                            trailing = {
+                                Switch(
+                                    checked = ui.visualAssist,
+                                    onCheckedChange = viewModel::setVisualAssist,
+                                )
+                            },
+                        )
+                    },
+                    {
+                        CosmosRecordRow(
                             title = "Camera overlay",
                             subtitle = "Live camera behind the navigation HUD, with the landmark crop and mask.",
                             trailing = {

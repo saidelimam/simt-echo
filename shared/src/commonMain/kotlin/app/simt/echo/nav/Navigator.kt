@@ -213,6 +213,12 @@ class Navigator(
     private var lastDepthMatchBucket: Int = -1
     private val depthFixGate = FixGate()
 
+    // Honest-light visual lock + usability nudge state (plan W19-01).
+    private var lastVisualObsTNs: Long = Long.MIN_VALUE
+    private var lastVisualConfidence01: Double = 0.0
+    private var lastVisualReason: app.simt.echo.capture.visual.VisualReason = app.simt.echo.capture.visual.VisualReason.NONE
+    private var lastVisualReasonTNs: Long = Long.MIN_VALUE
+
     /** Raw yaws seen on the current leg, for the wrong-start rule. */
     private val legYaws = mutableListOf<Double>()
 
@@ -273,6 +279,10 @@ class Navigator(
         viewFixMatcher.reset()
         depthTracker.reset()
         lastDepthMatchBucket = -1
+        lastVisualObsTNs = Long.MIN_VALUE
+        lastVisualConfidence01 = 0.0
+        lastVisualReason = app.simt.echo.capture.visual.VisualReason.NONE
+        lastVisualReasonTNs = Long.MIN_VALUE
         turnDetector.reset()
         yawTrail.clear()
         legYaws.clear()
@@ -484,8 +494,23 @@ class Navigator(
         ego: app.simt.echo.capture.visual.VisualEgo,
         usability01: Double = 1.0,
         nominalMps: Double = latestNominalMps,
+        reason: app.simt.echo.capture.visual.VisualReason = app.simt.echo.capture.visual.VisualReason.NONE,
+        tNs: Long = lastMotionTNs,
     ) {
         if (!config.visualAssist || config.baselineMode) return
+        val obsTimeNs = if (tNs > 0L) tNs else lastMotionTNs
+        if (obsTimeNs > lastMotionTNs) lastMotionTNs = obsTimeNs
+        if (reason == app.simt.echo.capture.visual.VisualReason.FLAT ||
+            reason == app.simt.echo.capture.visual.VisualReason.BLANK_WALL ||
+            reason == app.simt.echo.capture.visual.VisualReason.DARK
+        ) {
+            lastVisualReason = reason
+            lastVisualReasonTNs = obsTimeNs
+        } else if (reason == app.simt.echo.capture.visual.VisualReason.NONE && ego.confidence01 >= 0.5) {
+            lastVisualReason = app.simt.echo.capture.visual.VisualReason.NONE
+        }
+
+        var usedObservation = false
         if (ego.confidence01.isFinite() && ego.confidence01 >= 0.5 && ego.hasFoe) {
             val offset = ego.travelOffsetRad
             if (offset.isFinite()) {
@@ -497,6 +522,7 @@ class Navigator(
                     wrapPi(travelOffsetRad + alpha * wrapPi(clamped - travelOffsetRad))
                         .coerceIn(-MAX_TRAVEL_OFFSET_RAD, MAX_TRAVEL_OFFSET_RAD)
                 }
+                usedObservation = true
             }
         }
         val obs = visualSpeedEstimator.evaluate(
@@ -511,10 +537,6 @@ class Navigator(
             val prevMeanS = ghost?.meanS ?: absoluteS
             val prevK = ghost?.meanK ?: 1.0
             ghost?.observe(obs)
-            // When particles have not yet spread widely in s, reweighting k
-            // updates meanK immediately; shift particle positions by the newly
-            // learned stride delta over the current leg so between-anchor
-            // distance reflects the corrected stride right away.
             if (ghost != null && prevK > 0.0) {
                 val newK = ghost.meanK
                 val legWalkedOdo = (dist - legStartOdo).coerceAtLeast(0.0)
@@ -523,8 +545,16 @@ class Navigator(
                 }
             }
             strideLearner.observeVisualSpeed(obs.nominalMps, obs.visualMps, obs.sigmaMps)
+            usedObservation = true
         }
-        onDepthSignatureUpdate(ego, nominalMps)
+        if (onDepthSignatureUpdate(ego, nominalMps)) {
+            usedObservation = true
+        }
+        if (usedObservation && ego.confidence01.isFinite() && ego.confidence01 >= 0.5) {
+            lastVisualObsTNs = obsTimeNs
+            lastVisualConfidence01 = ego.confidence01.coerceIn(0.5, 1.0)
+            lastVisualReason = app.simt.echo.capture.visual.VisualReason.NONE
+        }
         if (phase == NavPhase.RELOCKING) checkRelockConvergence()
         refresh()
     }
@@ -551,6 +581,11 @@ class Navigator(
         ghost?.observe(fix)
         val alpha = (0.45 * fix.confidence01).coerceIn(0.05, 0.50)
         yawOffset = wrapPi(yawOffset - alpha * fix.dHeadingRad)
+        if (fix.confidence01 >= 0.5) {
+            lastVisualObsTNs = lastMotionTNs
+            lastVisualConfidence01 = fix.confidence01.coerceIn(0.5, 1.0)
+            lastVisualReason = app.simt.echo.capture.visual.VisualReason.NONE
+        }
         if (phase == NavPhase.RELOCKING) checkRelockConvergence()
         refresh()
         return fix
@@ -565,28 +600,29 @@ class Navigator(
     private fun onDepthSignatureUpdate(
         ego: app.simt.echo.capture.visual.VisualEgo,
         nominalMps: Double,
-    ) {
-        val g = ghost ?: return
-        val parallax = route.perception?.parallax ?: return
-        if (!ego.confidence01.isFinite() || ego.confidence01 < 0.5) return
-        if (!ego.expansionPerSec.isFinite() || ego.expansionPerSec <= 0.0) return
+    ): Boolean {
+        val g = ghost ?: return false
+        val parallax = route.perception?.parallax ?: return false
+        if (!ego.confidence01.isFinite() || ego.confidence01 < 0.5) return false
+        if (!ego.expansionPerSec.isFinite() || ego.expansionPerSec <= 0.0) return false
         val speed = if (nominalMps.isFinite() && nominalMps > 0.15) nominalMps else 1.0
         val rho = ego.expansionPerSec / speed
         depthTracker.onSample(dist, rho)
         val bucket = (dist / app.simt.echo.model.ParallaxProfile.STEP_M).toInt()
-        if (bucket == lastDepthMatchBucket) return
+        if (bucket == lastDepthMatchBucket) return false
         lastDepthMatchBucket = bucket
         val windowM = if (phase == NavPhase.RELOCKING) {
             (dist - relockStartOdo).coerceIn(DepthSignatureMatch.MIN_RELOCK_QUERY_M, DepthSignatureMatch.QUERY_M)
         } else {
             DepthSignatureMatch.QUERY_M
         }
-        val obsRho = depthTracker.lastWindow(windowM, dist) ?: return
-        DepthSignatureMatch.match(parallax, obsRho, g.meanS, g.sigma)?.let { fix ->
-            if (phase == NavPhase.RELOCKING || depthFixGate.accept(dist, fix.estimatedS)) {
-                g.observe(Observation.Magnetic(fix.estimatedS))
-            }
+        val obsRho = depthTracker.lastWindow(windowM, dist) ?: return false
+        val fix = DepthSignatureMatch.match(parallax, obsRho, g.meanS, g.sigma) ?: return false
+        if (phase == NavPhase.RELOCKING || depthFixGate.accept(dist, fix.estimatedS)) {
+            g.observe(Observation.Magnetic(fix.estimatedS))
+            return true
         }
+        return false
     }
 
     fun onFingerprintHit(hit: FingerprintHit) {
@@ -1018,6 +1054,11 @@ class Navigator(
                     config.navLandmarkVisibleMinM,
                 )
             )
+        val lockActive = config.visualAssist && !config.baselineMode &&
+            lastVisualConfidence01 >= 0.5 &&
+            lastVisualObsTNs != Long.MIN_VALUE &&
+            lastMotionTNs >= lastVisualObsTNs &&
+            lastMotionTNs - lastVisualObsTNs <= VISUAL_LOCK_WINDOW_NS
         return NavUi(
             phase = phase,
             legIndex = legIndex,
@@ -1030,7 +1071,21 @@ class Navigator(
             progress01 = currentLeg?.lengthM?.takeIf { it > 0.0 }
                 ?.let { (progress / it).coerceIn(0.0, 1.0) } ?: 0.0,
             fingerprintPrompt = fingerprintPrompt,
+            visualLockConfidence01 = if (lockActive) lastVisualConfidence01 else 0.0,
+            visualNudge = activeVisualNudge(),
         )
+    }
+
+    private fun activeVisualNudge(): String? {
+        if (!config.visualAssist || config.baselineMode) return null
+        if (lastVisualReasonTNs == Long.MIN_VALUE || lastMotionTNs < lastVisualReasonTNs) return null
+        if (lastMotionTNs - lastVisualReasonTNs > VISUAL_NUDGE_WINDOW_NS) return null
+        return when (lastVisualReason) {
+            app.simt.echo.capture.visual.VisualReason.FLAT -> "Hold the phone upright and ahead"
+            app.simt.echo.capture.visual.VisualReason.BLANK_WALL -> "Blank wall — using steps"
+            app.simt.echo.capture.visual.VisualReason.DARK -> "Low light — using steps"
+            else -> null
+        }
     }
 
     private fun instructionFor(target: RouteNode?, landmark: Landmark?): String = when (phase) {
@@ -1124,6 +1179,9 @@ class Navigator(
 
         /** "Found you" cue expires after 5 m of further walking. */
         const val FOUND_COPY_EXPIRE_M = 5.0
+
+        const val VISUAL_LOCK_WINDOW_NS = 2_000_000_000L
+        const val VISUAL_NUDGE_WINDOW_NS = 4_000_000_000L
 
         private val MAX_TRAVEL_OFFSET_RAD = 30.0 * kotlin.math.PI / 180.0
     }

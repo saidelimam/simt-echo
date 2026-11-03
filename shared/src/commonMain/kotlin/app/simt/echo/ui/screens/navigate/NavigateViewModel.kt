@@ -151,7 +151,14 @@ class NavigateViewModel(
                     if (it.isStep) {
                         val drained = (motion as? VisualMotionSource)?.drainVisual(it.tNs)
                         visualFrame = drained
-                        if (drained != null) nav.onVisualEgo(drained.ego, drained.usability01)
+                        if (drained != null) {
+                            nav.onVisualEgo(
+                                ego = drained.ego,
+                                usability01 = drained.usability01,
+                                reason = drained.reason,
+                                tNs = drained.tNs,
+                            )
+                        }
                     }
                     nav.onInput(NavInput.Motion(it))
                 }

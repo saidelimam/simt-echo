@@ -86,6 +86,25 @@ internal fun DrawScope.drawSigmaAura(
     }
 }
 
+/**
+ * Honest-light visual-lock ring inside the σ aura (plan W19-01): drawn only
+ * when [confidence01] ≥ 0.5, with brightness (alpha) equal to [confidence01].
+ */
+internal fun DrawScope.drawVisualLockRing(
+    color: Color,
+    auraRadiusPx: Float,
+    confidence01: Float,
+) {
+    if (!confidence01.isFinite() || confidence01 < 0.5f) return
+    val maxR = size.minDimension / 2f
+    val ringRadius = (auraRadiusPx.coerceAtMost(maxR) * 0.72f).coerceAtLeast(24.dp.toPx())
+    drawCircle(
+        color = color.copy(alpha = confidence01.coerceIn(0.5f, 1.0f)),
+        radius = ringRadius,
+        style = Stroke(width = 2.dp.toPx()),
+    )
+}
+
 private fun DrawScope.fillOutlined(path: Path, color: Color) {
     drawPath(
         path,

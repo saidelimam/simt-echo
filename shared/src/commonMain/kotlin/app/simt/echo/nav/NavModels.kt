@@ -68,6 +68,17 @@ data class NavUi(
     val fingerprintPrompt: FingerprintPrompt? = null,
     /** Navigation runs on sensors only, so this is always true. */
     val offline: Boolean = true,
+    /**
+     * Honest-light visual lock confidence (plan W19-01): in `0.5..1.0` only
+     * while `VisualEgo.confidence01 >= 0.5` AND the filter used a visual
+     * observation within the last 2 s; `0.0` otherwise.
+     */
+    val visualLockConfidence01: Double = 0.0,
+    /**
+     * Quiet single-line usability nudge (plan W19-01) when the phone is held
+     * flat, against a blank wall, or in the dark; null when clear.
+     */
+    val visualNudge: String? = null,
 )
 
 /** Everything that can drive the state machine: motion and user actions. */

@@ -85,6 +85,10 @@ data class NavigateInstrumentPresentation(
     val showRelockRing: Boolean,
     /** Walking straight: dim decorative chrome, keep text contrast. */
     val calmMode: Boolean,
+    /** Honest-light visual lock brightness 0.5..1.0, or 0f when inactive (plan W19-01). */
+    val visualLockConfidence01: Float = 0f,
+    /** Quiet single-line usability nudge, or null when clear (plan W19-01). */
+    val visualNudge: String? = null,
 )
 
 /** Periphery glow range: on the turning side when this close to a turn. */
@@ -121,11 +125,18 @@ fun navigateInstrumentPresentation(
     landmarkPresent: Boolean,
     fingerprintPrompt: FingerprintPrompt?,
     relock: NavigateRelockState?,
+    visualLockConfidence01: Double = 0.0,
+    visualNudge: String? = null,
 ): NavigateInstrumentPresentation {
     val shape = arrowShapeFor(phase, arrowRad)
     val remaining = remainingM.coerceAtLeast(0.0)
     val side = glowSideFor(phase, arrowRad, nextTurn)
     val inRange = remaining <= PERIPHERY_GLOW_RANGE_M
+    val lockConf = if (visualLockConfidence01.isFinite() && visualLockConfidence01 >= 0.5) {
+        visualLockConfidence01.coerceIn(0.5, 1.0).toFloat()
+    } else {
+        0f
+    }
     return NavigateInstrumentPresentation(
         arrowShape = shape,
         bendFraction01 = bendFractionFor(arrowRad),
@@ -140,6 +151,8 @@ fun navigateInstrumentPresentation(
         fingerprintChipCopy = fingerprintPrompt?.chipCopy(),
         showRelockRing = relock != null,
         calmMode = phase == NavPhase.WALK && abs(arrowRad) <= ARROW_STRAIGHT_MAX_RAD,
+        visualLockConfidence01 = lockConf,
+        visualNudge = visualNudge,
     )
 }
 
@@ -205,4 +218,6 @@ fun navigateInstrumentFor(nav: NavUi, landmarkPresent: Boolean): NavigateInstrum
         landmarkPresent = landmarkPresent,
         fingerprintPrompt = nav.fingerprintPrompt,
         relock = null,
+        visualLockConfidence01 = nav.visualLockConfidence01,
+        visualNudge = nav.visualNudge,
     )
