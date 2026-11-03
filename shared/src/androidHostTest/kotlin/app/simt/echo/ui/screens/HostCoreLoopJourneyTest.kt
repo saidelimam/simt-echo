@@ -1,5 +1,6 @@
 package app.simt.echo.ui.screens
 
+import android.os.Looper
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -41,6 +42,7 @@ import okio.Path
 import okio.Path.Companion.toPath
 import org.junit.Rule
 import org.junit.Test
+import org.robolectric.Shadows
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
@@ -79,6 +81,24 @@ class HostCoreLoopJourneyTest {
     @get:Rule
     val compose: AndroidComposeTestRule<RobolectricActivityRule, *> =
         AndroidComposeTestRule(activityRule, EmptyCoroutineContext) { it.activity }
+
+    /**
+     * Waits for [value] while pumping the Robolectric main looper.
+     *
+     * This test drives the real ViewModels without ever composing a screen,
+     * so `compose.waitUntil` has no controlled clock to advance and the
+     * `viewModelScope` work never runs. Idling the looper is what actually
+     * moves it (Robolectric's default looper mode is PAUSED).
+     */
+    private fun <T : Any> awaitValue(timeoutMs: Long = 10_000, value: () -> T?): T {
+        val deadline = System.nanoTime() + timeoutMs * 1_000_000L
+        while (System.nanoTime() < deadline) {
+            Shadows.shadowOf(Looper.getMainLooper()).idle()
+            value()?.let { return it }
+            Thread.sleep(5)
+        }
+        throw AssertionError("timed out after ${timeoutMs}ms waiting for a value")
+    }
 
     private fun testGraph(): AppGraph {
         val dir = Files.createTempDirectory("w7-09-journey").toString()
@@ -347,8 +367,7 @@ class HostCoreLoopJourneyTest {
         // Share offers through its real view model; the QR must be one a
         // scanner accepts (no raw ids, no exception text — W7-06 copy).
         val shareVm = ShareViewModel(Fixtures.L_ROUTE.routeId, service, FakeHaptics(), FakeSharing())
-        compose.waitUntil(timeoutMillis = 10_000) { shareVm.ui.value.qrUri != null }
-        val qrUri = assertNotNull(shareVm.ui.value.qrUri, "Share offers a QR")
+        val qrUri = assertNotNull(awaitValue { shareVm.ui.value.qrUri }, "Share offers a QR")
         assertTrue(qrUri.startsWith("simt-echo://"), "offer QR uses the scan scheme")
 
         // The sealed bytes behind the QR open to the offered route.
@@ -360,8 +379,7 @@ class HostCoreLoopJourneyTest {
         // and saves nothing before the user confirms.
         val receiveVm = ReceiveViewModel(service, FakeSharing())
         receiveVm.onScanned(qrUri)
-        compose.waitUntil(timeoutMillis = 10_000) { receiveVm.ui.value.preview != null }
-        val preview = assertNotNull(receiveVm.ui.value.preview, "Receive previews the offer")
+        val preview = assertNotNull(awaitValue { receiveVm.ui.value.preview }, "Receive previews the offer")
         assertEquals("L route (fixture)", preview.name)
         assertEquals(45.0, preview.lengthM)
         assertEquals(2, preview.turns)

@@ -70,6 +70,26 @@ fun receiveSaveErrorCopy(): String = UserError(
     nextAction = "Try saving again.",
 ).message()
 
+/**
+ * Receive fetch found an expired link. Distinct from "can't reach": the
+ * peer was reached and answered, and retrying the same link cannot work.
+ */
+fun receiveExpiredCopy(): String = UserError(
+    whatHappened = "This route expired before it arrived.",
+    whatsSafe = "Nothing was saved.",
+    nextAction = "Ask them for a fresh link.",
+).message()
+
+/**
+ * Receive fetch reached a bundle that failed its fingerprint or decryption
+ * check. Never network advice: a retry would fetch the same broken bytes.
+ */
+fun receiveUnverifiedCopy(): String = UserError(
+    whatHappened = "Couldn't verify this route.",
+    whatsSafe = "Nothing was saved.",
+    nextAction = "Ask them to share it again.",
+).message()
+
 /** Receive file-import failure: no bundle was decoded. */
 fun receiveFileErrorCopy(): String = UserError(
     whatHappened = "Could not read the file.",

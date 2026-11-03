@@ -243,6 +243,27 @@ class SharePairingViewModelTest {
     }
 
     @Test
+    fun aPhoneWithoutHceCanStillChooseNfcAndIsToldWhy() = runTest(dispatcher) {
+        val rig = rig()
+        val pairing = FakeNfcPairingController(capabilities(canPresent = false))
+        val vm = viewModel(rig, pairing)
+        advanceUntilIdle()
+        vm.selectMethod(PairingMethod.QR)
+        advanceUntilIdle()
+        assertEquals(PairingMethod.QR, vm.ui.value.method)
+
+        // The selector must land on NFC: the tap panel is where the reason
+        // lives, and a silent no-op would explain nothing at all.
+        vm.selectMethod(PairingMethod.NFC)
+        advanceUntilIdle()
+        assertEquals(PairingMethod.NFC, vm.ui.value.method)
+        assertEquals(NfcReadiness.UNAVAILABLE, vm.ui.value.nfcReadiness)
+        assertTrue(pairing.published.isEmpty(), "an unsupported choice publishes nothing")
+        assertFalse(vm.ui.value.readyToTap)
+        assertNotNull(vm.ui.value.qrUri, "QR stays one action away")
+    }
+
+    @Test
     fun aPrivacyChangeInvalidatesBothRenderingsBeforeReplacingThem() = runTest(dispatcher) {
         val rig = rig()
         val pairing = FakeNfcPairingController(capabilities())

@@ -1,6 +1,8 @@
 package app.simt.echo.ui.screens.receive
 
 import app.simt.echo.Fixtures
+import app.simt.echo.bundle.BundleCodec
+import app.simt.echo.model.BundleBody
 import app.simt.echo.data.FileStore
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.model.EchoSchemaVersion
@@ -17,6 +19,9 @@ import app.simt.echo.transfer.PairingMethod
 import app.simt.echo.transfer.PairingSource
 import app.simt.echo.transfer.QrPayload
 import app.simt.echo.transfer.TransferService
+import app.simt.echo.transfer.base64Url
+import app.simt.echo.ui.copy.receiveExpiredCopy
+import app.simt.echo.ui.copy.receiveUnverifiedCopy
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -414,6 +419,97 @@ class ReceivePairingViewModelTest {
         advanceUntilIdle()
         assertFalse(vm.ui.value.methodLocked)
         assertNull(vm.ui.value.preview)
+    }
+
+    @Test
+    fun anExpiredLinkSaysExpiredInsteadOfUnreachable() = runTest(dispatcher) {
+        val rig = rig()
+        // A bundle that was valid when it was sealed but expired by the time
+        // this phone opened it: the peer answered, so this is not network.
+        val expired = Fixtures.L_ROUTE.copy(
+            routeId = "expired-route",
+            privacy = Fixtures.L_ROUTE.privacy.copy(expiresAtEpochMs = 1_000L),
+        )
+        val container = BundleCodec.encode(expired, emptyList())
+        val (sealed, key) = BundleCodec.seal(container)
+        // The URI carries the fingerprint of the decoded body, so the failure
+        // this test proves is expiry — not a fingerprint mismatch.
+        val body = BundleBody(route = expired, assets = emptyList())
+        val token = ByteArray(16) { 1 }
+        rig.transport.servedPayload = sealed
+        rig.transport.servedToken = base64Url(token)
+        val uri = QrPayload(
+            host = "192.168.1.20",
+            port = 51234,
+            token = token,
+            key = key,
+            sha8Hex = BundleCodec.sha8Hex(body),
+            name = expired.name,
+        ).build()
+
+        val vm = viewModel(rig)
+        advanceUntilIdle()
+        vm.onScanned(uri)
+        advanceUntilIdle()
+
+        assertNull(vm.ui.value.preview)
+        assertEquals(receiveExpiredCopy(), vm.ui.value.error)
+        assertEquals(PairingFailure.OfferExpired, vm.ui.value.pairingFailure)
+    }
+
+    @Test
+    fun aBundleThatFailsItsFingerprintSaysUnverified() = runTest(dispatcher) {
+        val rig = rig()
+        val payload = QrPayload.parse(rig.offer()).getOrThrow()
+        // The token still opens the LAN transfer; the bytes then fail `s`.
+        val tampered = payload.copy(sha8Hex = "0000000000000000").build()
+
+        val vm = viewModel(rig)
+        advanceUntilIdle()
+        vm.onScanned(tampered)
+        advanceUntilIdle()
+
+        assertNull(vm.ui.value.preview)
+        assertEquals(receiveUnverifiedCopy(), vm.ui.value.error)
+        assertEquals(PairingFailure.Verification, vm.ui.value.pairingFailure)
+    }
+
+    @Test
+    fun aResumeAfterSaveDoesNotRearmAcquisition() = runTest(dispatcher) {
+        val rig = rig()
+        val pairing = FakeNfcPairingController(NfcCapabilities(canRead = true, enabled = true))
+        val vm = viewModel(rig, pairing)
+        advanceUntilIdle()
+        vm.onScanned(rig.offer())
+        advanceUntilIdle()
+        vm.save {}
+        advanceUntilIdle()
+        assertNotNull(vm.ui.value.savedRouteId)
+        val generation = vm.ui.value.generation
+
+        vm.onResumed()
+        advanceUntilIdle()
+
+        assertEquals(generation, vm.ui.value.generation, "a finished visit does not re-arm")
+        assertTrue(pairing.readingAttempts.isEmpty(), "and it does not open the reader")
+    }
+
+    @Test
+    fun aSecondSaveAfterCompletionDoesNotPersistAgain() = runTest(dispatcher) {
+        val rig = rig()
+        val vm = viewModel(rig)
+        advanceUntilIdle()
+        vm.onScanned(rig.offer())
+        advanceUntilIdle()
+
+        var saves = 0
+        vm.save { saves++ }
+        advanceUntilIdle()
+        assertEquals(1, saves)
+
+        vm.save { saves++ }
+        advanceUntilIdle()
+        assertEquals(1, saves, "a completed Save cannot write the route a second time")
     }
 
     @Test

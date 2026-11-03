@@ -1,6 +1,8 @@
 package app.simt.echo.transfer
 
 import app.simt.echo.Fixtures
+import app.simt.echo.bundle.BundleCodecException
+import app.simt.echo.bundle.BundleError
 import app.simt.echo.data.FileStore
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.platform.Endpoint
@@ -201,7 +203,10 @@ class TransferCancellationTest {
 
         // The bytes arrive; only verification fails. A relay is configured
         // and qualified, yet fetching a second copy would hide the tamper.
-        assertFailsWith<IllegalStateException> { receiver(rig).fetchPreview(forged) }
+        // The failure is typed (integrity, not connectivity) so a screen can
+        // say "couldn't verify" instead of blaming the network.
+        val tampered = assertFailsWith<BundleCodecException> { receiver(rig).fetchPreview(forged) }
+        assertEquals(BundleError.HASH_MISMATCH, tampered.error)
         assertEquals(0, rig.relay.downloads)
     }
 

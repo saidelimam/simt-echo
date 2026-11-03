@@ -74,12 +74,19 @@ class NfcInvitationReader(
      * attempt is cancelled, so its in-flight exchange can never report.
      */
     fun arm(attemptId: Long) {
+        var stale: NfcTransceiver? = null
         synchronized(this) {
             if (active == attemptId) return
             active = attemptId
+            stale = connection
+            connection = null
             job?.cancel()
             job = null
         }
+        // Cancelling the job cannot unblock a transceive already inside the
+        // tag API: only closing the connection interrupts it, so a replaced
+        // attempt cannot hold the radio until its timeout.
+        runCatching { stale?.close() }
     }
 
     /**

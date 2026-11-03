@@ -2,6 +2,8 @@ package app.simt.echo.ui.screens.receive
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.simt.echo.bundle.BundleCodecException
+import app.simt.echo.bundle.BundleError
 import app.simt.echo.model.BundleBody
 import app.simt.echo.model.EchoSchemaVersion
 import app.simt.echo.model.NodeType
@@ -21,8 +23,10 @@ import app.simt.echo.transfer.PairingRole
 import app.simt.echo.transfer.PairingSource
 import app.simt.echo.transfer.ProgressRateTracker
 import app.simt.echo.transfer.TransferService
+import app.simt.echo.ui.copy.receiveExpiredCopy
 import app.simt.echo.ui.copy.receiveFileErrorCopy
 import app.simt.echo.ui.copy.receiveSaveErrorCopy
+import app.simt.echo.ui.copy.receiveUnverifiedCopy
 import app.simt.echo.ui.sigil.SigilGeometry
 import app.simt.echo.ui.sigil.routeSigil
 import kotlinx.coroutines.CancellationException
@@ -201,6 +205,24 @@ class ReceiveViewModel(
             present(body)
         } catch (cancelled: CancellationException) {
             throw cancelled
+        } catch (bundle: BundleCodecException) {
+            // An expired link or a failed integrity check is not a network
+            // problem: the peer answered, and retrying the same bytes cannot
+            // help. Each keeps its own copy and its own typed reason.
+            if (!isAttempt(attemptId)) return
+            val expired = bundle.error == BundleError.EXPIRED
+            _ui.update {
+                it.copy(
+                    fetching = false,
+                    methodLocked = false,
+                    error = if (expired) receiveExpiredCopy() else receiveUnverifiedCopy(),
+                    pairingFailure = if (expired) {
+                        PairingFailure.OfferExpired
+                    } else {
+                        PairingFailure.Verification
+                    },
+                )
+            }
         } catch (failure: Exception) {
             if (!isAttempt(attemptId)) return
             _ui.update {
@@ -245,7 +267,9 @@ class ReceiveViewModel(
     private fun armIfIdle() {
         if (closed) return
         val state = _ui.value
-        if (state.fetching || state.preview != null) return
+        // A saved visit is finished: coming back to it must not quietly
+        // re-open the camera or the reader behind the success state.
+        if (state.fetching || state.preview != null || state.savedRouteId != null) return
         arm()
     }
 
@@ -305,6 +329,8 @@ class ReceiveViewModel(
 
     fun save(onSaved: (String) -> Unit) {
         val body = previewBody ?: return
+        // Already persisted: a late tap cannot write the same route again.
+        if (_ui.value.savedRouteId != null) return
         // Single-flight: repeated taps cannot persist twice.
         if (saveJob?.isActive == true) return
         saveJob = viewModelScope.launch {
