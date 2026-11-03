@@ -231,12 +231,13 @@ class HostRecordInstrumentTest {
     }
 
     /**
-     * Regression: system back on the finish form used to be swallowed by the
-     * modal sheet (its dismiss was a deliberate no-op), leaving a stopped walk
-     * on a form that could not be dismissed — a stuck screen. Back must leave.
+     * Regression: the finish form could not be dismissed at all. Its scrim and
+     * system back (the same ModalBottomSheet dismiss path this test drives) ran
+     * a deliberate no-op, so a stopped walk sat on a form no gesture could
+     * close — a stuck screen. Dismiss must leave.
      */
     @Test
-    fun finishing_systemBackLeavesInsteadOfStrandingTheWalk() {
+    fun finishing_dismissLeavesInsteadOfStrandingTheWalk() {
         var abandoned = 0
         compose.setContent {
             EchoTheme(darkTheme = true) {
