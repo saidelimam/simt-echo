@@ -41,7 +41,7 @@ class VisualUsability {
         sharpnessFactor01 = (FrameQuality.sharpness(luma, width, height) / SHARPNESS_FULL).coerceIn(0.0, 1.0)
         stabilityFactor01 = FrameQuality.stability(angularRateRadPerSec)
         textureEigenvalue = StructureTensor.minEigenvalue(luma, width, height)
-        val textureFactor = (textureEigenvalue / TEXTURE_FULL).coerceIn(0.0, 1.0)
+        val textureFactor = textureFactor01(textureEigenvalue)
         value01 = sharpnessFactor01 * exposureFraction01 * textureFactor * stabilityFactor01
         reason = when {
             exposureFraction01 < 0.5 -> if (meanLuma(luma) >= 128.0) VisualReason.GLARE else VisualReason.DARK
@@ -56,6 +56,9 @@ class VisualUsability {
         const val MIN_TEXTURE_EIGENVALUE = 4.0
         private const val TEXTURE_FULL = 64.0
         private const val SHARPNESS_FULL = 256.0
+
+        fun textureFactor01(eigenvalue: Double): Double =
+            if (eigenvalue.isFinite()) (eigenvalue / TEXTURE_FULL).coerceIn(0.0, 1.0) else 0.0
 
         fun meanLuma(luma: ByteArray): Double {
             if (luma.isEmpty()) return 0.0
