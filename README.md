@@ -16,6 +16,11 @@ W6-02's draw-box extraction landed (`1c51afa`, recorded Complete in
 in `docs/measurements.md` — the deployed 60 m envelope is still unmeasured
 and unclaimed.
 
+## Legal
+
+- [Privacy Policy](docs/legal/privacy-policy.md)
+- [Terms of Use](docs/legal/terms-of-use.md)
+
 ## Layout
 
 ```
