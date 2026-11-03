@@ -178,3 +178,14 @@ class UnavailableNfcPairingController(
  */
 @Composable
 expect fun rememberNfcPairingController(): NfcPairingController
+
+/**
+ * The user's own route to the NFC toggle (plan 0005 §2).
+ *
+ * The app never flips the adapter itself: this opens the system NFC
+ * settings screen, falling back to the wireless settings in it where a
+ * build does not expose the narrower screen. Platforms without NFC return
+ * a no-op, which pairs with a selector that never offers the action.
+ */
+@Composable
+expect fun rememberNfcSettingsOpener(): () -> Unit

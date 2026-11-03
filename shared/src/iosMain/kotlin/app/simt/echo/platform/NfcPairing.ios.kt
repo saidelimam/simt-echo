@@ -11,3 +11,8 @@ import androidx.compose.runtime.remember
 @Composable
 actual fun rememberNfcPairingController(): NfcPairingController =
     remember { UnavailableNfcPairingController() }
+
+// No NFC pairing on iOS in v1, so there is no setting this app can point
+// the user at: the selector never offers the action on this target.
+@Composable
+actual fun rememberNfcSettingsOpener(): () -> Unit = remember { {} }
