@@ -3,6 +3,7 @@ package app.simt.echo.ui.screens.review
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -25,6 +26,7 @@ import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 /**
  * Headless draw-gesture verification (W6-03/W7-02, plan W2-01).
@@ -60,11 +62,13 @@ class DrawOverlayUiTest {
                 onCancel = {},
             )
         }
-        // The confirm/clear row overlaps the top of the canvas (both are
-        // top-left in the BoxWithConstraints), so drag the lower area where
-        // the gesture reaches the canvas itself. Segmented moves keep the
-        // reported box spanning start→end rather than collapsing to one
-        // slop-crossing jump.
+        // Action buttons sit below the canvas, never overlapping the photo.
+        val canvasBounds = compose.onNodeWithTag(DrawCanvasTag).getUnclippedBoundsInRoot()
+        val clearBounds = compose.onNodeWithText("Clear").getUnclippedBoundsInRoot()
+        val useBoxBounds = compose.onNodeWithText("Use box").getUnclippedBoundsInRoot()
+        assertTrue(clearBounds.top >= canvasBounds.bottom, "Clear button must sit below the canvas")
+        assertTrue(useBoxBounds.top >= canvasBounds.bottom, "Use box button must sit below the canvas")
+
         val from = Offset(0.1f, 0.55f)
         val to = Offset(0.5f, 0.9f)
         compose.onNodeWithTag(DrawCanvasTag).performTouchInput {

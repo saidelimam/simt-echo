@@ -46,6 +46,7 @@ data class ReviewNode(
     val node: RouteNode,
     val heroBytes: ByteArray? = null,
     val landmarks: List<Landmark> = emptyList(),
+    val landmarkCrops: Map<String, ByteArray> = emptyMap(),
 )
 
 /** Review screen state (plan §8.3): edit draft → draw landmarks → Save. */
@@ -521,7 +522,7 @@ class ReviewViewModel(
             try {
                 val current = route ?: return@launch
                 val node = current.nodes.firstOrNull { it.id == nodeId } ?: return@launch
-                val heroName = keyframeFileName(current, node)
+                val heroName = resolveHeroFileName(current, node)
                     ?: throw IllegalStateException("No keyframe for this node yet.")
                 val landmarkId = newId()
                 val cropName = "kf/manual_$landmarkId.jpg"
@@ -646,13 +647,37 @@ class ReviewViewModel(
         publish(next)
     }
 
+    private fun resolveHeroFileName(loaded: EchoRoute, node: RouteNode): String? {
+        val primary = keyframeFileName(loaded, node)
+        if (primary != null && drafts.draftFileExists(draftId, primary)) return primary
+        val spec = keyframeSpecs(listOf(node)).firstOrNull()
+        if (spec != null) {
+            for (i in spec.timesMs.indices.reversed()) {
+                val candidate = spec.fileName(i)
+                if (drafts.draftFileExists(draftId, candidate)) return candidate
+            }
+        }
+        if (drafts.draftFileExists(draftId, CaptureSession.START_PHOTO)) {
+            return CaptureSession.START_PHOTO
+        }
+        return primary
+    }
+
     private fun publish(loaded: EchoRoute) {
         val reviewNodes = loaded.nodes.map { node ->
+            val nodeLandmarks = loaded.landmarks.filter { landmark -> landmark.nodeId == node.id }
+            val crops = buildMap {
+                for (landmark in nodeLandmarks) {
+                    val cropFile = landmark.cropAssetId ?: continue
+                    drafts.readDraftFile(draftId, cropFile)?.let { put(landmark.id, it) }
+                }
+            }
             ReviewNode(
                 node = node,
-                heroBytes = keyframeFileName(loaded, node)
+                heroBytes = resolveHeroFileName(loaded, node)
                     ?.let { drafts.readDraftFile(draftId, it) },
-                landmarks = loaded.landmarks.filter { landmark -> landmark.nodeId == node.id },
+                landmarks = nodeLandmarks,
+                landmarkCrops = crops,
             )
         }
         _ui.update {

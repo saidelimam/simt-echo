@@ -159,6 +159,7 @@ fun NodeCard(
         reviewNode.landmarks.forEach { landmark ->
             LandmarkRow(
                 landmark = landmark,
+                cropBytes = reviewNode.landmarkCrops[landmark.id],
                 onEdit = onEditLandmark,
                 onDelete = onDeleteLandmark,
             )
@@ -215,8 +216,16 @@ fun LandmarkRow(
     onEdit: (String, String, String, Boolean) -> Unit,
     onDelete: (String) -> Unit,
     modifier: Modifier = Modifier,
+    cropBytes: ByteArray? = null,
 ) {
-    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (cropBytes != null) {
+            CropImage(
+                bytes = cropBytes,
+                contentDescription = landmark.title.ifEmpty { "Landmark crop" },
+                modifier = Modifier.height(120.dp),
+            )
+        }
         CosmosTextField(
             label = "Landmark",
             value = landmark.title,

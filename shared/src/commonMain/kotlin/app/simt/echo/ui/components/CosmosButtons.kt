@@ -85,6 +85,17 @@ fun CosmosPrimaryButton(
     // state — reading it never recomposes.
     val ripples = LocalEchoRipples.current
     val centerInRoot = remember { FloatArray(2) }
+    val active = enabled || loading
+    val backgroundModifier = if (active) {
+        Modifier.background(gradient, shape)
+    } else {
+        Modifier.background(MaterialTheme.colorScheme.surfaceVariant, shape)
+    }
+    val contentColor = if (active) {
+        MaterialTheme.colorScheme.onPrimary
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+    }
     Surface(
         onClick = {
             if (!loading) {
@@ -95,7 +106,7 @@ fun CosmosPrimaryButton(
         enabled = enabled && !loading,
         shape = shape,
         color = Color.Transparent,
-        contentColor = MaterialTheme.colorScheme.onPrimary,
+        contentColor = contentColor,
         modifier = modifier
             .onGloballyPositioned { coordinates ->
                 val center = coordinates.boundsInRoot().center
@@ -103,7 +114,7 @@ fun CosmosPrimaryButton(
                 centerInRoot[1] = center.y
             }
             .sizeIn(minWidth = EchoTouchOther, minHeight = EchoTouchOther)
-            .background(gradient, shape)
+            .then(backgroundModifier)
             .testTag("$CosmosButtonTag:$label")
             .onFocusChanged { focused = it.isFocused }
             .then(if (focused) Modifier.border(2.dp, extras.gold, shape) else Modifier)

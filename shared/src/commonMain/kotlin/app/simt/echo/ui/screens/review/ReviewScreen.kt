@@ -64,6 +64,7 @@ fun ReviewScreen(
             onConfirm = viewModel::confirmDraw,
             onCancel = viewModel::closeDraw,
             nodeId = drawNode.node.id,
+            error = ui.error,
             modifier = modifier,
         )
         return

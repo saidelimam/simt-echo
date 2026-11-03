@@ -89,7 +89,9 @@ class AndroidMediaTools(
                 cropped = withContext(computeDispatcher) { source.scaledTo(maxSide) }
             }
 
-            out.toFile().outputStream().use { os ->
+            val outFile = out.toFile()
+            outFile.parentFile?.mkdirs()
+            outFile.outputStream().use { os ->
                 cropped.compress(Bitmap.CompressFormat.JPEG, 85, os)
             }
             cropped.recycle()
@@ -166,6 +168,14 @@ class AndroidMediaTools(
             MediaMetadataRetriever.OPTION_CLOSEST,
             maxSide,
             maxSide,
+        ) ?: retriever.getScaledFrameAtTime(
+            clamped * 1_000L,
+            MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
+            maxSide,
+            maxSide,
+        ) ?: retriever.getFrameAtTime(
+            clamped * 1_000L,
+            MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
         ) ?: return
 
         if (rotation != 0) {
@@ -180,7 +190,9 @@ class AndroidMediaTools(
             frame = withContext(computeDispatcher) { source.scaledTo(maxSide) }
         }
 
-        out.toFile().outputStream().use { os ->
+        val outFile = out.toFile()
+        outFile.parentFile?.mkdirs()
+        outFile.outputStream().use { os ->
             frame.compress(Bitmap.CompressFormat.JPEG, 82, os)
         }
         frame.recycle()
