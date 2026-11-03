@@ -87,13 +87,67 @@ export const CheckpointSchema = z
   });
 export type Checkpoint = z.infer<typeof CheckpointSchema>;
 
-export const ManifestSchema = z.object({
-  schema: z.literal(1),
-  draftId: z.string().min(1).max(MAX_DRAFT_ID_LENGTH),
-  consent: ConsentSchema,
-  routeContext: z.string().min(1).max(MAX_ROUTE_CONTEXT_LENGTH),
-  checkpoints: z.array(CheckpointSchema).min(1).max(MAX_CHECKPOINTS),
-});
+export const ManifestSchema = z
+  .object({
+    schema: z.literal(1),
+    draftId: z.string().min(1).max(MAX_DRAFT_ID_LENGTH),
+    consent: ConsentSchema,
+    routeContext: z.string().min(1).max(MAX_ROUTE_CONTEXT_LENGTH),
+    checkpoints: z.array(CheckpointSchema).min(1).max(MAX_CHECKPOINTS),
+  })
+  .superRefine((m, ctx) => {
+    // R9-11 (review 0009, F10): uniqueness and cross-field checks. Duplicate
+    // nodeIds collapse in the Maps scout/ground/assemble build and yield
+    // duplicated result checkpoints; duplicate media ids collide in the
+    // staging move; a hero pointing at no keyframe of its checkpoint breaks
+    // the lens step.
+    const nodeIds = new Set<string>();
+    const mediaIds = new Set<string>();
+    m.checkpoints.forEach((cp, i) => {
+      if (nodeIds.has(cp.nodeId)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["checkpoints", i, "nodeId"],
+          message: "duplicate nodeId",
+        });
+      }
+      nodeIds.add(cp.nodeId);
+      if (!cp.keyframes.some((k) => k.id === cp.heroKeyframeId)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["checkpoints", i, "heroKeyframeId"],
+          message: "heroKeyframeId must reference one of this checkpoint's keyframes",
+        });
+      }
+      for (const k of cp.keyframes) {
+        if (mediaIds.has(k.id)) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["checkpoints", i, "keyframes"],
+            message: `duplicate keyframe id ${k.id}`,
+          });
+        }
+        mediaIds.add(k.id);
+      }
+      if (cp.clip !== undefined) {
+        if (mediaIds.has(cp.clip.id)) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["checkpoints", i, "clip"],
+            message: `duplicate clip id ${cp.clip.id}`,
+          });
+        }
+        mediaIds.add(cp.clip.id);
+        if (cp.clip.endMs < cp.clip.startMs) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["checkpoints", i, "clip", "endMs"],
+            message: "clip endMs must be >= startMs",
+          });
+        }
+      }
+    });
+  });
 export type Manifest = z.infer<typeof ManifestSchema>;
 
 /** One proposed landmark (plan §5.5 `candidates[]`). Nullables are the
@@ -261,8 +315,14 @@ export const CreateJobV11RequestSchema = z.object({
   uploadId: UuidSchema.optional(),
   // W11-09 ready-on-arrival: per-window upload sessions staged during the
   // walk; Finish creates the job against all of them. Never alongside
-  // uploadId — one addressing mode per create.
-  uploadIds: z.array(UuidSchema).min(1).max(12).optional(),
+  // uploadId — one addressing mode per create. R9-11 (F10): duplicates
+  // would double-list one session in the move.
+  uploadIds: z
+    .array(UuidSchema)
+    .min(1)
+    .max(12)
+    .refine((ids) => new Set(ids).size === ids.length, { message: "duplicate uploadIds" })
+    .optional(),
   budget: JobBudgetSchema.optional(),
   idempotencyKey: z.string().min(1).max(128).optional(),
   // The id of an earlier job; the server checks it exists before it is

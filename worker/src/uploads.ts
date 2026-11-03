@@ -338,25 +338,48 @@ export async function handleCreateJobV11(c: Context<AppEnv>): Promise<Response> 
   if (uploadId !== undefined && uploadIds !== undefined) {
     return c.json({ ok: false, error: "invalid_request" }, 400);
   }
+  if (uploadId === undefined && uploadIds === undefined) {
+    // R9-11 (review 0009, F10.2): a manifest-only create has no staged
+    // media to move; its scout would burn a paid Workflow instance only to
+    // hit media_missing. Fail at intake.
+    return c.json({ ok: false, error: "upload_reference_required" }, 400);
+  }
+
+  // R9-11 (review 0009, F10.1): the idempotency record binds to the
+  // payload. zod's parsed.data is canonical — declared field order, unknown
+  // keys dropped — so the hash is stable across replays of the same logical
+  // request and differs for a changed one.
+  const payloadHash = await hexSha256Hex(JSON.stringify(parsed.data));
 
   // The id is derived from the idempotency key, so concurrent creates with
   // one key name the same Workflow instance and cannot make two jobs.
   const jobId = idempotencyKey !== undefined ? await jobIdForKey(idempotencyKey) : crypto.randomUUID();
 
-  // Idempotent replay: a completed create returns the original job id
-  // without touching staging, so double-create is safe even after the move
-  // below. A record whose job lost its manifest is stale: discard it and
-  // create afresh.
-  if (idempotencyKey !== undefined && (await readJson(c.env, idemKey(jobId))) !== null) {
-    if ((await c.env.MEDIA.head(jobManifestKey(jobId))) !== null) {
-      // R9-01: the replay hands out the creating install's job id, so only
-      // that install gets it; to every other install the key is unknown.
-      if ((await readJobOwner(c.env, jobId)) !== c.get("deviceId")) {
-        return c.json({ ok: false, error: "job_not_found" }, 404);
+  // Idempotent replay: a completed create returns the original job id only
+  // when the payload matches the recorded one — a changed payload under the
+  // same key is 409, not a silent wrong job (R9-11, F10.1). Records written
+  // before this deploy carry no hash and cannot prove a match: 409 as well
+  // (decision: strict). A record whose job lost its manifest is stale:
+  // discard it and create afresh.
+  if (idempotencyKey !== undefined) {
+    const record = await readJson<{ jobId?: string; payloadHash?: string }>(
+      c.env,
+      idemKey(jobId),
+    );
+    if (record !== null) {
+      if ((await c.env.MEDIA.head(jobManifestKey(jobId))) !== null) {
+        // R9-01: the replay hands out the creating install's job id, so only
+        // that install gets it; to every other install the key is unknown.
+        if ((await readJobOwner(c.env, jobId)) !== c.get("deviceId")) {
+          return c.json({ ok: false, error: "job_not_found" }, 404);
+        }
+        if (record.payloadHash !== payloadHash) {
+          return c.json({ ok: false, error: "idempotency_conflict" }, 409);
+        }
+        return c.json({ ok: true, jobId }, 202);
       }
-      return c.json({ ok: true, jobId }, 202);
+      await c.env.MEDIA.delete(idemKey(jobId));
     }
-    await c.env.MEDIA.delete(idemKey(jobId));
   }
 
   // resumeOf later becomes an R2 key prefix for cache adoption, so it must
@@ -370,9 +393,9 @@ export async function handleCreateJobV11(c: Context<AppEnv>): Promise<Response> 
     return c.json({ ok: false, error: "resume_not_found" }, 404);
   }
 
-  // Staged blobs to move under the job (manifest-only creates skip this).
-  // One session (uploadId) or several per-window sessions (uploadIds,
-  // W11-09): completeness is measured over the union of staged names.
+  // Staged blobs to move under the job. One session (uploadId) or several
+  // per-window sessions (uploadIds, W11-09): completeness is measured over
+  // the union of staged names.
   // R9-10 (review 0009, F9): the move streams each blob R2→R2, one at a
   // time — the old path held every staged byte (up to the 80 MB cap) in
   // memory at once. Caps are measured on the stored sizes, never the
@@ -408,13 +431,17 @@ export async function handleCreateJobV11(c: Context<AppEnv>): Promise<Response> 
       return c.json({ ok: false, error: "upload_incomplete", missing }, 400);
     }
     // Caps are measured on stored sizes (head), so no body is read here.
+    // R9-11 (F10.3): a name staged in two sessions is a client error — the
+    // old first-wins move silently dropped one of the two payloads.
     let totalBytes = 0;
     const seen = new Set<string>();
     for (const { id } of loadedBySession) {
       for (const name of allowed) {
-        if (seen.has(name)) continue;
         const head = await c.env.MEDIA.head(stagingBlobKey(id, name));
         if (!head) continue;
+        if (seen.has(name)) {
+          return c.json({ ok: false, error: "duplicate_file", file: name }, 400);
+        }
         seen.add(name);
         move.push({ name, source: stagingBlobKey(id, name) });
         totalBytes += head.size;
@@ -453,7 +480,7 @@ export async function handleCreateJobV11(c: Context<AppEnv>): Promise<Response> 
     await writeJobOwner(c.env, jobId, c.get("deviceId"));
     // W11-06: the SAM lens governor reads this (never the request body —
     // the Workflow only gets the job id). An absent file caps at the hard
-    // 240-frame ceiling (v1/manifest-only creates); resumeOf is the only sanctioned
+    // 240-frame ceiling (v1 creates); resumeOf is the only sanctioned
     // cross-job SAM-cache reuse (W10-06 scoping).
     if (budget !== undefined || resumeOf !== undefined) {
       await c.env.MEDIA.put(
@@ -477,7 +504,12 @@ export async function handleCreateJobV11(c: Context<AppEnv>): Promise<Response> 
     }
     instanceCreated = true;
     if (idempotencyKey !== undefined) {
-      await c.env.MEDIA.put(idemKey(jobId), JSON.stringify({ jobId }));
+      // R9-11 (F10.1): record the payload hash the create was made with, so
+      // a later replay can be checked against it (a mismatch is 409).
+      await c.env.MEDIA.put(
+        idemKey(jobId),
+        JSON.stringify({ jobId, payloadHash }),
+      );
     }
     // The move consumes the staging areas: single-use uploads cannot seed
     // a second job, and replay arrives via the idempotency map above.

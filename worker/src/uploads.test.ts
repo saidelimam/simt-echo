@@ -231,6 +231,19 @@ function putBlob(env: never, uploadId: string, name: string, data: number[] | Ui
   );
 }
 
+// R9-11 (F10.2): manifest-only v1.1 creates are 400, so tests that create
+// jobs stage the manifest's three media files in one session first.
+async function stageFullUpload(env: never): Promise<string> {
+  const files = [
+    { name: "kf_n2_0", data: [1, 2, 3] },
+    { name: "kf_n2_1", data: [4, 5, 6] },
+    { name: "clip_n2", data: [7, 8, 9] },
+  ];
+  const uploadId = await createUploadFor(env, files);
+  for (const f of files) await putBlob(env, uploadId, f.name, f.data);
+  return uploadId;
+}
+
 // R9-10: a random blob plus the hex sha256 the create request must declare.
 async function randomBlobWithSha(size: number): Promise<{ data: Uint8Array; sha256: string }> {
   const data = new Uint8Array(size);
@@ -396,8 +409,14 @@ describe("W11-09 ready-on-arrival uploads", () => {
 
 describe("idempotent create and job cleanup", () => {
   const KEY = "idempotent-client-key-1";
-  const create = (env: never, extra: Record<string, unknown> = {}) =>
-    postJobJson(env, { manifest: validManifest(), idempotencyKey: KEY, ...extra });
+  const create = async (
+    env: never,
+    extra: Record<string, unknown> = {},
+    manifest: unknown = validManifest(),
+  ) => {
+    const uploadId = await stageFullUpload(env);
+    return postJobJson(env, { manifest, uploadId, idempotencyKey: KEY, ...extra });
+  };
   const idJson = async (res: Response) => ((await res.json()) as { jobId: string }).jobId;
 
   it("derives one job id from the key so concurrent creates cannot double-create", async () => {
@@ -405,7 +424,14 @@ describe("idempotent create and job cleanup", () => {
     const pipeline = new FakePipeline();
     const env = await envFor(media, pipeline);
 
-    const [a, b] = await Promise.all([create(env), create(env)]);
+    // One shared session: concurrent creates post the identical payload, so
+    // the payload-hash binding cannot conflict between them.
+    const uploadId = await stageFullUpload(env);
+
+    const [a, b] = await Promise.all([
+      postJobJson(env, { manifest: validManifest(), uploadId, idempotencyKey: KEY }),
+      postJobJson(env, { manifest: validManifest(), uploadId, idempotencyKey: KEY }),
+    ]);
     expect([a.status, b.status]).toEqual([202, 202]);
     const [idA, idB] = [await idJson(a), await idJson(b)];
 
@@ -413,7 +439,7 @@ describe("idempotent create and job cleanup", () => {
     expect(idA).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     expect(pipeline.instances.size).toBe(1);
     // A different key is a different job.
-    const other = await postJobJson(env, { manifest: validManifest(), idempotencyKey: "other-key" });
+    const other = await create(env, { idempotencyKey: "other-key" });
     expect(await idJson(other)).not.toBe(idA);
   });
 
@@ -431,6 +457,149 @@ describe("idempotent create and job cleanup", () => {
     expect(await idJson(again)).toBe(jobId);
     expect(media.store.has(`jobs/${jobId}/manifest.json`)).toBe(true);
     expect(pipeline.instances.has(jobId)).toBe(true);
+  });
+
+  it("replays the same payload under the same key to the original job", async () => {
+    const media = new FakeR2();
+    const pipeline = new FakePipeline();
+    const env = await envFor(media, pipeline);
+    const uploadId = await stageFullUpload(env);
+    const first = await postJobJson(env, { manifest: validManifest(), uploadId, idempotencyKey: KEY });
+    expect(first.status).toBe(202);
+    const jobId = await idJson(first);
+
+    // The move consumed the staging; the replay must not need it.
+    const again = await postJobJson(env, { manifest: validManifest(), uploadId, idempotencyKey: KEY });
+    expect(again.status).toBe(202);
+    expect(await idJson(again)).toBe(jobId);
+    expect(pipeline.instances.size).toBe(1);
+  });
+
+  it("answers 409 when a changed payload arrives under the same key", async () => {
+    const media = new FakeR2();
+    const pipeline = new FakePipeline();
+    const env = await envFor(media, pipeline);
+    const uploadId = await stageFullUpload(env);
+    const first = await postJobJson(env, { manifest: validManifest(), uploadId, idempotencyKey: KEY });
+    expect(first.status).toBe(202);
+    const jobId = await idJson(first);
+
+    // A second session is a different payload under the same key: the old
+    // path silently handed back the first job.
+    const otherUpload = await stageFullUpload(env);
+    const res = await postJobJson(env, {
+      manifest: validManifest(),
+      uploadId: otherUpload,
+      idempotencyKey: KEY,
+    });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ ok: false, error: "idempotency_conflict" });
+    // The original job stands untouched.
+    expect(pipeline.instances.size).toBe(1);
+    expect(media.store.has(`jobs/${jobId}/manifest.json`)).toBe(true);
+  });
+
+  it("answers 409 for a legacy idem record without a payload hash", async () => {
+    const media = new FakeR2();
+    const pipeline = new FakePipeline();
+    const env = await envFor(media, pipeline);
+    const uploadId = await stageFullUpload(env);
+    const first = await postJobJson(env, { manifest: validManifest(), uploadId, idempotencyKey: KEY });
+    expect(first.status).toBe(202);
+    const jobId = await idJson(first);
+
+    // A record written before this deploy: shape {jobId}, no hash. It
+    // cannot prove the payload matches, so the replay conflicts (decision:
+    // strict).
+    await media.put(`jobs/idem/${jobId}.json`, JSON.stringify({ jobId }));
+    const res = await postJobJson(env, { manifest: validManifest(), uploadId, idempotencyKey: KEY });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ ok: false, error: "idempotency_conflict" });
+    expect(pipeline.instances.size).toBe(1);
+  });
+
+  it("rejects a manifest-only create at intake, before any paid work", async () => {
+    const media = new FakeR2();
+    const pipeline = new FakePipeline();
+    const env = await envFor(media, pipeline);
+
+    const res = await postJobJson(env, { manifest: validManifest(), idempotencyKey: KEY });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ ok: false, error: "upload_reference_required" });
+    // Nothing was reserved and no Workflow instance was burned.
+    expect(pipeline.instances.size).toBe(0);
+    expect([...media.store.keys()].filter((k) => k.startsWith("spend/"))).toEqual([]);
+  });
+
+  it("answers 400 duplicate_file when one name is staged in two sessions", async () => {
+    const media = new FakeR2();
+    const pipeline = new FakePipeline();
+    const env = await envFor(media, pipeline);
+    const first = await createUploadFor(env, [
+      { name: "kf_n2_0", data: [1, 2, 3] },
+      { name: "kf_n2_1", data: [4, 5, 6] },
+      { name: "clip_n2", data: [7, 8, 9] },
+    ]);
+    for (const [name, data] of [
+      ["kf_n2_0", [1, 2, 3]],
+      ["kf_n2_1", [4, 5, 6]],
+      ["clip_n2", [7, 8, 9]],
+    ] as Array<[string, number[]]>) {
+      expect((await putBlob(env, first, name, data)).status).toBe(200);
+    }
+    // The second window re-stages kf_n2_0 — the old move took the first one
+    // silently.
+    const second = await createUploadFor(env, [{ name: "kf_n2_0", data: [9, 9, 9] }]);
+    expect((await putBlob(env, second, "kf_n2_0", [9, 9, 9])).status).toBe(200);
+
+    const res = await postJobJson(env, { manifest: validManifest(), uploadIds: [first, second] });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ ok: false, error: "duplicate_file", file: "kf_n2_0" });
+    expect(pipeline.instances.size).toBe(0);
+  });
+
+  it("rejects duplicate uploadIds in the create body", async () => {
+    const media = new FakeR2();
+    const env = await envFor(media, new FakePipeline());
+    const uploadId = await stageFullUpload(env);
+    const res = await postJobJson(env, {
+      manifest: validManifest(),
+      uploadIds: [uploadId, uploadId],
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ ok: false, error: "invalid_request" });
+  });
+
+  it("rejects manifests that break the uniqueness and cross-field rules", async () => {
+    const media = new FakeR2();
+    const pipeline = new FakePipeline();
+    const env = await envFor(media, pipeline);
+    const uploadId = await stageFullUpload(env);
+
+    const cases: Array<(m: ReturnType<typeof validManifest>) => void> = [
+      (m) => {
+        // Duplicate nodeId (and, transitively, duplicate media ids).
+        m.checkpoints.push({ ...m.checkpoints[0] });
+      },
+      (m) => {
+        // A second checkpoint reusing the first's keyframe ids.
+        m.checkpoints.push({ ...m.checkpoints[0], nodeId: "n3" });
+      },
+      (m) => {
+        m.checkpoints[0].heroKeyframeId = "kf_other";
+      },
+      (m) => {
+        m.checkpoints[0].clip.endMs = 1000; // < startMs 37250
+      },
+    ];
+    for (const mutate of cases) {
+      const m = validManifest();
+      mutate(m);
+      const res = await postJobJson(env, { manifest: m, uploadId });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ ok: false, error: "invalid_request" });
+    }
+    expect(pipeline.instances.size).toBe(0);
   });
 
   it("DELETE removes the idempotency record so the key can create again", async () => {
@@ -518,7 +687,12 @@ describe("daily spend cap on v1.1 creates (R9-05)", () => {
   it("reserves the declared budget, not the ceiling", async () => {
     const media = new FakeR2();
     const env = await envFor(media, new FakePipeline());
-    const res = await postJobJson(env, { manifest: validManifest(), budget: { maxSamFrames: 100 } });
+    const uploadId = await stageFullUpload(env);
+    const res = await postJobJson(env, {
+      manifest: validManifest(),
+      uploadId,
+      budget: { maxSamFrames: 100 },
+    });
     expect(res.status).toBe(202);
     expect(JSON.parse(new TextDecoder().decode(media.store.get(day())!.body))).toEqual({ reserved: 100 });
   });
@@ -526,7 +700,8 @@ describe("daily spend cap on v1.1 creates (R9-05)", () => {
   it("reserves the 240-frame ceiling when no budget is declared", async () => {
     const media = new FakeR2();
     const env = await envFor(media, new FakePipeline());
-    const res = await postJobJson(env, { manifest: validManifest() });
+    const uploadId = await stageFullUpload(env);
+    const res = await postJobJson(env, { manifest: validManifest(), uploadId });
     expect(res.status).toBe(202);
     expect(JSON.parse(new TextDecoder().decode(media.store.get(day())!.body))).toEqual({ reserved: 240 });
   });
@@ -534,24 +709,37 @@ describe("daily spend cap on v1.1 creates (R9-05)", () => {
   it("rejects a create past the daily cap (503, nothing stored)", async () => {
     const media = new FakeR2();
     const env = await envFor(media, new FakePipeline());
+    const uploadId = await stageFullUpload(env);
     await media.put(day(), JSON.stringify({ reserved: 1150 }));
     // 1150 + 240 exceeds the default 1200 cap.
-    const res = await postJobJson(env, { manifest: validManifest() });
+    const res = await postJobJson(env, { manifest: validManifest(), uploadId });
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ ok: false, error: "daily_budget_exceeded" });
-    // The ledger stands; no job files, no staging consumed.
+    // The ledger stands; no job files, and the staging is untouched so the
+    // client can retry the create.
     expect(JSON.parse(new TextDecoder().decode(media.store.get(day())!.body))).toEqual({ reserved: 1150 });
-    expect([...media.store.keys()].filter((k) => k.startsWith("jobs/"))).toEqual([]);
+    expect(
+      [...media.store.keys()].filter((k) => k.startsWith("jobs/") && !k.startsWith("jobs/staging/")),
+    ).toEqual([]);
   });
 
   it("halts creates on the kill switch, idempotent replays included", async () => {
     const media = new FakeR2();
     const env = await envFor(media, new FakePipeline());
-    const created = await postJobJson(env, { manifest: validManifest(), idempotencyKey: "k-one" });
+    const uploadId = await stageFullUpload(env);
+    const created = await postJobJson(env, {
+      manifest: validManifest(),
+      uploadId,
+      idempotencyKey: "k-one",
+    });
     expect(created.status).toBe(202);
 
     const halted = { ...((env as never) as Record<string, unknown>), SPEND_KILL_SWITCH: "on" } as never;
-    const res = await postJobJson(halted, { manifest: validManifest(), idempotencyKey: "k-one" });
+    const res = await postJobJson(halted, {
+      manifest: validManifest(),
+      uploadId,
+      idempotencyKey: "k-one",
+    });
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ ok: false, error: "spend_disabled" });
   });
@@ -618,6 +806,7 @@ describe("upload PUT and id hardening", () => {
     const media = new FakeR2();
     const pipeline = new FakePipeline();
     const env = await envFor(media, pipeline);
+    const uploadId = await stageFullUpload(env);
 
     const traversal = await postJobJson(env, { manifest: validManifest(), resumeOf: "../other/x" });
     expect(traversal.status).toBe(400);
@@ -625,6 +814,7 @@ describe("upload PUT and id hardening", () => {
 
     const missing = await postJobJson(env, {
       manifest: validManifest(),
+      uploadId,
       resumeOf: "33333333-3333-4333-8333-333333333333",
     });
     expect(missing.status).toBe(404);

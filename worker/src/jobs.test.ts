@@ -213,7 +213,6 @@ describe("POST /v1/jobs", () => {
     const pipeline = new FakePipeline();
     const res = await postJob(await envFor(media, pipeline), validManifest(), [
       { id: "kf_n2_0", bytes: new Uint8Array([1]), type: "image/jpeg" },
-      { id: "evil", bytes: new Uint8Array([9]), type: "image/jpeg" },
     ]);
 
     expect(res.status).toBe(202);
@@ -223,12 +222,37 @@ describe("POST /v1/jobs", () => {
 
     expect(media.store.has(`jobs/${body.jobId}/manifest.json`)).toBe(true);
     expect(media.store.has(`jobs/${body.jobId}/in/kf_n2_0`)).toBe(true);
-    expect(media.store.has(`jobs/${body.jobId}/in/evil`)).toBe(false);
     const progress = JSON.parse(
       new TextDecoder().decode(media.store.get(`jobs/${body.jobId}/progress.json`)!.body),
     );
     expect(progress.stage).toBe("queued");
     expect(pipeline.instances.has(body.jobId)).toBe(true);
+  });
+
+  it("rejects part names the manifest does not list, and repeated parts (400)", async () => {
+    const media = new FakeR2();
+    const pipeline = new FakePipeline();
+    const env = await envFor(media, pipeline);
+
+    // R9-11 (F10): the old loop dropped unknown parts silently; now they are
+    // client errors, as is the same part twice.
+    const unknown = await postJob(env, validManifest(), [
+      { id: "kf_n2_0", bytes: new Uint8Array([1]), type: "image/jpeg" },
+      { id: "evil", bytes: new Uint8Array([9]), type: "image/jpeg" },
+    ]);
+    expect(unknown.status).toBe(400);
+    expect(await unknown.json()).toEqual({ ok: false, error: "unknown_file", file: "evil" });
+
+    const duplicate = await postJob(env, validManifest(), [
+      { id: "kf_n2_0", bytes: new Uint8Array([1]), type: "image/jpeg" },
+      { id: "kf_n2_0", bytes: new Uint8Array([2]), type: "image/jpeg" },
+    ]);
+    expect(duplicate.status).toBe(400);
+    expect(await duplicate.json()).toEqual({ ok: false, error: "duplicate_file", file: "kf_n2_0" });
+
+    expect(pipeline.instances.size).toBe(0);
+    // Nothing job-related was stored (the seeded device record is not a job artifact).
+    expect([...media.store.keys()].filter((k) => !k.startsWith("devices/"))).toEqual([]);
   });
 
   it("rejects a missing consent grant before storing anything (400)", async () => {
@@ -270,16 +294,20 @@ describe("POST /v1/jobs", () => {
     const media = new FakeR2();
     // 61 keyframes spread over 8 checkpoints (7×8 + 5): past the 60-file
     // limit while staying inside the per-checkpoint schema cap (R9-03), so
-    // the file-count guard — not the schema — is what rejects.
+    // the file-count guard — not the schema — is what rejects. Media ids are
+    // unique per checkpoint (R9-11) so the manifest itself is valid.
     const manifest = structuredClone(validManifest());
-    manifest.checkpoints = [8, 8, 8, 8, 8, 8, 8, 5].map((count, i) => ({
-      ...structuredClone(validManifest().checkpoints[0]),
-      nodeId: `n${i + 2}`,
-      keyframes: Array.from({ length: count }, (_, j) => ({
+    manifest.checkpoints = [8, 8, 8, 8, 8, 8, 8, 5].map((count, i) => {
+      const cp = structuredClone(validManifest().checkpoints[0]);
+      cp.nodeId = `n${i + 2}`;
+      cp.heroKeyframeId = `kf_${i}_0`;
+      cp.keyframes = Array.from({ length: count }, (_, j) => ({
         id: `kf_${i}_${j}`,
         tMs: 39000 + j * 100,
-      })),
-    }));
+      }));
+      delete (cp as { clip?: unknown }).clip;
+      return cp;
+    });
     const files = manifest.checkpoints.flatMap((cp) =>
       cp.keyframes.map((k) => ({
         id: k.id,
@@ -298,11 +326,16 @@ describe("POST /v1/jobs", () => {
     const env = await envFor(media, new FakePipeline());
 
     // One past each cap (R9-03, F3): every variant is rejected before
-    // anything is stored.
+    // anything is stored. Cloned checkpoints carry unique media ids and
+    // heroes (R9-11) so the cap — not the uniqueness rules — rejects.
     const tooManyCheckpoints = structuredClone(validManifest());
     while (tooManyCheckpoints.checkpoints.length < MAX_CHECKPOINTS + 1) {
+      const n = tooManyCheckpoints.checkpoints.length + 2;
       const cp = structuredClone(tooManyCheckpoints.checkpoints[0]);
-      cp.nodeId = `n${tooManyCheckpoints.checkpoints.length + 2}`;
+      cp.nodeId = `n${n}`;
+      cp.heroKeyframeId = `kf_n${n}_0`;
+      cp.keyframes = cp.keyframes.map((k, i) => ({ ...k, id: `kf_n${n}_${i}` }));
+      delete (cp as { clip?: unknown }).clip;
       tooManyCheckpoints.checkpoints.push(cp);
     }
     expect((await postJob(env, tooManyCheckpoints)).status).toBe(400);
@@ -312,6 +345,7 @@ describe("POST /v1/jobs", () => {
       { length: MAX_KEYFRAMES_PER_CHECKPOINT + 1 },
       (_, i) => ({ id: `kf_x${i}`, tMs: 39000 + i * 100 }),
     );
+    tooManyKeyframes.checkpoints[0].heroKeyframeId = "kf_x1";
     expect((await postJob(env, tooManyKeyframes)).status).toBe(400);
 
     const tooMuchApproach = structuredClone(validManifest());
@@ -347,9 +381,12 @@ describe("POST /v1/jobs", () => {
       (_, i) => ({ tMs: 37000 + i * 50, d: 18 + i * 0.1 }),
     );
     while (atCaps.checkpoints.length < MAX_CHECKPOINTS) {
+      const n = atCaps.checkpoints.length + 2;
       const cp = structuredClone(atCaps.checkpoints[0]);
-      cp.nodeId = `n${atCaps.checkpoints.length + 2}`;
-      cp.heroKeyframeId = "kf_n2_0";
+      cp.nodeId = `n${n}`;
+      cp.heroKeyframeId = `kf_n${n}_0`;
+      cp.keyframes = cp.keyframes.map((k, i) => ({ ...k, id: `kf_n${n}_${i}` }));
+      delete (cp as { clip?: unknown }).clip;
       atCaps.checkpoints.push(cp);
     }
     const res = await postJob(env, atCaps);
@@ -1005,8 +1042,12 @@ describe("v1.1 resumable uploads (W11-05)", () => {
     await media.put(`jobs/${prior}/manifest.json`, "{}");
     const priorId = await seedDevice(media, KEY);
     await media.put(`jobs/${prior}/owner.json`, JSON.stringify({ owner: priorId }));
+    // R9-11 (F10.2): the create is upload-backed like every other one.
+    const uploadId = await createUploadFor(env);
+    for (const f of stagedFiles()) await putBlob(env, uploadId, f.name, f.data);
     const res = await postJobJson(env, {
       manifest: validManifest(),
+      uploadId,
       budget: { maxSamFrames: 120 },
       resumeOf: prior,
       idempotencyKey: "governor-budget-key-1",
@@ -1121,16 +1162,17 @@ describe("v1.1 resumable uploads (W11-05)", () => {
     expect(await tooMany.json()).toEqual({ ok: false, error: "invalid_request" });
   });
 
-  it("creates manifest-only v1.1 jobs and rejects bad v1.1 bodies", async () => {
+  it("rejects manifest-only v1.1 creates and bad v1.1 bodies", async () => {
     const media = new FakeR2();
     const pipeline = new FakePipeline();
     const env = await envFor(media, pipeline);
 
+    // R9-11 (F10.2): no upload reference means no media to move; the scout
+    // would burn a paid instance on a guaranteed media_missing.
     const res = await postJobJson(env, { manifest: validManifest() });
-    expect(res.status).toBe(202);
-    const { jobId } = (await res.json()) as { jobId: string };
-    expect(pipeline.instances.has(jobId)).toBe(true);
-    expect(media.store.has(`jobs/${jobId}/manifest.json`)).toBe(true);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ ok: false, error: "upload_reference_required" });
+    expect(pipeline.instances.size).toBe(0);
 
     const empty = await postJobJson(env, {});
     expect(empty.status).toBe(400);
@@ -1141,6 +1183,15 @@ describe("v1.1 resumable uploads (W11-05)", () => {
     });
     expect(noConsent.status).toBe(400);
     expect(await noConsent.json()).toEqual({ ok: false, error: "consent_required" });
+
+    // The upload-backed create still works end to end.
+    const uploadId = await createUploadFor(env);
+    for (const f of stagedFiles()) await putBlob(env, uploadId, f.name, f.data);
+    const ok = await postJobJson(env, { manifest: validManifest(), uploadId });
+    expect(ok.status).toBe(202);
+    const { jobId } = (await ok.json()) as { jobId: string };
+    expect(pipeline.instances.has(jobId)).toBe(true);
+    expect(media.store.has(`jobs/${jobId}/manifest.json`)).toBe(true);
   });
 });
 

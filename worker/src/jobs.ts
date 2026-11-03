@@ -213,32 +213,44 @@ export function registerJobsRoutes(app: Hono<AppEnv>): void {
     if (spendDisabled(c.env)) {
       return c.json({ ok: false, error: "spend_disabled" }, 503);
     }
+    let form: FormData;
     let manifest: Manifest;
-    let allowed: Set<string>;
     let files: Array<{ name: string; file: File }>;
     let totalBytes: number;
     try {
-      const form = await c.req.formData();
+      form = await c.req.formData();
       manifest = ManifestSchema.parse(JSON.parse(String(form.get("manifest"))));
-      if (!manifest.consent.sendFramesToCloudAi) {
-        return c.json({ ok: false, error: "consent_required" }, 400);
-      }
-      allowed = new Set(
-        manifest.checkpoints.flatMap((k) => [
-          ...k.keyframes.map((f) => f.id),
-          ...(k.clip ? [k.clip.id] : []),
-        ]),
-      );
-      files = [];
-      totalBytes = 0;
-      for (const [name, v] of form.entries()) {
-        if (v instanceof File && allowed.has(name)) {
-          files.push({ name, file: v });
-          totalBytes += v.size;
-        }
-      }
     } catch {
       return c.json({ ok: false, error: "invalid_manifest" }, 400);
+    }
+    if (!manifest.consent.sendFramesToCloudAi) {
+      return c.json({ ok: false, error: "consent_required" }, 400);
+    }
+    // R9-11 (review 0009, F10): part names are validated against the
+    // manifest — the old loop silently dropped unknown and duplicate
+    // parts. These are client errors, not manifest problems, so they sit
+    // outside the parse catch and report their own 400s.
+    const allowed = new Set(
+      manifest.checkpoints.flatMap((k) => [
+        ...k.keyframes.map((f) => f.id),
+        ...(k.clip ? [k.clip.id] : []),
+      ]),
+    );
+    files = [];
+    totalBytes = 0;
+    const partSeen = new Set<string>();
+    for (const [name, v] of form.entries()) {
+      if (v instanceof File) {
+        if (!allowed.has(name)) {
+          return c.json({ ok: false, error: "unknown_file", file: name }, 400);
+        }
+        if (partSeen.has(name)) {
+          return c.json({ ok: false, error: "duplicate_file", file: name }, 400);
+        }
+        partSeen.add(name);
+        files.push({ name, file: v });
+        totalBytes += v.size;
+      }
     }
     if (files.length > MAX_FILES) {
       return c.json({ ok: false, error: "too_many_files" }, 413);
