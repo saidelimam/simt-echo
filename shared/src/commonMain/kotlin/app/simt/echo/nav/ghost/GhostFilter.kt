@@ -63,6 +63,7 @@ class GhostFilter(
 
     private var spareValid = false
     private var spareValue = 0.0
+    private var suspectVarianceM2 = 0.0
 
     /**
      * Distinct stride-scale values across the particles — a diagnostic for
@@ -98,6 +99,7 @@ class GhostFilter(
     /** (Re)spreads particles around route position [startS]. */
     fun reset(startS: Double) {
         spareValid = false
+        suspectVarianceM2 = 0.0
         for (i in 0 until PARTICLE_COUNT) {
             sA[i] = (startS + gauss() * INIT_S_SD).coerceIn(0.0, geometry.totalLengthM)
             kA[i] = gauss() * K_PRIOR_SD + kPrior
@@ -124,6 +126,17 @@ class GhostFilter(
                 .coerceIn(0.0, total)
             bA[i] += gauss() * B_RW_RAD
         }
+        updateStats()
+    }
+
+    /**
+     * Missed-step suspect inflation (W16-04): widens posterior σ in
+     * quadrature by [extraSigmaM] without shifting [meanS] or inventing
+     * distance.
+     */
+    fun inflateUncertainty(extraSigmaM: Double) {
+        if (!extraSigmaM.isFinite() || extraSigmaM <= 0.0) return
+        suspectVarianceM2 += extraSigmaM * extraSigmaM
         updateStats()
     }
 
@@ -234,6 +247,7 @@ class GhostFilter(
      */
     fun anchorAt(nodeS: Double) {
         val total = geometry.totalLengthM
+        suspectVarianceM2 = 0.0
         for (i in 0 until PARTICLE_COUNT) {
             sA[i] = (nodeS + (random.nextDouble() * 2.0 - 1.0) * ANCHOR_HALF_M)
                 .coerceIn(0.0, total)
@@ -326,7 +340,7 @@ class GhostFilter(
             variance += wA[i] * d * d
         }
         meanS = mean
-        sigma = sqrt(variance)
+        sigma = sqrt(variance + suspectVarianceM2)
         effectiveN = if (sumSq > 0.0) 1.0 / sumSq else PARTICLE_COUNT.toDouble()
     }
 

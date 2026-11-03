@@ -37,6 +37,12 @@ data class MotionUpdate(
      * and baseline behaviour are bit-identical.
      */
     val travelOffsetRad: Double = 0.0,
+    /**
+     * True when visual expansion indicates forward motion while the
+     * accelerometer missed a step (slow shuffle, W16-04). Raises navigation σ
+     * without inventing distance or step count.
+     */
+    val missedStepSuspect: Boolean = false,
 )
 
 /**

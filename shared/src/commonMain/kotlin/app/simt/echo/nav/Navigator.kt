@@ -126,6 +126,13 @@ class Navigator(
     var travelOffsetRad: Double = 0.0
         private set
 
+    /** Extra σ from flagged `MISSED_STEP_SUSPECT` events on LINEAR (m, W16-04). */
+    private var missedStepSigmaBonusM: Double = 0.0
+
+    /** Count of `MISSED_STEP_SUSPECT` events observed during this walk (W16-04). */
+    var missedStepSuspectCount: Int = 0
+        private set
+
     private var tickedLegIndex: Int = -1
     private var confirmEntryDist: Double = 0.0
     private var confirmAutoAdvanceProgress: Double? = null
@@ -217,8 +224,9 @@ class Navigator(
     private val progress: Double get() = absoluteS - legStartDist
     private val remaining: Double get() = (leg?.lengthM ?: 0.0) - progress
     private val uncertainty: Double
-        get() = ghost?.sigma
-            ?: (config.navUncertaintyBaseM + config.navUncertaintyPerMetre * (dist - lastAnchorDist))
+        get() = (ghost?.sigma
+            ?: (config.navUncertaintyBaseM + config.navUncertaintyPerMetre * (dist - lastAnchorDist))) +
+            missedStepSigmaBonusM
     private val arrow: Double
         get() {
             val offset = if (config.visualAssist) yawOffset + travelOffsetRad else yawOffset
@@ -238,6 +246,8 @@ class Navigator(
         lastAnchorLegIndex = 0
         yawOffset = wrapPi(degToRad(leg?.headingRelDeg ?: 0.0) - yaw)
         travelOffsetRad = 0.0
+        missedStepSigmaBonusM = 0.0
+        missedStepSuspectCount = 0
         turnDetector.reset()
         yawTrail.clear()
         legYaws.clear()
@@ -259,6 +269,15 @@ class Navigator(
         lastMotionTNs = update.tNs
         if (config.visualAssist && update.travelOffsetRad.isFinite() && update.travelOffsetRad != 0.0) {
             travelOffsetRad = update.travelOffsetRad
+        }
+        if (config.visualAssist && update.missedStepSuspect) {
+            missedStepSuspectCount += 1
+            val inflation = app.simt.echo.capture.VisualStepGate.MISSED_STEP_SIGMA_INFLATION_M
+            if (ghost != null) {
+                ghost.inflateUncertainty(inflation)
+            } else {
+                missedStepSigmaBonusM += inflation
+            }
         }
         if (phase != NavPhase.WALK && phase != NavPhase.APPROACH &&
             phase != NavPhase.TURNING && phase != NavPhase.CONFIRM &&

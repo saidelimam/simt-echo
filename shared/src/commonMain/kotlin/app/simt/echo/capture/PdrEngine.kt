@@ -88,6 +88,9 @@ class PdrEngine(
      */
     val headingQuality = HeadingQuality()
 
+    /** Visual step gate (W16-04): rejects shake-in-place phantom steps and flags slow shuffles. */
+    val stepGate = VisualStepGate()
+
     override fun start() {
         gravity = 9.81
         signal = 0.0
@@ -107,6 +110,7 @@ class PdrEngine(
         magMag = null
         magVert = null
         headingQuality.reset()
+        stepGate.reset()
         running = true
     }
 
@@ -153,10 +157,14 @@ class PdrEngine(
         headingQuality.onGyro(yawRateRadPerSec, correctNs(tNs, wallNowNs))
     }
 
-    /** Visual ego-motion feed (W16-03); active only when [visualAssist] is enabled. */
+    /** Visual ego-motion feed (W16-03, W16-04); active only when [visualAssist] is enabled. */
     fun onVisualEgo(ego: VisualEgo, tNs: Long, wallNowNs: Long = tNs) {
         if (!running || !visualAssist) return
-        headingQuality.onVisualEgo(ego, correctNs(tNs, wallNowNs))
+        val correctedTNs = correctNs(tNs, wallNowNs)
+        headingQuality.onVisualEgo(ego, correctedTNs)
+        if (stepGate.onVisualEgo(ego, correctedTNs) == StepGateVerdict.MISSED_STEP_SUSPECT) {
+            _updates.tryEmit(snapshot(correctedTNs, isStep = false, missedStepSuspect = true))
+        }
     }
 
     fun onPressure(sample: PressureSample) {
@@ -211,6 +219,11 @@ class PdrEngine(
     }
 
     private fun acceptStep(tNs: Long) {
+        if (visualAssist && stepGate.evaluateStepCandidate(tNs) == StepGateVerdict.REJECTED_PHANTOM) {
+            amax = signal
+            amin = signal
+            return
+        }
         headingQuality.onStep(tNs)
         val range = (amax - amin).coerceAtLeast(0.0)
         val length = (stepK * range.pow(0.25)).coerceIn(0.35, 0.95)
@@ -222,7 +235,11 @@ class PdrEngine(
         _updates.tryEmit(snapshot(tNs, isStep = true))
     }
 
-    private fun snapshot(tNs: Long, isStep: Boolean) = MotionUpdate(
+    private fun snapshot(
+        tNs: Long,
+        isStep: Boolean,
+        missedStepSuspect: Boolean = false,
+    ) = MotionUpdate(
         tNs = tNs,
         distanceM = distanceM,
         yawRad = yawRad,
@@ -234,6 +251,7 @@ class PdrEngine(
         magMag = magMag,
         magVert = magVert,
         travelOffsetRad = if (visualAssist) headingQuality.travelOffsetRad else 0.0,
+        missedStepSuspect = missedStepSuspect,
     )
 
     private companion object {
