@@ -68,8 +68,10 @@ private val TALL_HOME_MIN_HEIGHT = 560.dp
  * Ignition: the Echo Step mark breathing its idle echo above one centred
  * task and one primary command.
  *
- * Presentation only — the shell owns the top chrome and the persistent
- * Record/Receive deck (W8-05); ViewModel/state shapes untouched.
+ * Presentation only — the shell owns the top chrome and the bottom
+ * Record/Receive deck (W8-05); the deck is hidden while Home is empty
+ * and its two actions are folded into the first-run state above;
+ * ViewModel/state shapes untouched.
  */
 @Composable
 fun HomeScreen(
@@ -119,6 +121,12 @@ fun HomeScreen(
                 // Practice, never listed among saved walks.
                 secondaryLabel = PRACTICE_OFFER_LABEL,
                 onSecondary = onPractice,
+                // First-run Receive offer: the shell hides its bottom
+                // Record/Receive deck while Home is empty, so Receive is
+                // carried here as a third quiet action — the same target
+                // the deck's Receive button opens.
+                tertiaryLabel = "Receive a walk",
+                onTertiary = { onOpen(EchoRoute.Receive) },
                 hero = {
                     EchoMark(markSize = if (tall) 116.dp else 64.dp, onDisc = true, idleEcho = true)
                 },

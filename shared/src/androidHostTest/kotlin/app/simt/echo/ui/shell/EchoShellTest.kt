@@ -188,6 +188,16 @@ class EchoShellTest {
     }
 
     @Test
+    fun primaryDeck_hiddenWhileHomeIsEmpty() {
+        // First run (no drafts, saved walks or recoverable drafts) folds
+        // Record/Receive into the empty-state actions; the deck returns
+        // with the first walk.
+        assertFalse(shellConfigFor(EchoRoute.Home, homeHasContent = false).showPrimaryDeck)
+        assertTrue(shellConfigFor(EchoRoute.Home, homeHasContent = true).showPrimaryDeck)
+        assertTrue(shellConfigFor(EchoRoute.Home).showPrimaryDeck, "default keeps the deck on Home")
+    }
+
+    @Test
     fun safeAreas_fontScale2_headingAndDeckStayVisible() {
         val big = Density(density = compose.density.density, fontScale = 2.0f)
         compose.setContent {

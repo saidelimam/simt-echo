@@ -78,9 +78,14 @@ fun EchoNavHost(
     // reports its own route — no back-stack introspection, no versioned
     // NavDestination APIs — so the chrome always matches the visible body.
     var currentRoute by remember { mutableStateOf<EchoRoute>(EchoRoute.Home) }
+    // The shell's bottom Record/Receive deck is hidden while Home is
+    // empty: the first-run state folds both actions into its own buttons,
+    // and the deck returns with the first draft, saved walk or
+    // recoverable draft.
+    var homeHasContent by remember { mutableStateOf(true) }
     val tier = cosmosMotionTier()
     EchoShell(
-        config = shellConfigFor(currentRoute),
+        config = shellConfigFor(currentRoute, homeHasContent = homeHasContent),
         onBack = { navController.popBackStack() },
         onClose = { navController.popBackStack() },
         onSettings = { navController.navigate(EchoRoute.Settings) },
@@ -107,12 +112,19 @@ fun EchoNavHost(
         echoDestination<EchoRoute.Home> {
             LaunchedEffect(Unit) { currentRoute = EchoRoute.Home }
             val draftIds = graph.draftRepository.listDraftIds()
+            val savedRoutes = graph.routeRepository.list()
+            val recoverableDrafts = listRecoverable(graph.draftRepository)
+            // Same union HomeScreen's empty check negates: interrupted
+            // drafts are a subset of draftIds, so the deck and the empty
+            // state can never disagree about which one is on screen.
+            homeHasContent =
+                draftIds.isNotEmpty() || savedRoutes.isNotEmpty() || recoverableDrafts.isNotEmpty()
             HomeScreen(
                 draftIds = draftIds,
                 draftNames = draftIds.associateWith { draftDisplayName(graph.draftRepository, it) },
-                savedRoutes = graph.routeRepository.list(),
+                savedRoutes = savedRoutes,
                 onOpen = navController::navigateTo,
-                recoverableDrafts = listRecoverable(graph.draftRepository),
+                recoverableDrafts = recoverableDrafts,
             )
         }
         echoDestination<EchoRoute.Record> { entry ->

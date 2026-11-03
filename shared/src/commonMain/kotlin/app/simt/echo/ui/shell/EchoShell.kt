@@ -96,14 +96,18 @@ data class EchoShellConfig(
  * route gets. The gear rides the chrome on collection/task screens only —
  * transient (Processing/Share/Receive), instrument (Align/Navigate) and
  * terminal (Arrived) viewports keep a single job, and Settings never gears to
- * itself. The Record + Receive deck belongs to Home only.
+ * itself. The Record + Receive deck belongs to Home only, and only while
+ * Home has content — the empty first-run state carries its own Record and
+ * Receive actions in the body, so [homeHasContent] gates the deck.
  */
-fun shellConfigFor(route: EchoRoute): EchoShellConfig = when (route) {
+fun shellConfigFor(route: EchoRoute, homeHasContent: Boolean = true): EchoShellConfig = when (route) {
     is EchoRoute.Home -> EchoShellConfig(
         title = "Home",
         chrome = EchoChrome.NONE,
         showSettings = true,
-        showPrimaryDeck = true,
+        // No drafts, saved walks or recoverable drafts: the deck is folded
+        // into the empty-state actions and returns with the first walk.
+        showPrimaryDeck = homeHasContent,
     )
     is EchoRoute.Record -> EchoShellConfig(title = "Record", chrome = EchoChrome.BACK, showSettings = true)
     is EchoRoute.Review -> EchoShellConfig(title = "Review", chrome = EchoChrome.BACK, showSettings = true)

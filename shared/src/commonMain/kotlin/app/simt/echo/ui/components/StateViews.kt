@@ -106,7 +106,11 @@ fun CosmosLoadingState(
     CosmosStateScaffold(kind = CosmosStateKind.Loading, title = title, modifier = modifier)
 }
 
-/** Nothing here yet: title, why it is empty, one clear next step. */
+/**
+ * Nothing here yet: title, why it is empty, one clear next step, plus
+ * optional quiet secondary/tertiary paths for offers that are real
+ * actions, never a second primary.
+ */
 @Composable
 fun CosmosEmptyState(
     title: String,
@@ -118,6 +122,9 @@ fun CosmosEmptyState(
     /** Optional secondary path (W13-13 first-run Practice offer). Never a second primary. */
     secondaryLabel: String? = null,
     onSecondary: () -> Unit = {},
+    /** Optional tertiary path (first-run Receive offer): a third quiet action after the secondary. */
+    tertiaryLabel: String? = null,
+    onTertiary: () -> Unit = {},
 ) {
     CosmosStateScaffold(
         kind = CosmosStateKind.Empty,
@@ -135,6 +142,13 @@ fun CosmosEmptyState(
                 CosmosSecondaryButton(
                     label = secondaryLabel,
                     onClick = onSecondary,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            if (tertiaryLabel != null) {
+                CosmosSecondaryButton(
+                    label = tertiaryLabel,
+                    onClick = onTertiary,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }

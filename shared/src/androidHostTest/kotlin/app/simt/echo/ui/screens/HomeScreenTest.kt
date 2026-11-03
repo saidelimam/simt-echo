@@ -15,6 +15,7 @@ import app.simt.echo.model.EchoRoute
 import app.simt.echo.model.StartAnchor
 import app.simt.echo.ui.EchoRoute as NavRoute
 import app.simt.echo.ui.shell.EchoShell
+import app.simt.echo.ui.shell.EchoShellDeckTag
 import app.simt.echo.ui.shell.shellConfigFor
 import app.simt.echo.ui.theme.EchoTheme
 import org.junit.Rule
@@ -23,14 +24,15 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.test.assertEquals
 
 /**
  * Demo-free Home verification (plan W7-03).
  *
- * Drives the real [HomeScreen]: an empty repository shows the V2 empty
- * state with only the Record/Receive primaries (no demo buttons, no
- * raw-id rows), and populated state lists routes and drafts by name,
- * never by raw id.
+ * Drives the real [HomeScreen]: an empty repository shows the first-run
+ * state with its own Record/Practice/Receive actions and no bottom deck
+ * (no demo buttons, no raw-id rows), and populated state lists routes and
+ * drafts by name, never by raw id.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36], manifest = Config.NONE)
@@ -43,32 +45,42 @@ class HomeScreenTest {
         AndroidComposeTestRule(activityRule, EmptyCoroutineContext) { it.activity }
 
     @Test
-    fun emptyRepository_showsEmptyStateAndPrimaryActionsOnly() {
+    fun emptyRepository_hidesDeckAndFoldsActionsIntoEmptyState() {
+        var opened: NavRoute? = null
         compose.setContent {
-            // W8-05: Record/Receive are the shell's persistent deck, not
-            // Home content — the empty state renders inside the shell.
+            // While Home is empty the shell hides its Record/Receive deck —
+            // the empty state folds both actions into its own buttons.
             EchoTheme(darkTheme = true) {
                 EchoShell(
-                    config = shellConfigFor(NavRoute.Home),
+                    config = shellConfigFor(NavRoute.Home, homeHasContent = false),
                     onBack = {},
                     onClose = {},
                     onSettings = {},
                     onRecord = {},
                     onReceive = {},
                 ) {
-                    HomeScreen(onOpen = {})
+                    HomeScreen(onOpen = { opened = it })
                 }
             }
         }
-        compose.onNodeWithText("Walk it once. Share the way.").assertIsDisplayed()
-        // First-run Ignition: one centred task, one primary command.
+        // No bottom deck while Home is empty: no tag, no tagline.
+        compose.onNodeWithTag(EchoShellDeckTag).assertDoesNotExist()
+        compose.onNodeWithText("Walk it once. Share the way.").assertDoesNotExist()
+        // First-run Ignition: one centred task, one primary command, with
+        // the quiet Practice and Receive paths standing in for the deck.
         compose.onNodeWithText("Record a walk").assertIsDisplayed()
+        compose.onNodeWithText("Practice a guided walk").assertIsDisplayed()
         // W9-11: first-run permission priming — camera named before any
         // gate asks, with the stays-on-phone promise.
         compose.onNodeWithText("use the camera", substring = true).assertIsDisplayed()
         compose.onNodeWithText("until you share", substring = true).assertIsDisplayed()
-        compose.onNodeWithText("Record").assertIsDisplayed()
-        compose.onNodeWithText("Receive").assertIsDisplayed()
+        // The third quiet action sits below the fold in the scrollable
+        // state — scroll it in, then assert and drive it.
+        compose.onNodeWithText("Receive a walk").performScrollTo()
+        compose.onNodeWithText("Receive a walk").assertIsDisplayed()
+        // "Receive a walk" opens the same target the deck's Receive does.
+        compose.onNodeWithText("Receive a walk").performClick()
+        assertEquals(NavRoute.Receive, opened)
         compose.onNodeWithText("Review demo draft").assertDoesNotExist()
         compose.onNodeWithText("Route detail demo").assertDoesNotExist()
         compose.onNodeWithText("Share demo route").assertDoesNotExist()
