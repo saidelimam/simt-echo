@@ -558,28 +558,42 @@ describe("GET /v1/jobs/:id", () => {
     expect(await res.json()).toEqual({ ok: false, error: "result_missing" });
   });
 
-  it("maps errored and terminated to errored with detail", async () => {
+  it("maps errored and terminated to errored with the stable code, not the raw message", async () => {
     const media = new FakeR2();
     const pipeline = new FakePipeline();
     const env = await envFor(media, pipeline);
     const { jobId } = (await (await postJob(env, validManifest())).json()) as { jobId: string };
-    await media.put(`jobs/${jobId}/error.json`, JSON.stringify({ error: "scout exploded" }));
+    // Vendor-flavored text: it is the log site and stays in error.json for
+    // ops, but it never reaches the client (R10-12, review 0010 F11).
+    await media.put(
+      `jobs/${jobId}/error.json`,
+      JSON.stringify({ error: "scout exploded: vendor response body" }),
+    );
     await media.put(`jobs/${jobId}/progress.json`, JSON.stringify({ stage: "errored", updatedAt: 2 }));
 
     pipeline.instances.get(jobId)!.statusValue = "errored";
-    expect(await (await app.request(`/v1/jobs/${jobId}`, { headers: auth }, env)).json()).toEqual({
+    const res = await app.request(`/v1/jobs/${jobId}`, { headers: auth }, env);
+    // Per-user route data is never cached (R10-12, F11).
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    const text = await res.text();
+    expect(text).not.toContain("vendor response body");
+    expect(JSON.parse(text)).toEqual({
       ok: true,
       status: "errored",
       stage: "errored",
-      error: "scout exploded",
+      error: "job_failed",
     });
+    // The raw message is untouched in error.json — ops reads it, not the app.
+    expect(new TextDecoder().decode(media.store.get(`jobs/${jobId}/error.json`)!.body)).toContain(
+      "vendor response body",
+    );
 
     pipeline.instances.get(jobId)!.statusValue = "terminated";
     expect(await (await app.request(`/v1/jobs/${jobId}`, { headers: auth }, env)).json()).toEqual({
       ok: true,
       status: "errored",
       stage: "errored",
-      error: "scout exploded",
+      error: "job_failed",
     });
   });
 

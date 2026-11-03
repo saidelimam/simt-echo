@@ -61,18 +61,24 @@ export class EchoPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
       }
       return assembled;
     } catch (e) {
+      // R10-12 (review 0010, F11): the raw message can carry the vendor
+      // response body and internal key layout — it is the server-side log
+      // site and stays in error.json for ops. The SSE event carries the
+      // stable code the app maps to fixed copy.
+      const raw = e instanceof Error ? e.message : String(e);
+      console.error(`job ${jobId} failed: ${raw}`);
       if (lensMode) {
         try {
           await emitJobEvent(this.env, jobId, {
             id: newEventId(),
             type: "error",
-            error: e instanceof Error ? e.message : String(e),
+            error: "job_failed",
           });
         } catch {
           // Event emission never masks the pipeline failure.
         }
       }
-      await putError(this.env, jobId, e instanceof Error ? e.message : String(e));
+      await putError(this.env, jobId, raw);
       throw e;
     }
   }

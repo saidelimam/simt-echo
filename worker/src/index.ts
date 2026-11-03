@@ -75,9 +75,38 @@ function clientIp(req: HeaderReader): string {
 // The context carries the authenticated device id (R10-01): the middleware
 // resolves the bearer to a per-install id, and handlers read it to enforce
 // ownership of the jobs, uploads, and relay objects that id created.
-export type AppEnv = { Bindings: Env; Variables: { deviceId: string } };
+export type AppEnv = {
+  Bindings: Env;
+  Variables: { deviceId: string; requestId: string };
+};
 
 export const app = new Hono<AppEnv>();
+
+// R10-12 (review 0010, F11): every response carries a request id that a
+// client report can be correlated with in the 100%-sampled invocation logs.
+// A valid inbound X-Request-Id is echoed; anything else gets a fresh UUID.
+// Registered ahead of every other middleware so the health probe and the
+// device-mint route carry it too.
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
+app.use(async (c, next) => {
+  const incoming = c.req.header("X-Request-Id");
+  const requestId =
+    incoming && REQUEST_ID_PATTERN.test(incoming) ? incoming : crypto.randomUUID();
+  c.set("requestId", requestId);
+  c.header("X-Request-Id", requestId);
+  await next();
+});
+
+// R10-12 (review 0010, F11): a throw escaping a handler — an R2 failure in a
+// route without a local try — answers the same {ok:false, error} envelope
+// every other route uses, with the request id for correlation. The raw error
+// is the server-side log site; it never reaches the client.
+app.onError((err, c) => {
+  console.error(`${c.req.method} ${c.req.path} failed: ${err}`);
+  const res = c.json({ ok: false, error: "internal_error", requestId: c.get("requestId") }, 500);
+  res.headers.set("X-Request-Id", c.get("requestId"));
+  return res;
+});
 
 // Auth + rate limit for every /v1/* route except the public health probe and
 // the device-mint route. Registered before any route so later slices inherit
@@ -97,7 +126,12 @@ app.use("/v1/*", async (c, next) => {
   // exists before any credential is checked.
   if (rl) {
     const { success } = await rl.limit({ key: `pre:${ip}` });
-    if (!success) return c.json({ ok: false, error: "rate_limited" }, 429);
+    if (!success) {
+      // R10-12 (review 0010, F11): the limit is 30/60 s (wrangler.jsonc) —
+      // tell the client when it may retry.
+      c.header("Retry-After", "60");
+      return c.json({ ok: false, error: "rate_limited" }, 429);
+    }
   }
 
   // Health is public; device minting is public but IP-throttled above.
@@ -117,7 +151,10 @@ app.use("/v1/*", async (c, next) => {
   // limit onto the device id.
   if (rl) {
     const { success } = await rl.limit({ key: `dev:${deviceId}:${ip}` });
-    if (!success) return c.json({ ok: false, error: "rate_limited" }, 429);
+    if (!success) {
+      c.header("Retry-After", "60");
+      return c.json({ ok: false, error: "rate_limited" }, 429);
+    }
   }
 
   return next();

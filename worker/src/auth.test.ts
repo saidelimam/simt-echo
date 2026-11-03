@@ -85,6 +85,8 @@ describe("W0-05 auth + rate limit gate (R10-01 device keys)", () => {
     const res = await app.request("/v1/jobs", {}, env);
     expect(res.status).toBe(429);
     expect(await res.json()).toEqual({ ok: false, error: "rate_limited" });
+    // R10-12 (F11): the limit is 30/60 s — the client learns when to retry.
+    expect(res.headers.get("retry-after")).toBe("60");
     // The refusal happened on the IP key, ahead of auth: no device was
     // resolved and no per-install key was touched.
     expect(refused).toEqual(["pre:unknown"]);
@@ -103,6 +105,8 @@ describe("W0-05 auth + rate limit gate (R10-01 device keys)", () => {
     });
     const res = await app.request("/v1/jobs", { headers: bearer(KEY) }, env);
     expect(res.status).toBe(429);
+    // R10-12 (F11): both 429 sites carry the retry hint.
+    expect(res.headers.get("retry-after")).toBe("60");
     // Two limits, in order: the IP one in front of auth, then the install's.
     expect(refused).toHaveLength(2);
     expect(refused[0]).toBe("pre:unknown");

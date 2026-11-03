@@ -295,6 +295,8 @@ export function registerJobsRoutes(app: Hono<AppEnv>): void {
   });
 
   app.get("/v1/jobs/:id", async (c) => {
+    // R10-12 (review 0010, F11): per-user route data — never cached.
+    c.header("Cache-Control", "no-store");
     if (!c.env.PIPELINE) {
       return c.json({ ok: false, error: "server_misconfigured" }, 500);
     }
@@ -319,15 +321,11 @@ export function registerJobsRoutes(app: Hono<AppEnv>): void {
       return c.json({ ok: true, status: "complete", stage: "complete", result: result.data });
     }
     if (status === "errored" || status === "terminated") {
-      const detail = await readJson<{ error?: unknown }>(c.env, errorKey(id));
       const stage = (await readJson<{ stage?: JobStage }>(c.env, progressKey(id)))?.stage ?? "errored";
-      const body: { ok: true; status: "errored"; stage: JobStage; error?: string } = {
-        ok: true,
-        status: "errored",
-        stage,
-      };
-      if (typeof detail?.error === "string" && detail.error !== "") body.error = detail.error;
-      return c.json(body);
+      // R10-12 (review 0010, F11): the stored message can carry vendor
+      // text and internal key layout — it stays in error.json for ops.
+      // Clients get the stable code; the app maps it to fixed copy.
+      return c.json({ ok: true, status: "errored", stage, error: "job_failed" });
     }
     if (status === "queued") {
       const stage = (await readJson<{ stage?: JobStage }>(c.env, progressKey(id)))?.stage ?? "queued";

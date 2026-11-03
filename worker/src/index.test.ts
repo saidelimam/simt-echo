@@ -2,16 +2,23 @@ import { describe, expect, it } from "vitest";
 import worker, { app, type Env } from "./index";
 import { JOB_RETENTION_MS, STAGING_TTL_MS } from "./uploads";
 import { RELAY_TTL_MS } from "./relay";
+import { bearer, mintDevice } from "./testkit";
 
 // In-memory R2: only the surface the sweep touches.
 class FakeR2 {
   store = new Map<string, { body: string; customMetadata?: Record<string, string> }>();
   async put(
     key: string,
-    value: string,
+    value: string | Uint8Array | ArrayBuffer,
     opts?: { customMetadata?: Record<string, string> },
   ) {
-    this.store.set(key, { body: value, customMetadata: opts?.customMetadata });
+    const body =
+      typeof value === "string"
+        ? value
+        : new TextDecoder().decode(
+            value instanceof Uint8Array ? value : new Uint8Array(value),
+          );
+    this.store.set(key, { body, customMetadata: opts?.customMetadata });
     return null;
   }
   async get(key: string) {
@@ -110,5 +117,51 @@ describe("GET /v1/health", () => {
     expect(body.ok).toBe(true);
     expect(body.version).toBe("0.1.0");
     expect(body.metaKeyConfigured).toBe(false);
+  });
+});
+
+// R10-12 (review 0010, F11): the error contract — an unhandled throw answers
+// the same {ok:false} envelope every other route uses, and every response
+// carries a request id that correlates it with the invocation logs.
+describe("R10-12 (F11) error contract", () => {
+  it("answers an unhandled throw with the 500 envelope, never the raw error", async () => {
+    class ExplodingR2 extends FakeR2 {
+      async get(key: string) {
+        // The jobs GET's owner read is not locally guarded: the throw escapes
+        // the handler and reaches app.onError.
+        if (key.startsWith("jobs/")) throw new Error("R2 backend exploded (vendor text)");
+        return super.get(key);
+      }
+    }
+    const media = new ExplodingR2();
+    const key = await mintDevice(media);
+    const res = await app.request(
+      "/v1/jobs/job-x",
+      { headers: bearer(key) },
+      { MEDIA: media, PIPELINE: {} } as unknown as Env,
+    );
+    expect(res.status).toBe(500);
+    const text = await res.text();
+    // The raw message (vendor text) is the log site, not the client's.
+    expect(text).not.toContain("exploded");
+    const body = JSON.parse(text) as { ok: boolean; error: string; requestId: string };
+    expect(body).toEqual({ ok: false, error: "internal_error", requestId: expect.any(String) });
+    // The body's id and the response header are the same correlation id.
+    expect(res.headers.get("x-request-id")).toBe(body.requestId);
+  });
+
+  it("generates a request id when none arrives, echoes a valid one, replaces an invalid one", async () => {
+    const none = await app.request("/v1/health");
+    expect(none.headers.get("x-request-id")).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+    const echoed = await app.request("/v1/health", { headers: { "X-Request-Id": "trace-42" } });
+    expect(echoed.headers.get("x-request-id")).toBe("trace-42");
+    // A space is outside the allowed charset: replaced, not echoed.
+    const replaced = await app.request("/v1/health", { headers: { "X-Request-Id": "bad id" } });
+    expect(replaced.headers.get("x-request-id")).not.toBe("bad id");
+    expect(replaced.headers.get("x-request-id")).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
   });
 });

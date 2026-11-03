@@ -371,4 +371,31 @@ describe("EchoPipeline lens phase (W11-06)", () => {
     const checkpoint = byType["checkpoint"];
     expect(checkpoint).toMatchObject({ type: "checkpoint", nodeId: "n2", status: "grounded" });
   });
+
+  it("emits a stable error code to the stream and keeps the raw message server-side (R10-12)", async () => {
+    const media = new FakeR2();
+    // No manifest.json: loadManifest throws its raw internal message —
+    // exactly the text F11 keeps off the client.
+    const env = envFor(media, {
+      AI_GATEWAY_ID: "test",
+      SCOUT_ORDER: "workers-ai",
+      GROUND_ORDER: "none",
+    });
+    const step = {
+      do: async (_name: string, _cfg: unknown, fn: () => Promise<unknown>) => fn(),
+    };
+    const pipeline = new EchoPipeline({} as never, env);
+    await expect(
+      pipeline.run({ payload: { jobId: "job1" } } as never, step as never),
+    ).rejects.toThrow("manifest missing for job job1");
+
+    // The SSE error event carries the stable code, never the raw message.
+    const events = await readJobEvents(env, "job1");
+    expect(events.map((e) => e.type)).toEqual(["error"]);
+    expect(events[0]).toMatchObject({ type: "error", error: "job_failed" });
+    // The raw message stays in error.json for ops (the app maps the code
+    // to fixed copy; detail lives in the log and this record).
+    const raw = new TextDecoder().decode(media.store.get("jobs/job1/error.json")!);
+    expect(raw).toContain("manifest missing for job job1");
+  });
 });
