@@ -1,3 +1,5 @@
+![ECHO planet end card](res/marketing/marketing-assets/little-world/04-echo-planet-end-card.png)
+
 # ECHO — simt-echo
 
 Turn a phone video of your walk into a route that others can navigate without
