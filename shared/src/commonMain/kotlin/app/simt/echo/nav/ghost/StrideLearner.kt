@@ -67,12 +67,33 @@ class StrideLearner private constructor(
         legs += 1
     }
 
+    /**
+     * Weak per-step visual speed update (W17-02): folds `r = visualMps / nominalMps`
+     * into the log-normal posterior without incrementing the anchored [legs] count.
+     */
+    fun observeVisualSpeed(nominalMps: Double, visualMps: Double, sigmaMps: Double) {
+        if (!nominalMps.isFinite() || !visualMps.isFinite() || !sigmaMps.isFinite()) return
+        if (nominalMps <= 0.0 || visualMps <= 0.0 || sigmaMps <= 0.0) return
+        val r = visualMps / nominalMps
+        if (!r.isFinite() || r <= 0.0 || abs(ln(r)) > OUTLIER_LN_R) return
+        val relSigma = (sigmaMps / visualMps).coerceAtLeast(0.08)
+        val obsVar = maxOf(WEAK_VISUAL_OBS_VAR_FLOOR, relSigma * relSigma * 4.0)
+        val priorPrec = 1.0 / variance
+        val obsPrec = 1.0 / obsVar
+        val postVar = 1.0 / (priorPrec + obsPrec)
+        mu = postVar * (priorPrec * mu + obsPrec * ln(r))
+        variance = postVar
+    }
+
     companion object {
         /** Prior log-space variance: sd ≈ 8 %, the Ghost k-prior spread. */
         const val PRIOR_VAR = 0.08 * 0.08
 
         /** Observation variance for a 1 m leg; scales as 1/leg length. */
         const val OBS_VAR_UNIT = 0.04
+
+        /** Minimum variance for a single weak visual-speed observation (W17-02). */
+        const val WEAK_VISUAL_OBS_VAR_FLOOR = 0.08
 
         /** Outlier gate on `|ln r|`: observations beyond it are rejected. */
         const val OUTLIER_LN_R = 0.5

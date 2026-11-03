@@ -22,6 +22,7 @@ import app.simt.echo.nav.ghost.MagneticMatch
 import app.simt.echo.nav.ghost.Observation
 import app.simt.echo.nav.ghost.RouteGeometry
 import app.simt.echo.nav.ghost.StrideLearner
+import app.simt.echo.nav.ghost.VisualSpeedEstimator
 import app.simt.echo.platform.HapticPattern
 import app.simt.echo.platform.MotionUpdate
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -74,15 +75,22 @@ class Navigator(
         } else {
             null
         }
+    private val visualSpeedEstimator = VisualSpeedEstimator(route.perception?.parallax)
 
-    /** Posterior mean K learned from anchored legs so far. */
+    /** Posterior mean K learned from anchored legs (and weak visual speed) so far. */
     val learnedStrideK: Double get() = strideLearner.meanK
+
+    /** Current Ghost particle mean stride scale `k` (1.0 on LINEAR). */
+    val ghostMeanK: Double get() = ghost?.meanK ?: 1.0
 
     /** Anchored legs folded into [learnedStrideK] so far. */
     val learnedStrideLegs: Int get() = strideLearner.legs
 
     /** Previous raw odometer reading, for Ghost per-update deltas. */
     private var prevOdoM: Double = 0.0
+    private var prevStepOdoM: Double = 0.0
+    private var prevStepTimeNs: Long = Long.MIN_VALUE
+    private var latestNominalMps: Double = 0.0
 
     /** Raw odometer at the last Ghost heading observation (see [HEADING_OBS_STEP_M]). */
     private var lastHeadingObsOdo: Double = 0.0
@@ -264,6 +272,17 @@ class Navigator(
     }
 
     private fun onMotion(update: MotionUpdate) {
+        if (update.isStep) {
+            if (prevStepTimeNs != Long.MIN_VALUE && update.tNs > prevStepTimeNs) {
+                val dtSec = (update.tNs - prevStepTimeNs) / 1e9
+                val ds = update.distanceM - prevStepOdoM
+                if (dtSec in 0.05..2.5 && ds > 0.0) {
+                    latestNominalMps = ds / dtSec
+                }
+            }
+            prevStepOdoM = update.distanceM
+            prevStepTimeNs = update.tNs
+        }
         dist = update.distanceM
         yaw = update.yawRad
         lastMotionTNs = update.tNs
@@ -437,22 +456,53 @@ class Navigator(
      * prompt, not once per hit.
      */
     /**
-     * Visual ego-motion feed (W16-03): updates the slowly-varying FOE
-     * travel-direction offset when [EchoConfig.visualAssist] is enabled and
-     * the frame clears the confidence gate. Confidence 0 is a no-op.
+     * Visual ego-motion feed (W16-03, W17-02): updates the slowly-varying FOE
+     * travel-direction offset and route-conditioned visual speed (`k`) when
+     * [EchoConfig.visualAssist] is enabled and the frame clears the gates.
      */
-    fun onVisualEgo(ego: app.simt.echo.capture.visual.VisualEgo) {
+    fun onVisualEgo(
+        ego: app.simt.echo.capture.visual.VisualEgo,
+        usability01: Double = 1.0,
+        nominalMps: Double = latestNominalMps,
+    ) {
         if (!config.visualAssist || config.baselineMode) return
-        if (!ego.confidence01.isFinite() || ego.confidence01 < 0.5 || !ego.hasFoe) return
-        val offset = ego.travelOffsetRad
-        if (!offset.isFinite()) return
-        val clamped = offset.coerceIn(-MAX_TRAVEL_OFFSET_RAD, MAX_TRAVEL_OFFSET_RAD)
-        travelOffsetRad = if (travelOffsetRad == 0.0) {
-            clamped
-        } else {
-            val alpha = (0.2 * ego.confidence01).coerceIn(0.02, 0.35)
-            wrapPi(travelOffsetRad + alpha * wrapPi(clamped - travelOffsetRad))
-                .coerceIn(-MAX_TRAVEL_OFFSET_RAD, MAX_TRAVEL_OFFSET_RAD)
+        if (ego.confidence01.isFinite() && ego.confidence01 >= 0.5 && ego.hasFoe) {
+            val offset = ego.travelOffsetRad
+            if (offset.isFinite()) {
+                val clamped = offset.coerceIn(-MAX_TRAVEL_OFFSET_RAD, MAX_TRAVEL_OFFSET_RAD)
+                travelOffsetRad = if (travelOffsetRad == 0.0) {
+                    clamped
+                } else {
+                    val alpha = (0.2 * ego.confidence01).coerceIn(0.02, 0.35)
+                    wrapPi(travelOffsetRad + alpha * wrapPi(clamped - travelOffsetRad))
+                        .coerceIn(-MAX_TRAVEL_OFFSET_RAD, MAX_TRAVEL_OFFSET_RAD)
+                }
+            }
+        }
+        val obs = visualSpeedEstimator.evaluate(
+            sM = absoluteS,
+            sigmaSM = uncertainty,
+            nominalMps = nominalMps,
+            expansionPerSec = ego.expansionPerSec,
+            confidence01 = ego.confidence01,
+            usability01 = usability01,
+        )
+        if (obs != null) {
+            val prevMeanS = ghost?.meanS ?: absoluteS
+            val prevK = ghost?.meanK ?: 1.0
+            ghost?.observe(obs)
+            // When particles have not yet spread widely in s, reweighting k
+            // updates meanK immediately; shift particle positions by the newly
+            // learned stride delta over the current leg so between-anchor
+            // distance reflects the corrected stride right away.
+            if (ghost != null && prevK > 0.0) {
+                val newK = ghost.meanK
+                val legWalkedOdo = (dist - legStartOdo).coerceAtLeast(0.0)
+                if (legWalkedOdo > 0.0 && kotlin.math.abs(ghost.meanS - prevMeanS) < 0.05 * legWalkedOdo) {
+                    ghost.applyStrideCorrection((newK - prevK) * legWalkedOdo)
+                }
+            }
+            strideLearner.observeVisualSpeed(obs.nominalMps, obs.visualMps, obs.sigmaMps)
         }
         refresh()
     }

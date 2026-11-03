@@ -61,4 +61,15 @@ sealed interface Observation {
      * cancels — the same single-observation seam as every other input.
      */
     data class TurnSignature(val deltasRad: DoubleArray, val stepM: Double) : Observation
+
+    /**
+     * Route-conditioned visual speed observation (W17-02): Gaussian likelihood
+     * on each particle's stride scale `k` (`k * nominalMps` against `visualMps`
+     * with standard deviation `sigmaMps`).
+     */
+    data class VisualSpeed(
+        val nominalMps: Double,
+        val visualMps: Double,
+        val sigmaMps: Double,
+    ) : Observation
 }

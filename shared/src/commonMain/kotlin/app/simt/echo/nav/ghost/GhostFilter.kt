@@ -72,6 +72,10 @@ class GhostFilter(
      */
     internal fun distinctStrideCount(): Int = kA.distinct().size
 
+    /**Posterior mean stride scale `k` across particles (W17-02). */
+    var meanK: Double = kPrior
+        private set
+
     /** Posterior mean along-route position, metres. */
     var meanS: Double = 0.0
         private set
@@ -150,7 +154,26 @@ class GhostFilter(
             is Observation.Magnetic -> observeMagnetic(obs.s)
             is Observation.Fingerprint -> observeFingerprint(obs.nodeS, obs.similarity01)
             is Observation.TurnSignature -> observeTurnSignature(obs.deltasRad, obs.stepM)
+            is Observation.VisualSpeed -> observeVisualSpeed(obs)
         }
+    }
+
+    private fun observeVisualSpeed(obs: Observation.VisualSpeed) {
+        if (!VisualSpeedEstimator.applyToParticles(obs, kA, wA, PARTICLE_COUNT)) return
+        normalizeAndMaybeResample()
+    }
+
+    /**
+     * Shifts particle positions by [deltaSM] when a stride-scale observation
+     * updates [meanK] mid-leg (W17-02).
+     */
+    internal fun applyStrideCorrection(deltaSM: Double) {
+        if (!deltaSM.isFinite() || deltaSM == 0.0) return
+        val total = geometry.totalLengthM
+        for (i in 0 until PARTICLE_COUNT) {
+            sA[i] = (sA[i] + deltaSM).coerceIn(0.0, total)
+        }
+        updateStats()
     }
 
     /**
@@ -333,13 +356,18 @@ class GhostFilter(
 
     private fun updateStats(sumSq: Double) {
         var mean = 0.0
-        for (i in 0 until PARTICLE_COUNT) mean += wA[i] * sA[i]
+        var kMean = 0.0
+        for (i in 0 until PARTICLE_COUNT) {
+            mean += wA[i] * sA[i]
+            kMean += wA[i] * kA[i]
+        }
         var variance = 0.0
         for (i in 0 until PARTICLE_COUNT) {
             val d = sA[i] - mean
             variance += wA[i] * d * d
         }
         meanS = mean
+        meanK = kMean
         sigma = sqrt(variance + suspectVarianceM2)
         effectiveN = if (sumSq > 0.0) 1.0 / sumSq else PARTICLE_COUNT.toDouble()
     }
