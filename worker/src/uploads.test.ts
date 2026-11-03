@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { app, type Env } from "./index";
+import { MAX_UPLOAD_BYTES } from "./types";
 import { sweepExpiredUploads } from "./uploads";
 import { bearer, seedDevice } from "./testkit";
 
@@ -12,13 +13,32 @@ import { bearer, seedDevice } from "./testkit";
 const KEY = "dk_test_install_one";
 const OTHER = "dk_test_install_two";
 
+// R9-10: the intake move puts a stream through, so the fake stores what R2
+// would — a drained body. Consumed exactly once, like a real object body.
+async function streamToArrayBuffer(stream: ReadableStream<Uint8Array>): Promise<ArrayBuffer> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) chunks.push(value);
+  }
+  const out = new Uint8Array(chunks.reduce((n, c) => n + c.byteLength, 0));
+  let off = 0;
+  for (const c of chunks) {
+    out.set(c, off);
+    off += c.byteLength;
+  }
+  return out.buffer;
+}
+
 class FakeR2 {
   store = new Map<string, { body: ArrayBuffer; contentType?: string; etag: string }>();
   private seq = 0;
 
   async put(
     key: string,
-    value: ArrayBuffer | Uint8Array | string,
+    value: ArrayBuffer | Uint8Array | string | ReadableStream<Uint8Array>,
     opts?: { httpMetadata?: { contentType?: string }; onlyIf?: { etagMatches?: string } },
   ): Promise<null> {
     // R9-05: honor R2's etag semantics — a conditional put fails when the
@@ -28,13 +48,16 @@ class FakeR2 {
       if (!entry || entry.etag !== opts.onlyIf.etagMatches) throw new Error("etag mismatch");
     }
     // Normalize to a detached ArrayBuffer: a Uint8Array view aliases its pool
-    // buffer, and TS's generics treat the view as a distinct type.
+    // buffer, and TS's generics treat the view as a distinct type. R9-10: a
+    // stream is consumed eagerly so the stored body mirrors R2's stored size.
     const body =
-      typeof value === "string"
-        ? (new TextEncoder().encode(value).buffer as ArrayBuffer)
-        : value instanceof Uint8Array
-          ? (value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength) as ArrayBuffer)
-          : value;
+      value instanceof ReadableStream
+        ? await streamToArrayBuffer(value)
+        : typeof value === "string"
+          ? (new TextEncoder().encode(value).buffer as ArrayBuffer)
+          : value instanceof Uint8Array
+            ? (value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength) as ArrayBuffer)
+            : value;
     this.seq++;
     this.store.set(key, { body, contentType: opts?.httpMetadata?.contentType, etag: `e${this.seq}` });
     return null;
@@ -45,6 +68,8 @@ class FakeR2 {
     if (!entry) return null;
     return {
       httpEtag: entry.etag,
+      body: new Response(entry.body).body,
+      size: entry.body.byteLength,
       text: async () => new TextDecoder().decode(entry.body),
       arrayBuffer: async () => entry.body.slice(0),
       json: async <T,>() => JSON.parse(new TextDecoder().decode(entry.body)) as T,
@@ -52,7 +77,8 @@ class FakeR2 {
   }
 
   async head(key: string) {
-    return this.store.has(key) ? { key } : null;
+    // R9-10: the intake caps measure stored sizes via head — mirror R2.
+    return this.store.has(key) ? { key, size: this.store.get(key)!.body.byteLength } : null;
   }
 
   async list({ prefix }: { prefix?: string; cursor?: string }) {
@@ -148,6 +174,31 @@ function validManifest() {
   };
 }
 
+// R9-10: the max-size job's manifest references exactly the two staged
+// blobs, so completeness passes and nothing else is required.
+function bigManifest() {
+  return {
+    schema: 1,
+    draftId: "draft-big",
+    consent: { sendFramesToCloudAi: true, atEpochMs: 1762000000000 },
+    routeContext: "Indoor walk, 62 m, 3 turns, 1 level change",
+    checkpoints: [
+      {
+        nodeId: "n1",
+        type: "CHECKPOINT",
+        atDistanceM: 10,
+        tMs: 10000,
+        heroKeyframeId: "kf_a",
+        keyframes: [
+          { id: "kf_a", tMs: 9900 },
+          { id: "kf_b", tMs: 10100 },
+        ],
+        approach: [],
+      },
+    ],
+  };
+}
+
 async function createUpload(
   env: never,
   files: Array<{ name: string; sha256: string; bytes: number }>,
@@ -168,16 +219,28 @@ async function createUploadFor(env: never, files: Array<{ name: string; data: nu
   return ((await res.json()) as { uploadId: string; missing: string[] }).uploadId;
 }
 
-function putBlob(env: never, uploadId: string, name: string, data: number[]) {
+function putBlob(env: never, uploadId: string, name: string, data: number[] | Uint8Array) {
   return app.request(
     `/v1/uploads/${uploadId}/${name}`,
     {
       method: "PUT",
       headers: { ...auth, "Content-Type": "application/octet-stream" },
-      body: new Blob([new Uint8Array(data)]),
+      body: new Blob([data instanceof Uint8Array ? data : new Uint8Array(data)]),
     },
     env,
   );
+}
+
+// R9-10: a random blob plus the hex sha256 the create request must declare.
+async function randomBlobWithSha(size: number): Promise<{ data: Uint8Array; sha256: string }> {
+  const data = new Uint8Array(size);
+  crypto.getRandomValues(data.subarray(0, 65536));
+  for (let off = 65536; off < size; off += 65536) {
+    crypto.getRandomValues(data.subarray(off, off + 65536));
+  }
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  const sha256 = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return { data, sha256 };
 }
 
 function postJobJson(env: never, payload: unknown) {
@@ -294,6 +357,40 @@ describe("W11-09 ready-on-arrival uploads", () => {
       missing: ["kf_n2_1", "clip_n2"],
     });
     expect(pipeline.instances.size).toBe(0);
+  });
+
+  it("completes a max-size job (80 MB) through the streaming intake move", async () => {
+    const media = new FakeR2();
+    const pipeline = new FakePipeline();
+    const env = await envFor(media, pipeline);
+    // Two 40 MiB blobs total exactly MAX_UPLOAD_BYTES: the move must stream
+    // each R2→R2 without holding the whole job in memory (R9-10). The
+    // manifest references exactly these names, so completeness passes.
+    const half = MAX_UPLOAD_BYTES / 2;
+    const [a, b] = await Promise.all([randomBlobWithSha(half), randomBlobWithSha(half)]);
+    const uploadId = await createUpload(
+      env,
+      [
+        { name: "kf_a", sha256: a.sha256, bytes: half },
+        { name: "kf_b", sha256: b.sha256, bytes: half },
+      ],
+    );
+    expect(uploadId.status).toBe(200);
+    const id = ((await uploadId.json()) as { uploadId: string }).uploadId;
+    expect((await putBlob(env, id, "kf_a", a.data)).status).toBe(200);
+    expect((await putBlob(env, id, "kf_b", b.data)).status).toBe(200);
+
+    const res = await postJobJson(env, { manifest: bigManifest(), uploadId: id });
+    expect(res.status).toBe(202);
+    const jobId = ((await res.json()) as { jobId: string }).jobId;
+
+    // Both blobs landed intact under the job — the stream pass-through
+    // preserved every byte of a 40 MiB object.
+    expect(media.store.has(`jobs/${jobId}/in/kf_a`)).toBe(true);
+    expect(media.store.has(`jobs/${jobId}/in/kf_b`)).toBe(true);
+    expect(media.store.get(`jobs/${jobId}/in/kf_a`)!.body.byteLength).toBe(half);
+    expect(media.store.get(`jobs/${jobId}/in/kf_b`)!.body.byteLength).toBe(half);
+    expect(pipeline.instances.size).toBe(1);
   });
 });
 

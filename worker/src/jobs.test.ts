@@ -30,6 +30,25 @@ import {
 const KEY = "dk_test_install_one";
 const OTHER = "dk_test_install_two";
 
+// R9-10: the intake move puts a stream through, so the fake stores what R2
+// would — a drained body. Consumed exactly once, like a real object body.
+async function streamToArrayBuffer(stream: ReadableStream<Uint8Array>): Promise<ArrayBuffer> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) chunks.push(value);
+  }
+  const out = new Uint8Array(chunks.reduce((n, c) => n + c.byteLength, 0));
+  let off = 0;
+  for (const c of chunks) {
+    out.set(c, off);
+    off += c.byteLength;
+  }
+  return out.buffer;
+}
+
 // In-memory R2 stand-in: only the surface jobs.ts touches.
 class FakeR2 {
   store = new Map<string, { body: ArrayBuffer; contentType?: string; etag: string }>();
@@ -37,7 +56,7 @@ class FakeR2 {
 
   async put(
     key: string,
-    value: ArrayBuffer | Uint8Array | string,
+    value: ArrayBuffer | Uint8Array | string | ReadableStream<Uint8Array>,
     opts?: { httpMetadata?: { contentType?: string }; onlyIf?: { etagMatches?: string } },
   ): Promise<null> {
     // R9-05: honor R2's etag semantics — a conditional put fails when the
@@ -47,13 +66,16 @@ class FakeR2 {
       if (!entry || entry.etag !== opts.onlyIf.etagMatches) throw new Error("etag mismatch");
     }
     // Normalize to a detached ArrayBuffer: a Uint8Array view aliases its pool
-    // buffer, and TS's generics treat the view as a distinct type.
+    // buffer, and TS's generics treat the view as a distinct type. R9-10: a
+    // stream is consumed eagerly so the stored body mirrors R2's stored size.
     const body =
-      typeof value === "string"
-        ? (new TextEncoder().encode(value).buffer as ArrayBuffer)
-        : value instanceof Uint8Array
-          ? (value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength) as ArrayBuffer)
-          : value;
+      value instanceof ReadableStream
+        ? await streamToArrayBuffer(value)
+        : typeof value === "string"
+          ? (new TextEncoder().encode(value).buffer as ArrayBuffer)
+          : value instanceof Uint8Array
+            ? (value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength) as ArrayBuffer)
+            : value;
     this.seq++;
     this.store.set(key, { body, contentType: opts?.httpMetadata?.contentType, etag: `e${this.seq}` });
     return null;
@@ -64,13 +86,17 @@ class FakeR2 {
     if (!entry) return null;
     return {
       httpEtag: entry.etag,
+      body: new Response(entry.body).body,
+      size: entry.body.byteLength,
       text: async () => new TextDecoder().decode(entry.body),
       arrayBuffer: async () => entry.body.slice(0),
       json: async <T,>() => JSON.parse(new TextDecoder().decode(entry.body)) as T,
     };
   }
 
-  head = async (key: string) => (this.store.has(key) ? { key } : null);
+  // R9-10: the intake caps measure stored sizes via head — mirror R2.
+  head = async (key: string) =>
+    this.store.has(key) ? { key, size: this.store.get(key)!.body.byteLength } : null;
 
   async list({ prefix }: { prefix?: string; cursor?: string }) {
     const keys = [...this.store.keys()].filter((k) => !prefix || k.startsWith(prefix)).sort();

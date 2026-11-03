@@ -19,8 +19,12 @@ class FakeR2 {
     const entry = this.store.get(key);
     if (entry === undefined) return null;
     const text = typeof entry === "string" ? entry : new TextDecoder().decode(entry);
+    // R9-10: the lens reloads each step's media inside its callback — serve
+    // the stored bytes as a body stream, mirroring R2.
+    const bytes = typeof entry === "string" ? new TextEncoder().encode(entry) : new Uint8Array(entry);
     return {
-      arrayBuffer: async () => new TextEncoder().encode(text).buffer as ArrayBuffer,
+      body: new Response(bytes).body,
+      arrayBuffer: async () => bytes.buffer as ArrayBuffer,
       json: async <T,>() => JSON.parse(text) as T,
       text: async () => text,
     };

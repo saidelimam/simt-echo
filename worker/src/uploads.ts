@@ -373,7 +373,11 @@ export async function handleCreateJobV11(c: Context<AppEnv>): Promise<Response> 
   // Staged blobs to move under the job (manifest-only creates skip this).
   // One session (uploadId) or several per-window sessions (uploadIds,
   // W11-09): completeness is measured over the union of staged names.
-  let staged: Array<{ name: string; bytes: ArrayBuffer }> = [];
+  // R9-10 (review 0009, F9): the move streams each blob R2→R2, one at a
+  // time — the old path held every staged byte (up to the 80 MB cap) in
+  // memory at once. Caps are measured on the stored sizes, never the
+  // declared ones.
+  const move: Array<{ name: string; source: string }> = [];
   const sessionIds = uploadIds ?? (uploadId !== undefined ? [uploadId] : []);
   // The move consumes every staging area below: single-use uploads cannot
   // seed a second job, and replay arrives via the idempotency map above.
@@ -403,21 +407,20 @@ export async function handleCreateJobV11(c: Context<AppEnv>): Promise<Response> 
     if (missing.length > 0) {
       return c.json({ ok: false, error: "upload_incomplete", missing }, 400);
     }
-    // Caps are measured on actual PUT bytes, never the declared sizes.
+    // Caps are measured on stored sizes (head), so no body is read here.
     let totalBytes = 0;
     const seen = new Set<string>();
     for (const { id } of loadedBySession) {
       for (const name of allowed) {
         if (seen.has(name)) continue;
-        const obj = await c.env.MEDIA.get(stagingBlobKey(id, name));
-        if (!obj) continue;
+        const head = await c.env.MEDIA.head(stagingBlobKey(id, name));
+        if (!head) continue;
         seen.add(name);
-        const bytes = await obj.arrayBuffer();
-        totalBytes += bytes.byteLength;
-        staged.push({ name, bytes });
+        move.push({ name, source: stagingBlobKey(id, name) });
+        totalBytes += head.size;
       }
     }
-    if (staged.length > 60) {
+    if (move.length > 60) {
       return c.json({ ok: false, error: "too_many_files" }, 413);
     }
     if (totalBytes > MAX_UPLOAD_BYTES) {
@@ -440,8 +443,10 @@ export async function handleCreateJobV11(c: Context<AppEnv>): Promise<Response> 
   // files and a failure must not delete them.
   let instanceCreated = false;
   try {
-    for (const { name, bytes } of staged) {
-      await c.env.MEDIA.put(`jobs/${jobId}/in/${name}`, bytes);
+    for (const { name, source } of move) {
+      const obj = await c.env.MEDIA.get(source);
+      if (!obj?.body) continue; // Vanished since the head: skip, as before.
+      await c.env.MEDIA.put(`jobs/${jobId}/in/${name}`, obj.body);
     }
     await c.env.MEDIA.put(`jobs/${jobId}/manifest.json`, JSON.stringify(manifest));
     // R9-01: bind the job to the creating install.

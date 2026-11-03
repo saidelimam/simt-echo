@@ -506,14 +506,20 @@ export async function runGroundLens(
     kept: ScoutCandidate[];
     /** Survivor indexes into kept (top-2, flags passing). */
     survivors: number[];
-    heroBytes: Map<number, Uint8Array>;
-    clipBytes: Uint8Array | null;
+    /** Cache key per survivor hero frame. R9-10 (review 0009, F9): the media
+     * is not retained — planning derives the key from a transient read,
+     * and each step reloads its own frame, releasing it when done. */
+    heroKeys: Map<number, string>;
+    /** True when the checkpoint's clip object was present at planning. */
+    hasClip: boolean;
     clipFps: number;
     clipHeroIdx: number;
   }
 
   // Planning is a pure function of the manifest, the scout step output, the
-  // staged media and budget.json, so a replay reproduces it exactly.
+  // staged media and budget.json, so a replay reproduces it exactly. Each
+  // media read below is transient: the bytes are hashed into the cache key
+  // and then released, so planning retains no job media at all (R9-10).
   const planned: Planned[] = [];
   for (let index = 0; index < manifest.checkpoints.length; index++) {
     const cp = manifest.checkpoints[index];
@@ -524,24 +530,27 @@ export async function runGroundLens(
       .sort((a, b) => b.sc.distinctiveness * b.sc.permanence - a.sc.distinctiveness * a.sc.permanence)
       .slice(0, 2);
     const survivors = ranked.filter(({ sc }) => !frameFailsFlags(cp, sc.imageId)).map(({ k }) => k);
-    const heroBytes = new Map<number, Uint8Array>();
+    const heroKeys = new Map<number, string>();
     for (const k of survivors) {
       const obj = await env.MEDIA.get(`jobs/${jobId}/in/${kept[k].imageId}`);
-      if (obj) heroBytes.set(k, new Uint8Array(await obj.arrayBuffer()));
+      if (obj) {
+        const media = new Uint8Array(await obj.arrayBuffer());
+        heroKeys.set(k, await cacheKeyHex(media, kept[k].samPhrase, IMAGE_PARAMS));
+      }
     }
-    let clipBytes: Uint8Array | null = null;
     let clipFps = 0;
     let clipHeroIdx = 0;
+    let hasClip = false;
     if (cp.clip) {
       const clipObj = await env.MEDIA.get(`jobs/${jobId}/in/${cp.clip.id}`);
       if (clipObj) {
-        clipBytes = new Uint8Array(await clipObj.arrayBuffer());
+        hasClip = true;
         const heroTMs = cp.keyframes.find((k) => k.id === cp.heroKeyframeId)?.tMs ?? cp.tMs;
         clipFps = (cp.clip.frameCount * 1000) / Math.max(1, cp.clip.durationMs);
         clipHeroIdx = heroIndex(heroTMs, cp.clip.startMs, clipFps);
       }
     }
-    planned.push({ cp, index, kept, survivors, heroBytes, clipBytes, clipFps, clipHeroIdx });
+    planned.push({ cp, index, kept, survivors, heroKeys, hasClip, clipFps, clipHeroIdx });
   }
 
   // Governor reservation order: node priority first, manifest order within.
@@ -583,12 +592,12 @@ export async function runGroundLens(
   };
 
   // Image phase: 1 frame per hero call, planned before any call is sent.
-  const imageCalls: Array<{ p: Planned; k: number; media: Uint8Array; key: string }> = [];
+  const imageCalls: Array<{ p: Planned; k: number; key: string }> = [];
   for (const p of byPriority) {
     for (const k of p.survivors) {
-      const media = p.heroBytes.get(k);
-      if (!media) continue;
-      imageCalls.push({ p, k, media, key: await cacheKeyHex(media, p.kept[k].samPhrase, IMAGE_PARAMS) });
+      const key = p.heroKeys.get(k);
+      if (!key) continue;
+      imageCalls.push({ p, k, key });
     }
   }
   const imageDecisions = await planPhase(
@@ -596,7 +605,7 @@ export async function runGroundLens(
     imageCalls.map(({ key }) => ({ key, estimate: 1 })),
   );
   const imageTasks: Array<{ name: string; perCp: Map<number, Candidate>; run: () => Promise<ImageStepResult> }> = [];
-  for (const [i, { p, k, media, key }] of imageCalls.entries()) {
+  for (const [i, { p, k, key }] of imageCalls.entries()) {
     const decision = imageDecisions[i];
     const perCp = finalResults.get(p.index);
     const fallback = perCp?.get(k);
@@ -608,10 +617,17 @@ export async function runGroundLens(
       name,
       perCp,
       run: () =>
-        runner(name, async () => ({
-          k,
-          ...(await imageCall(env, jobId, p.cp, sc, k, media, key, decision === "hit", fallback, evidenceKey, budget.resumeOf, lensOpts)),
-        })),
+        runner(name, async () => {
+          // R9-10: the frame is loaded inside its step and released when the
+          // step returns — planning retained only its cache key.
+          const obj = await env.MEDIA.get(`jobs/${jobId}/in/${sc.imageId}`);
+          if (!obj) return { k, candidate: fallback, reason: "media_missing", ...NO_SPEND };
+          const media = new Uint8Array(await obj.arrayBuffer());
+          return {
+            k,
+            ...(await imageCall(env, jobId, p.cp, sc, k, media, key, decision === "hit", fallback, evidenceKey, budget.resumeOf, lensOpts)),
+          };
+        }),
     });
   }
   const imageOut = await runPool(
@@ -623,18 +639,20 @@ export async function runGroundLens(
     tally(r, imageTasks[i].name);
   });
 
-  // Video phase: top survivor only, TURN/DESTINATION or mid confidence.
+  // Video phase: top survivor only, TURN/DESTINATION or mid confidence. The
+  // clip's cache key needs the top survivor's phrase, so it is derived here
+  // — after the image phase — from a transient read: hashed, then released
+  // (R9-10). The call itself reloads the clip inside its step.
   const videoCalls: Array<{
     p: Planned;
     perCp: Map<number, Candidate>;
     topK: number;
     top: Candidate;
-    clipBytes: Uint8Array;
     key: string;
   }> = [];
   for (const p of byPriority) {
     const perCp = finalResults.get(p.index);
-    if (!perCp || !p.clipBytes || p.survivors.length === 0) continue;
+    if (!perCp || !p.hasClip || p.survivors.length === 0) continue;
     // Top survivor by image-phase rank (image-grounded or box-only stand-in).
     let topK = p.survivors[0];
     for (const k of p.survivors) {
@@ -645,15 +663,18 @@ export async function runGroundLens(
     const nodeWantsVideo = p.cp.type === "TURN" || p.cp.type === "DESTINATION";
     const confWantsVideo = conf !== null && conf !== undefined && conf >= 0.5 && conf < 0.85;
     if (!top || (!nodeWantsVideo && !confWantsVideo)) continue;
-    const key = await cacheKeyHex(p.clipBytes, p.kept[topK].samPhrase, VIDEO_PARAMS);
-    videoCalls.push({ p, perCp, topK, top, clipBytes: p.clipBytes, key });
+    const clipObj = await env.MEDIA.get(`jobs/${jobId}/in/${p.cp.clip!.id}`);
+    if (!clipObj) continue; // Vanished since planning: the image result stands.
+    const clipMedia = new Uint8Array(await clipObj.arrayBuffer());
+    const key = await cacheKeyHex(clipMedia, p.kept[topK].samPhrase, VIDEO_PARAMS);
+    videoCalls.push({ p, perCp, topK, top, key });
   }
   const videoDecisions = await planPhase(
     "ground:plan:video",
     videoCalls.map(({ p, key }) => ({ key, estimate: p.cp.clip ? clipFrameEstimate(p.cp.clip) : 0 })),
   );
   const videoTasks: Array<{ name: string; perCp: Map<number, Candidate>; run: () => Promise<VideoStepResult> }> = [];
-  for (const [i, { p, perCp, topK, top, clipBytes, key }] of videoCalls.entries()) {
+  for (const [i, { p, perCp, topK, top, key }] of videoCalls.entries()) {
     const decision = videoDecisions[i];
     if (decision === "refused") continue;
     const sc = p.kept[topK];
@@ -668,6 +689,11 @@ export async function runGroundLens(
       perCp,
       run: () =>
         runner(name, async () => {
+          // R9-10: the clip is loaded inside its step and released when the
+          // step returns; only its cache key survived planning.
+          const clipObj = await env.MEDIA.get(`jobs/${jobId}/in/${p.cp.clip!.id}`);
+          if (!clipObj) return { k: topK, candidate: null, reason: "media_missing", ...NO_SPEND };
+          const clipBytes = new Uint8Array(await clipObj.arrayBuffer());
           const out: VideoStepResult = { k: topK, candidate: null, ...NO_SPEND };
           for (const phrase of phrases) {
             const call = await videoCall(env, jobId, p.cp, sc, topK, clipBytes, phrase, key, decision === "hit", evidenceKey, clip, top, budget.resumeOf, lensOpts);
