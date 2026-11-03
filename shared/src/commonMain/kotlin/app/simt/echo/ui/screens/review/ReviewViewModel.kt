@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import app.simt.echo.ai.AiCandidate
 import app.simt.echo.ai.AiJobResult
 import app.simt.echo.ai.CandidateMerger
+import app.simt.echo.capture.CaptureSession
 import app.simt.echo.data.DraftRepository
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.media.CropBox
@@ -593,9 +594,19 @@ class ReviewViewModel(
                     src.start.photoAssetId?.let { add(it) }
                     src.landmarks.mapNotNullTo(this) { it.cropAssetId }
                 }.distinct()
-                val assets = wanted
-                    .filter { drafts.readDraftFile(draftId, it) != null }
-                    .associateWith { drafts.draftFilePath(draftId, it) }
+                // The segmenter names the start photo `a_start`, but the
+                // JPEG is written as `start.jpg`. Matching only on the id
+                // drops the file, and Align then has no view to match.
+                val assets = wanted.mapNotNull { id ->
+                    val file = when {
+                        drafts.draftFileExists(draftId, id) -> id
+                        id == src.start.photoAssetId &&
+                            drafts.draftFileExists(draftId, CaptureSession.START_PHOTO) ->
+                            CaptureSession.START_PHOTO
+                        else -> null
+                    }
+                    file?.let { id to drafts.draftFilePath(draftId, it) }
+                }.toMap()
                 val export = src.copy(
                     createdAtEpochMs = nowMs(),
                     start = src.start.copy(

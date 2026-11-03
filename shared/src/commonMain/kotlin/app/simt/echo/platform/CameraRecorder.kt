@@ -23,6 +23,18 @@ interface CameraRecorder {
     fun Preview(modifier: Modifier, onError: (String) -> Unit = {})
 
     /**
+     * Live preview that must stay inside a small frame (Align's corner
+     * pip). The default draws [Preview]. Android uses an embedded surface:
+     * the external one is laid out at the camera-buffer size and punches
+     * through the frame, so the feed sits at the bottom of an empty
+     * rectangle instead of in the corner.
+     */
+    @Composable
+    fun PreviewFramed(modifier: Modifier, onError: (String) -> Unit = {}) {
+        Preview(modifier, onError)
+    }
+
+    /**
      * Starts silent video into [out].
      * @return `tNs` of the recording start on the [MotionUpdate] clock,
      * resolved by [resolveVideoStartNs].

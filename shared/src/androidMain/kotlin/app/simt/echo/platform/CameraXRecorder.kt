@@ -18,7 +18,10 @@ import androidx.camera.video.Recorder
 import androidx.camera.video.Recording
 import androidx.camera.video.VideoCapture
 import androidx.camera.video.VideoRecordEvent
+import androidx.camera.viewfinder.core.ImplementationMode
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -112,6 +115,16 @@ class CameraXRecorder(
 
     @Composable
     override fun Preview(modifier: Modifier, onError: (String) -> Unit) {
+        BoundPreview(modifier, onError, framed = false)
+    }
+
+    @Composable
+    override fun PreviewFramed(modifier: Modifier, onError: (String) -> Unit) {
+        BoundPreview(modifier, onError, framed = true)
+    }
+
+    @Composable
+    private fun BoundPreview(modifier: Modifier, onError: (String) -> Unit, framed: Boolean) {
         var request by remember { mutableStateOf<SurfaceRequest?>(null) }
         LaunchedEffect(Unit) {
             // A bind failure is a graceful error, not a crash (W4-03):
@@ -127,8 +140,22 @@ class CameraXRecorder(
                 analysisExecutor = null
             }
         }
-        request?.let {
-            CameraXViewfinder(surfaceRequest = it, modifier = modifier)
+        request?.let { surfaceRequest ->
+            if (framed) {
+                // TextureView (EMBEDDED) is clipped and scaled into the
+                // pip. EXTERNAL is a SurfaceView laid out at the buffer's
+                // pixel size; graphics-layer scale does not move it, so a
+                // corner pip draws as a tall hole with the feed at the bottom.
+                CameraXViewfinder(
+                    surfaceRequest = surfaceRequest,
+                    modifier = modifier,
+                    implementationMode = ImplementationMode.EMBEDDED,
+                    alignment = Alignment.Center,
+                    contentScale = ContentScale.Crop,
+                )
+            } else {
+                CameraXViewfinder(surfaceRequest = surfaceRequest, modifier = modifier)
+            }
         }
     }
 

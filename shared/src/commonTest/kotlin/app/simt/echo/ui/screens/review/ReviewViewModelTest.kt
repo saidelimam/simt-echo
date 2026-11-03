@@ -7,6 +7,7 @@ import app.simt.echo.media.ClipInfo
 import app.simt.echo.media.CropBox
 import app.simt.echo.media.MediaTools
 import app.simt.echo.model.Confirmation
+import app.simt.echo.model.EchoIds
 import app.simt.echo.model.EchoRoute
 import app.simt.echo.model.LandmarkSource
 import app.simt.echo.model.NodeType
@@ -332,6 +333,32 @@ class ReviewViewModelTest {
         assertNotNull(h.routes.readAsset("draft-1", "start.jpg"))
         assertNotNull(h.routes.readAsset("draft-1", exported.landmarks.single().cropAssetId!!))
         // The consumed draft is gone.
+        assertNull(h.drafts.loadDraftRoute("draft-1"))
+    }
+
+    @Test
+    fun saveKeepsStartPhotoWhenTheAssetIdIsNotTheFileName() = runTest(dispatcher) {
+        val h = harness()
+        h.drafts.saveDraftRoute(
+            draftRoute().copy(
+                start = draftRoute().start.copy(photoAssetId = EchoIds.assetId("start")),
+            ),
+        )
+        val vm = h.vm()
+        advanceUntilIdle()
+
+        var saved: String? = null
+        vm.save { saved = it }
+        advanceUntilIdle()
+
+        assertEquals("draft-1", saved)
+        val exported = h.routes.get("draft-1")
+        assertNotNull(exported)
+        assertEquals(EchoIds.assetId("start"), exported.start.photoAssetId)
+        assertEquals(
+            "photo".encodeToByteArray().toList(),
+            h.routes.readAsset("draft-1", EchoIds.assetId("start"))!!.toList(),
+        )
         assertNull(h.drafts.loadDraftRoute("draft-1"))
     }
 
