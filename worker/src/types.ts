@@ -53,6 +53,20 @@ export const ApproachSampleSchema = z.object({
   d: z.number().nonnegative(),
 });
 
+/**
+ * R9-03 (review 0009, F3): fan-out caps. Every checkpoint costs paid vision
+ * calls, so the schema bounds what one job can fan out to. Each value sits
+ * well above what the app produces today — ≤3 keyframes per checkpoint
+ * (`keyframeTimes`), ≤12 approach samples (`APPROACH_MAX_FRAMES`), one
+ * checkpoint per route node — so a legitimate walk is never rejected; a
+ * hostile or buggy client is.
+ */
+export const MAX_CHECKPOINTS = 40;
+export const MAX_KEYFRAMES_PER_CHECKPOINT = 8;
+export const MAX_APPROACH_SAMPLES = 16;
+export const MAX_DRAFT_ID_LENGTH = 128;
+export const MAX_ROUTE_CONTEXT_LENGTH = 200;
+
 /** One non-START route node with its media refs (plan §5.5 `checkpoints[]`). */
 export const CheckpointSchema = z
   .object({
@@ -62,9 +76,9 @@ export const CheckpointSchema = z
     atDistanceM: z.number().nonnegative(),
     tMs: z.number().int().nonnegative(),
     heroKeyframeId: JobIdSchema,
-    keyframes: z.array(KeyframeRefSchema).min(1),
+    keyframes: z.array(KeyframeRefSchema).min(1).max(MAX_KEYFRAMES_PER_CHECKPOINT),
     clip: ClipRefSchema.optional(),
-    approach: z.array(ApproachSampleSchema),
+    approach: z.array(ApproachSampleSchema).max(MAX_APPROACH_SAMPLES),
   })
   .superRefine((cp, ctx) => {
     if (cp.type === "TURN" && cp.turn === undefined) {
@@ -75,10 +89,10 @@ export type Checkpoint = z.infer<typeof CheckpointSchema>;
 
 export const ManifestSchema = z.object({
   schema: z.literal(1),
-  draftId: z.string().min(1),
+  draftId: z.string().min(1).max(MAX_DRAFT_ID_LENGTH),
   consent: ConsentSchema,
-  routeContext: z.string().min(1),
-  checkpoints: z.array(CheckpointSchema).min(1),
+  routeContext: z.string().min(1).max(MAX_ROUTE_CONTEXT_LENGTH),
+  checkpoints: z.array(CheckpointSchema).min(1).max(MAX_CHECKPOINTS),
 });
 export type Manifest = z.infer<typeof ManifestSchema>;
 

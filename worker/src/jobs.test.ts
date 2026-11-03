@@ -15,6 +15,11 @@ import {
   ErrorEventSchema,
   JobBudgetSchema,
   JobEventSchema,
+  MAX_APPROACH_SAMPLES,
+  MAX_CHECKPOINTS,
+  MAX_DRAFT_ID_LENGTH,
+  MAX_KEYFRAMES_PER_CHECKPOINT,
+  MAX_ROUTE_CONTEXT_LENGTH,
   StageEventSchema,
   UploadPutParamsSchema,
   UsageEventSchema,
@@ -228,20 +233,92 @@ describe("POST /v1/jobs", () => {
 
   it("rejects more than 60 files (413)", async () => {
     const media = new FakeR2();
+    // 61 keyframes spread over 8 checkpoints (7×8 + 5): past the 60-file
+    // limit while staying inside the per-checkpoint schema cap (R9-03), so
+    // the file-count guard — not the schema — is what rejects.
     const manifest = structuredClone(validManifest());
-    manifest.checkpoints[0].keyframes = Array.from({ length: 61 }, (_, i) => ({
-      id: `kf_${i.toString().padStart(2, "0")}`,
-      tMs: 39000 + i * 100,
+    manifest.checkpoints = [8, 8, 8, 8, 8, 8, 8, 5].map((count, i) => ({
+      ...structuredClone(validManifest().checkpoints[0]),
+      nodeId: `n${i + 2}`,
+      keyframes: Array.from({ length: count }, (_, j) => ({
+        id: `kf_${i}_${j}`,
+        tMs: 39000 + j * 100,
+      })),
     }));
-    const files = manifest.checkpoints[0].keyframes.map((k) => ({
-      id: k.id,
-      bytes: new Uint8Array([1]),
-      type: "image/jpeg",
-    }));
+    const files = manifest.checkpoints.flatMap((cp) =>
+      cp.keyframes.map((k) => ({
+        id: k.id,
+        bytes: new Uint8Array([1]),
+        type: "image/jpeg" as const,
+      })),
+    );
     const res = await postJob(await envFor(media, new FakePipeline()), manifest, files);
 
     expect(res.status).toBe(413);
     expect(await res.json()).toEqual({ ok: false, error: "too_many_files" });
+  });
+
+  it("rejects manifests past the fan-out caps (400) and accepts the cap boundary (202)", async () => {
+    const media = new FakeR2();
+    const env = await envFor(media, new FakePipeline());
+
+    // One past each cap (R9-03, F3): every variant is rejected before
+    // anything is stored.
+    const tooManyCheckpoints = structuredClone(validManifest());
+    while (tooManyCheckpoints.checkpoints.length < MAX_CHECKPOINTS + 1) {
+      const cp = structuredClone(tooManyCheckpoints.checkpoints[0]);
+      cp.nodeId = `n${tooManyCheckpoints.checkpoints.length + 2}`;
+      tooManyCheckpoints.checkpoints.push(cp);
+    }
+    expect((await postJob(env, tooManyCheckpoints)).status).toBe(400);
+
+    const tooManyKeyframes = structuredClone(validManifest());
+    tooManyKeyframes.checkpoints[0].keyframes = Array.from(
+      { length: MAX_KEYFRAMES_PER_CHECKPOINT + 1 },
+      (_, i) => ({ id: `kf_x${i}`, tMs: 39000 + i * 100 }),
+    );
+    expect((await postJob(env, tooManyKeyframes)).status).toBe(400);
+
+    const tooMuchApproach = structuredClone(validManifest());
+    tooMuchApproach.checkpoints[0].approach = Array.from(
+      { length: MAX_APPROACH_SAMPLES + 1 },
+      (_, i) => ({ tMs: 37000 + i * 50, d: 18 + i * 0.1 }),
+    );
+    expect((await postJob(env, tooMuchApproach)).status).toBe(400);
+
+    const longDraft = await postJob(env, {
+      ...validManifest(),
+      draftId: "d".repeat(MAX_DRAFT_ID_LENGTH + 1),
+    });
+    expect(longDraft.status).toBe(400);
+
+    const longContext = await postJob(env, {
+      ...validManifest(),
+      routeContext: "x".repeat(MAX_ROUTE_CONTEXT_LENGTH + 1),
+    });
+    expect(longContext.status).toBe(400);
+
+    expect([...media.store.keys()].filter((k) => !k.startsWith("devices/"))).toEqual([]);
+
+    // Exactly at every cap at once is a legitimate walk, not a hostile
+    // client: accepted.
+    const atCaps = structuredClone(validManifest());
+    atCaps.checkpoints[0].keyframes = Array.from(
+      { length: MAX_KEYFRAMES_PER_CHECKPOINT },
+      (_, i) => ({ id: `kf_n2_${i}`, tMs: 39000 + i * 100 }),
+    );
+    atCaps.checkpoints[0].approach = Array.from(
+      { length: MAX_APPROACH_SAMPLES },
+      (_, i) => ({ tMs: 37000 + i * 50, d: 18 + i * 0.1 }),
+    );
+    while (atCaps.checkpoints.length < MAX_CHECKPOINTS) {
+      const cp = structuredClone(atCaps.checkpoints[0]);
+      cp.nodeId = `n${atCaps.checkpoints.length + 2}`;
+      cp.heroKeyframeId = "kf_n2_0";
+      atCaps.checkpoints.push(cp);
+    }
+    const res = await postJob(env, atCaps);
+    expect(res.status).toBe(202);
   });
 
   it("rejects payloads over 80 MB (413)", async () => {
