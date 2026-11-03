@@ -602,6 +602,23 @@ describe("idempotent create and job cleanup", () => {
     expect(pipeline.instances.size).toBe(0);
   });
 
+  it("accepts a keyframe scheduled before video 0 (early-walk turn)", async () => {
+    // Regression: the W3-01 reference window schedules a keyframe at
+    // `t − 4000`; when the first turn lands in the first seconds of the walk
+    // that time is negative (field manifest: turn at 1764 ms, keyframe at
+    // −236 ms) and the old nonnegative floor 400'd the whole create.
+    const media = new FakeR2();
+    const pipeline = new FakePipeline();
+    const env = await envFor(media, pipeline);
+    const uploadId = await stageFullUpload(env);
+    const m = validManifest();
+    m.checkpoints[0].tMs = 1764;
+    m.checkpoints[0].keyframes[0].tMs = -236;
+    const res = await postJobJson(env, { manifest: m, uploadId });
+    expect(res.status).toBe(202);
+    expect(pipeline.instances.size).toBe(1);
+  });
+
   it("DELETE removes the idempotency record so the key can create again", async () => {
     const media = new FakeR2();
     const pipeline = new FakePipeline();

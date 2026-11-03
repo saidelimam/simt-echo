@@ -32,9 +32,15 @@ export type Consent = z.infer<typeof ConsentSchema>;
 /** W11-04 per-frame flags the client emits. Optional: absent flags keep the
  * frame (video fallbacks, v1 clients); the SAM lens drops a candidate whose
  * hero frame has `faceFree: false`, `quality: "bad"` or `exposureOk: false`. */
+// Keyframe times are video-relative and may be negative: the W3-01 reference
+// window schedules a keyframe at `t − 4000`, which goes below video 0 when the
+// checkpoint lands in the first seconds of the walk (the extracted frame is
+// clamped to 0; only the manifest timestamp is negative). The floor admits
+// those legitimate early-walk manifests while still bounding hostile input.
+export const MIN_KEYFRAME_T_MS = -600_000;
 export const KeyframeRefSchema = z.object({
   id: JobIdSchema,
-  tMs: z.number().int().nonnegative(),
+  tMs: z.number().int().min(MIN_KEYFRAME_T_MS),
   faceFree: z.boolean().optional(),
   quality: z.string().optional(),
   exposureOk: z.boolean().optional(),
