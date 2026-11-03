@@ -124,6 +124,10 @@ fun EchoNavHost(
                 onSaved = { draftId -> navController.navigateOffRecord(reviewAfterRecord(draftId)) },
                 config = graph.configRepository.get(),
                 resumeDraftId = route.resumeDraftId,
+                // Dismissing the finish form (system back or scrim) leaves for
+                // Home, always: a stopped walk whose draft is on disk must never
+                // trap the user behind a form they did not submit.
+                onAbandon = { navController.popBackStack(EchoRoute.Home, false) },
                 walkStagers = { draftId, liveLog, liveLedger -> graph.walkStager(draftId, mediaTools, liveLog, liveLedger) },
             )
         }

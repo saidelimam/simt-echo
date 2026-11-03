@@ -1,6 +1,7 @@
 package app.simt.echo.ui.screens.record
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
@@ -24,6 +26,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -72,6 +75,18 @@ const val RecordPrestartTag = "RecordPrestart"
 const val RecordHeadingTag = "RecordHeading"
 const val RecordOptInTag = "RecordOptIn"
 
+/** Live-path panel width: a compact instrument, not a full-width band. */
+private val TrailPanelWidth = 150.dp
+
+/** Compact panel height: a corner instrument, well clear of the action row. */
+private val TrailPanelHeight = 112.dp
+
+/** Top inset: 8 dp below the "Great view captured" banner, clear of the chips row. */
+private val TrailPanelTop = 112.dp
+
+/** End inset: the same 20 dp breathing room the panel keeps from the corner. */
+private val TrailPanelEnd = 20.dp
+
 /**
  * Record screen (plan §8.3 / W8-07): personal-orrery grammar (Cosmos §6.3).
  * The camera is the instrument and owns the first read — the preview fills
@@ -96,6 +111,12 @@ fun RecordScreen(
     resumeDraftId: String? = null,
     /** Upload while walking (W11-09); null builds a screen that stages nothing. */
     walkStagers: WalkStagerFactory = WalkStagerFactory { _, _, _ -> null },
+    /**
+     * Leaves the screen (host: back to Home). Wired to the finish sheet's
+     * dismiss so system back can never strand the walk on a dead form: the
+     * stopped draft stays on disk and Home lists it under interrupted drafts.
+     */
+    onAbandon: () -> Unit = {},
 ) {
     val motion = rememberMotionSource()
     // Record graph: Preview + Video + Analysis (plan W10-03); the bind
@@ -174,6 +195,7 @@ fun RecordScreen(
             onSave = { name, destination ->
                 viewModel.finish(name, destination, onSaved)
             },
+            onAbandon = onAbandon,
             readyOptIn = readyOptIn,
             onOptInChange = viewModel::setReadyOptIn,
             onGrantConsent = viewModel::grantReadyConsent,
@@ -204,6 +226,8 @@ internal fun RecordInstrument(
     onBeginFinish: () -> Unit,
     onSave: (String, String) -> Unit,
     modifier: Modifier = Modifier,
+    /** Leaves the screen when the finish form is dismissed; never a no-op in production. */
+    onAbandon: () -> Unit = {},
     walk: EchoWalkSnapshot = EchoWalkSnapshot(),
     onHighlightExpired: () -> Unit = {},
     preview: @Composable () -> Unit = {},
@@ -219,10 +243,22 @@ internal fun RecordInstrument(
         // action zone stays on top; none consume input or semantics beyond
         // their documented tags.
         StepRipples(ripples = walk.ripples)
+        // Live path (W13-04): a compact top-end panel over the preview. It
+        // used to sit bottom-centre, directly behind the Mark spot/Finish
+        // row, so the trail was the one thing a walk never showed. The wash
+        // carries it over the camera in both schemes — no outline anywhere,
+        // matching the rest of the surface grammar.
         TrailRibbon(
             trail = walk.trail,
             headYaw = headingRad,
-            modifier = Modifier.align(Alignment.BottomCenter),
+            height = TrailPanelHeight,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = TrailPanelTop, end = TrailPanelEnd)
+                .width(TrailPanelWidth)
+                .clip(MaterialTheme.shapes.large)
+                .background(MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.55f))
+                .padding(horizontal = 6.dp, vertical = 4.dp),
         )
         LedgerBrackets(highlight = walk.highlight, onExpired = onHighlightExpired)
         Column(
@@ -277,7 +313,7 @@ internal fun RecordInstrument(
         }
     }
     if (state == CaptureState.FINISHING || state == CaptureState.SAVED) {
-        FinishSheet(onSave = onSave)
+        FinishSheet(onSave = onSave, onDismiss = onAbandon)
     }
     if (readyOptIn.consentPending) {
         ReadyConsentSheet(
@@ -423,20 +459,26 @@ internal fun formatHeadingTick(yawRad: Double): String {
 
 /**
  * Finish sheet on the shared canopy surface: route name + destination,
- * one Continue. Back/scrim dismiss is a no-op on purpose — the walk is
- * already stopped, so the sheet is the only forward path; leaving the
- * screen abandons it like the pre-Cosmos inline form did.
+ * one Continue.
+ *
+ * Back and scrim both route to [onDismiss], which leaves the screen. It
+ * used to be a deliberate no-op, and because a modal sheet owns the back
+ * gesture that made system back dead: the walk was stopped, the form was
+ * the only forward path, and nothing could dismiss it — the screen was
+ * stuck. Leaving is the honest exit: the stopped draft is already on disk,
+ * so Home lists it under interrupted drafts and the walk is recoverable.
  */
 @Composable
 internal fun FinishSheet(
     onSave: (String, String) -> Unit,
     modifier: Modifier = Modifier,
+    onDismiss: () -> Unit = {},
 ) {
     var name by remember { mutableStateOf("") }
     var destination by remember { mutableStateOf("") }
     CosmosSheet(
         title = "Name this walk",
-        onDismiss = {},
+        onDismiss = onDismiss,
         primaryLabel = "Continue",
         onPrimary = { onSave(name, destination) },
         modifier = modifier,

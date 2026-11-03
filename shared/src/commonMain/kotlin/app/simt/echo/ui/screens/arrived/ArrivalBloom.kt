@@ -28,6 +28,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlin.math.cos
 import kotlin.math.sin
+import kotlin.time.Duration.Companion.milliseconds
 
 // Arrival bloom (plan W13-11, luminous-freeze §4 "bloom"): the success
 // state's mark. Signal: arriving. FULL blooms the disc on the expressive
@@ -58,7 +59,7 @@ internal fun ArrivalBloom(
                 async { bloom.animateTo(1f, LuminousSprings.spatialExpressive()) },
                 async { rays.animateTo(1f, tween(700, easing = CosmosMotionEasings.Enter)) },
                 async {
-                    delay(220)
+                    delay(220.milliseconds)
                     check.animateTo(1f, tween(420, easing = CosmosMotionEasings.Transform))
                 },
             ).awaitAll()

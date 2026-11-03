@@ -38,6 +38,15 @@ class TrialRepository(private val store: FileStore) {
     }
 
     /**
+     * How many files Delete all would remove here: trials plus everything
+     * under `exports/`. Read by Settings so the destructive row can be
+     * disabled when there is nothing to erase, without parsing every trial.
+     */
+    fun deletableFileCount(): Int =
+        store.list(TRIALS_DIR).count { it.name.endsWith(".json") } +
+            store.list(FileStore.EXPORTS_DIR).size
+
+    /**
      * Deletes every trial (W8-11 Delete all). Returns how many were removed.
      */
     fun deleteAll(): Int {

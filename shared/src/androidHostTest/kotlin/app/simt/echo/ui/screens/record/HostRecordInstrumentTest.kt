@@ -8,6 +8,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -227,6 +228,42 @@ class HostRecordInstrumentTest {
         compose.onNodeWithText("Continue").performClick()
         compose.waitForIdle()
         assertEquals("Evening stroll" to "Park loop", saved)
+    }
+
+    /**
+     * Regression: the finish form could not be dismissed at all. Its scrim and
+     * system back (the same ModalBottomSheet dismiss path this test drives) ran
+     * a deliberate no-op, so a stopped walk sat on a form no gesture could
+     * close — a stuck screen. Dismiss must leave.
+     */
+    @Test
+    fun finishing_dismissLeavesInsteadOfStrandingTheWalk() {
+        var abandoned = 0
+        compose.setContent {
+            EchoTheme(darkTheme = true) {
+                RecordInstrument(
+                    state = CaptureState.FINISHING,
+                    hud = CaptureHud(distanceM = 23.4, steps = 31, elapsedMs = 65_000L, marks = 1),
+                    headingRad = null,
+                    error = null,
+                    onStart = {},
+                    onMark = {},
+                    onBeginFinish = {},
+                    onSave = { _, _ -> },
+                    onAbandon = { abandoned++ },
+                )
+            }
+        }
+        compose.waitForIdle()
+        compose.onNodeWithText("Name this walk").assertIsDisplayed()
+
+        // Dragging the sheet away is the same dismiss path the system back
+        // gesture feeds (ModalBottomSheet.onDismissRequest). Before the fix
+        // that dismiss was a no-op, so the form could not be closed at all.
+        compose.onNodeWithTag(CosmosSheetTag).performTouchInput { swipeDown() }
+        compose.waitForIdle()
+
+        assertEquals(1, abandoned, "dismissing the finish form must leave the screen")
     }
 
     @Test

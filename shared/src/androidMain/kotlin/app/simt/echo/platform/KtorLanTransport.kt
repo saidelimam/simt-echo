@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
 import java.net.Inet4Address
 import java.net.NetworkInterface
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * LAN [PeerTransport] (plan W2-03): the sealed bundle is served once over
@@ -103,7 +104,7 @@ class KtorLanTransport(
                     downloads.tryEmit(Unit)
                     downloadGenerations.tryEmit(generation)
                     scope.launch {
-                        delay(afterDownloadStopMs)
+                        delay(afterDownloadStopMs.milliseconds)
                         handle.server?.let(::stopIfCurrent)
                     }
                 }
@@ -115,7 +116,7 @@ class KtorLanTransport(
             serverGeneration = generation
         }
         scope.launch {
-            delay(offerLifetimeMs)
+            delay(offerLifetimeMs.milliseconds)
             stopIfCurrent(started)
         }
         // A failed offer must close the server it already started: a host

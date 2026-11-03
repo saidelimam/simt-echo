@@ -38,6 +38,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
+import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.launch
 
 /**
@@ -232,7 +233,7 @@ class NavigateViewModel(
         if (heartbeat != null) return
         heartbeat = viewModelScope.launch {
             while (isActive) {
-                delay(DistanceHeartbeat.intervalMs(heartbeatRemainingM))
+                delay(DistanceHeartbeat.intervalMs(heartbeatRemainingM).milliseconds)
                 haptics.play(HapticPattern.TICK)
             }
         }

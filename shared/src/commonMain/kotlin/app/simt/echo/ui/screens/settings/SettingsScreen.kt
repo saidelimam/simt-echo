@@ -225,9 +225,12 @@ fun SettingsScreen(
                                 text = "Removes routes, drafts, trials and exported files from this phone.",
                                 style = MaterialTheme.typography.bodyMedium,
                             )
+                            // Nothing to erase, nothing to offer: enabled
+                            // only while at least one item survives.
                             CosmosDestructiveButton(
                                 label = "Delete all",
                                 onClick = { confirmDelete = true },
+                                enabled = ui.canDeleteAll,
                             )
                             ui.deleteNote?.let { Text(text = it) }
                         }

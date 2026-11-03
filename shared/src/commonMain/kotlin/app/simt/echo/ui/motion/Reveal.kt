@@ -12,6 +12,7 @@ import app.simt.echo.ui.atmosphere.CosmosMotionDurations
 import app.simt.echo.ui.atmosphere.CosmosMotionTier
 import app.simt.echo.ui.atmosphere.cosmosMotionTier
 import kotlinx.coroutines.delay
+import kotlin.time.Duration.Companion.milliseconds
 
 // listReveal motif (Cosmos freeze §7, Luminous §3): records arrive one
 // after another, rising a few dp on the spatialDefault spring. Signal: the
@@ -40,7 +41,7 @@ fun Modifier.revealOnEnter(index: Int): Modifier {
             CosmosMotionTier.STATIC -> progress.snapTo(1f)
             CosmosMotionTier.REDUCED -> progress.animateTo(1f, tween(CosmosMotionDurations.FEEDBACK_MS))
             CosmosMotionTier.FULL -> {
-                delay(revealDelayMs(index))
+                delay(revealDelayMs(index).milliseconds)
                 progress.animateTo(1f, LuminousSprings.spatialDefault())
             }
         }

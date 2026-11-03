@@ -284,6 +284,49 @@ class SettingsViewModelTest {
         assertEquals("Nothing to delete.", vm.ui.value.deleteNote)
     }
 
+    /**
+     * Delete all is a promise to erase something: over an empty store the
+     * row stays disabled, and it disables itself once a delete empties it.
+     */
+    @Test
+    fun deleteAllStaysDisabledUntilThereIsSomethingToErase() {
+        val empty = fullVm()
+        assertEquals(0, empty.ui.value.deletableItems)
+        assertFalse(empty.ui.value.canDeleteAll, "an empty store offers nothing to delete")
+
+        drafts.saveCapture(
+            CaptureLog(
+                draftId = "d1",
+                startedAtEpochMs = 1L,
+                motionSource = "echo_builtin_pdr",
+                videoStartNs = 2L,
+                samples = emptyList(),
+                marks = emptyList(),
+                startPhoto = "start.jpg",
+            ),
+        )
+        val vm = fullVm()
+        assertEquals(1, vm.ui.value.deletableItems)
+        assertTrue(vm.ui.value.canDeleteAll, "a saved draft is something to delete")
+
+        vm.deleteAll()
+
+        assertEquals(0, vm.ui.value.deletableItems)
+        assertFalse(vm.ui.value.canDeleteAll, "nothing is left, so nothing may be offered")
+    }
+
+    /** Trial and exported files count too: Delete all erases both. */
+    @Test
+    fun deleteAllCountsTrialsAndExportedFiles() {
+        trials.save(trial("t1"))
+        store.writeText("exports/trials.csv", "a")
+
+        val vm = fullVm()
+
+        assertEquals(2, vm.ui.value.deletableItems)
+        assertTrue(vm.ui.value.canDeleteAll)
+    }
+
     @Test
     fun visualAssistDefaultsOffAndPersistsWhenToggled() {
         val vm = vm()
