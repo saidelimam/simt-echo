@@ -344,6 +344,26 @@ class ReceivePairingViewModelTest {
     }
 
     @Test
+    fun aTapTimeoutSaysNoTapYetAndStopsPolling() = runTest(dispatcher) {
+        // W20-05 accept: 20 s without a completed invitation stops polling and
+        // leaves QR recovery behind; it never re-arms itself in a loop.
+        val rig = rig()
+        val pairing = FakeNfcPairingController(NfcCapabilities(canRead = true, enabled = true))
+        val vm = viewModel(rig, pairing)
+        advanceUntilIdle()
+        vm.selectMethod(PairingMethod.NFC)
+        advanceUntilIdle()
+
+        pairing.emit(NfcEvent.ReadFailed(vm.ui.value.generation.toLong(), PairingFailure.Timeout))
+        advanceUntilIdle()
+
+        assertEquals(PairingFailure.Timeout, vm.ui.value.pairingFailure)
+        assertFalse(vm.ui.value.nfcListening, "a timed-out tap stops polling")
+        assertNull(vm.ui.value.error, "no tap yet is a status, not an error page")
+        assertEquals(0, rig.transport.fetches)
+    }
+
+    @Test
     fun aNewerSchemaFailsBeforeSave() = runTest(dispatcher) {
         val rig = rig()
         val future = Fixtures.L_ROUTE.copy(routeId = "future", schemaVersion = EchoSchemaVersion.CURRENT + 1)

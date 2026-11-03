@@ -18,11 +18,12 @@ agreeing with itself, not a radio delivering bytes.
 | Reader reassembly, cancellation, timeouts, one connection at a time | `NfcReaderTest` (10) |
 | Presenter publication gating (foreground, expiry, AID) | `NfcPresenterTest` (9), `NfcManifestTest` (4) |
 | Offer session ownership and cancellation | `OfferSessionTest` (7), `TransferCancellationTest` (8) |
-| Share state machine: default NFC, method switch, generation evidence | `SharePairingViewModelTest` (11), `ShareViewModelTest` (21) |
-| Receive state machine: default QR, single-flight attempt, one Save | `ReceivePairingViewModelTest` (14), `ReceiveViewModelTest` (16) |
+| Share state machine: default NFC, method switch, generation evidence | `SharePairingViewModelTest` (12), `ShareViewModelTest` (21) |
+| Receive state machine: default QR, single-flight attempt, one Save | `ReceivePairingViewModelTest` (20), `ReceiveViewModelTest` (17) |
 | Selector semantics, 48 dp targets, 200 % text, RTL, recovery | `PairingAccessibilityTest` (8) |
-| Method surfaces, one-action switch, no camera in NFC | `PairingModesUiTest` (5) |
-| **End to end**: presenter → reader → `TransferService` → `BundleCodec` → saved route, including a golden transcript decoded independently, a cut at every chunk, offer replacement mid-read, expiry, background refusal, callback storm, stale stop, wrong key, malformed corpus | `NfcTransferIntegrationTest` (10) |
+| Method surfaces, one-action switch, no camera in NFC (incl. camera permission denied) | `PairingModesUiTest` (6) |
+| Long Unicode name still decodes from the rendered QR, with the sigil | `ShareQrScanTest` (4) |
+| **End to end**: presenter → reader → `TransferService` → `BundleCodec` → saved route, including a golden transcript decoded independently, a cut at every chunk, offer replacement mid-read, expiry, background refusal, callback storm, stale stop, wrong key, malformed corpus | `NfcTransferIntegrationTest` (11) |
 | No capability in any representation; mutation corpus cannot widen a field | `PairingSecurityTest` (5) |
 | Export semantics and codec untouched by this feature | `ExportSelectionTest` (15), `BundleCodecTest` (18) |
 
@@ -39,12 +40,14 @@ production repository.
    owns that, and it cannot be closed by any host test. Until then the feature
    must not be described as verified on hardware.
 2. **No iOS review.** NFC is unsupported on iOS by design (all capabilities
-   false, `Unsupported` failures, copy says so). The iOS half of the W21-03 gate
-   could not even be compiled: `capture/visual/ParallaxProfiler.kt` (from
-   `2d008dc`, untouched here) uses JVM-only `synchronized`/`sortedSetOf` in
-   `commonMain`. That is a pre-existing break on main, not a finding about this
-   feature, but it means "iOS still compiles" is currently unproven for every
-   slice, not just this one.
+   false, `Unsupported` failures, copy says so). iOS compilation is now proven
+   (`:shared:compileKotlinIosArm64` and `:shared:compileKotlinIosSimulatorArm64`
+   pass), which required two fixes: `capture/visual/ParallaxProfiler.kt` used the
+   JVM-only `synchronized`/`sortedSetOf` in `commonMain` (now a multiplatform
+   lock and a sorted list), and `ApduStatusException` overrode the JVM-only
+   `fillInStackTrace`. Stack-trace suppression is therefore gone; the status
+   exception still renders only a status number, which is what
+   `PairingSecurityTest` now asserts.
 3. **Lifecycle on hardware.** Pause/resume wiring is covered by state-machine
    tests and code read (`PairingLifecycle`, controller lifecycle in
    `NfcPairing.android.kt`), not by a device moving between apps, a locked

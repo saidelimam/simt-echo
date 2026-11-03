@@ -1,5 +1,7 @@
 package app.simt.echo.ui.screens
 
+import android.Manifest
+import android.app.Application
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
@@ -44,6 +46,8 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows
 import org.robolectric.annotation.Config
 import java.nio.file.Files
 import kotlin.coroutines.EmptyCoroutineContext
@@ -195,6 +199,32 @@ class PairingModesUiTest {
         // plan 0005 §1: the configured relay cannot carry another install's
         // route, so no upload is ever offered.
         compose.onNodeWithText("Use internet relay").assertDoesNotExist()
+    }
+
+    @Test
+    fun receiveByTapNeedsNoCameraPermission() {
+        val app = RuntimeEnvironment.getApplication()
+        Shadows.shadowOf(app as Application).denyPermissions(Manifest.permission.CAMERA)
+
+        compose.setContent {
+            EchoTheme(darkTheme = true) {
+                ReceiveScreen(
+                    service = receiveService(),
+                    sharing = QuietSharing(),
+                    onImported = {},
+                    pairing = ReadyNfc(NfcCapabilities(canRead = true, canPresent = true, enabled = true)),
+                )
+            }
+        }
+
+        // W21-02: the camera gate wraps QR capture only. Choosing a tap with
+        // the permission denied must render the panel, not ask for the camera.
+        compose.onNodeWithTag(PairingMethodNfcTag).performScrollTo().performClick()
+        awaitTag(NfcTapPanelTag)
+
+        compose.onNodeWithTag(NfcTapPanelTag).assertIsDisplayed()
+        compose.onNodeWithTag(ReceiveScannerTag).assertDoesNotExist()
+        compose.onNodeWithText("Ready to receive a tap").assertIsDisplayed()
     }
 
     @Test

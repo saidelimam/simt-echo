@@ -11,6 +11,8 @@ import app.simt.echo.model.withPerception
 import app.simt.echo.platform.MotionUpdate
 import kotlin.concurrent.Volatile
 import kotlin.io.encoding.Base64
+import kotlinx.atomicfu.locks.SynchronizedObject
+import kotlinx.atomicfu.locks.synchronized
 import kotlin.math.abs
 import kotlin.math.ln
 import kotlin.math.pow
@@ -45,7 +47,9 @@ class ParallaxProfiler(
 
     private class RawStrip(val distanceM: Double, val bytes: ByteArray)
 
-    private val lock = Any()
+    // Multiplatform monitor: `synchronized` alone is JVM-only, and this
+    // class lives in commonMain so the iOS source set must compile it.
+    private val lock = SynchronizedObject()
     private val buckets = ArrayList<Bucket>()
     private val rawStrips = ArrayList<RawStrip>()
     private val level120 = LumaView(LEVEL_WIDTH, LEVEL_HEIGHT)
@@ -236,7 +240,9 @@ class ParallaxProfiler(
 
     private fun selectStripsLocked(nodeDistancesM: List<Double>, maxRouteM: Double): List<ViewStrip> {
         if (rawStrips.isEmpty()) return emptyList()
-        val desiredDistances = sortedSetOf<Double>()
+        // Common Kotlin has no sorted set: collect, then iterate the
+        // ascending distinct order `sortedSetOf` gave us.
+        val desiredDistances = ArrayList<Double>()
         var d = 0.0
         val limitM = maxOf(maxRouteM, rawStrips.maxOf { it.distanceM })
         while (d <= limitM + 1e-6) {
@@ -254,7 +260,7 @@ class ParallaxProfiler(
 
         val chosen = ArrayList<ViewStrip>()
         var lastDist = -1.0
-        for (target in desiredDistances) {
+        for (target in desiredDistances.sorted().distinct()) {
             val nearest = rawStrips.minByOrNull { abs(it.distanceM - target) } ?: continue
             if (abs(nearest.distanceM - target) > STRIP_STEP_M * 0.75 && rawStrips.size > 1) continue
             val emitDist = if (target > lastDist) target else nearest.distanceM

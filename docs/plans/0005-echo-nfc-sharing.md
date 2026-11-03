@@ -146,16 +146,16 @@ Use `simt slice start <ID>` from this tracker before implementation, `simt why <
 
 | ID | State | Independently reviewable slice | Depends on | Owner / completion evidence |
 |---|---|---|---|---|
-| W20-01 | Complete | Pairing modes, capabilities, failures and platform seam | — | simt-echo · — |
-| W20-02 | Complete | Bounded shared invitation validation and NFC wire protocol | W20-01 | simt-echo · — |
-| W20-03 | Complete | Generation-safe transfer sessions and cancellation | W20-02 | simt-echo · — |
-| W20-04 | Complete | Android foreground NFC presenter, registry and manifest | W20-01, W20-02, W20-03 | simt-echo · — |
-| W20-05 | Complete | Android NFC reader with bounded cancellable exchange | W20-04 | simt-echo · — |
-| W21-01 | Complete | Share state machine, NFC default and mode switching | W20-03, W20-04 | simt-echo · — |
-| W21-02 | Complete | Receive state machine, QR default and unified import | W20-03, W20-05 | simt-echo · — |
-| W21-03 | Complete | Complete Cosmos UI, resources, accessibility and navigation wiring | W21-01, W21-02 | simt-echo · — |
-| W21-04 | Complete | End-to-end compatibility, security and adversarial regressions | W21-03 | simt-echo · — |
-| W21-05 | Queued | Real-device qualification and feature release evidence | W21-04 | simt-echo · — |
+| W20-01 | Complete | Pairing modes, capabilities, failures and platform seam | — | simt-echo · `9642e33`; `:shared:testAndroidHostTest --tests app.simt.echo.transfer.PairingPolicyTest` 9 pass; iOS arm64 + simulator compile |
+| W20-02 | Complete | Bounded shared invitation validation and NFC wire protocol | W20-01 | simt-echo · `5c8f767`; `QrPayloadTest` 9 + `PairingInvitationTest` 10 + `NfcApduProtocolTest` 16 pass |
+| W20-03 | Complete | Generation-safe transfer sessions and cancellation | W20-02 | simt-echo · `360ee06`; `OfferSessionTest` 7 + `TransferCancellationTest` 8 + `TransferServiceTest` 17 + `KtorLanSessionTest` 4 pass |
+| W20-04 | Complete | Android foreground NFC presenter, registry and manifest | W20-01, W20-02, W20-03 | simt-echo · `6fe3960`; `NfcPresenterTest` 9 + `NfcManifestTest` 4 pass; `:androidApp:assembleDebug` |
+| W20-05 | Complete | Android NFC reader with bounded cancellable exchange | W20-04 | simt-echo · `b71fadc`; `NfcReaderTest` 10 pass; tap-timeout recovery in `ReceivePairingViewModelTest` (host only — RF unproven) |
+| W21-01 | Complete | Share state machine, NFC default and mode switching | W20-03, W20-04 | simt-echo · `ceb9e4a`; `SharePairingViewModelTest` 12 + `ShareViewModelTest` 21 pass |
+| W21-02 | Complete | Receive state machine, QR default and unified import | W20-03, W20-05 | simt-echo · `2442ffb`; `ReceivePairingViewModelTest` 20 + `ReceiveViewModelTest` 17 pass |
+| W21-03 | Complete | Complete Cosmos UI, resources, accessibility and navigation wiring | W21-01, W21-02 | simt-echo · `48c9283`; `PairingModesUiTest` 6 + `PairingAccessibilityTest` 8 + `ShareQrScanTest` 4 + `SharePerceptionDisclosureUiTest` 4 + `ProcessingShareReceiveCosmosTest` 3 pass; iOS arm64 + simulator compile; `:androidApp:assembleDebug` |
+| W21-04 | Complete | End-to-end compatibility, security and adversarial regressions | W21-03 | simt-echo · `6d888d7`; `NfcTransferIntegrationTest` 11 + `PairingSecurityTest` 5 + `ExportSelectionTest` 15 + `BundleCodecTest` 18 pass |
+| W21-05 | Queued | Real-device qualification and feature release evidence | W21-04 | simt-echo · blocked: no Android hardware in the loop; `docs/testing/nfc-sharing.md` has no result rows yet |
 
 ### W20-01 — freeze a testable platform seam
 

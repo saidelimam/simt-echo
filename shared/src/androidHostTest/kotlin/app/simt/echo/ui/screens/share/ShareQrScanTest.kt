@@ -10,6 +10,7 @@ import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import app.simt.echo.Fixtures
+import app.simt.echo.transfer.QrPayload
 import app.simt.echo.ui.sigil.SigilColors
 import app.simt.echo.ui.sigil.SigilPainter
 import app.simt.echo.ui.sigil.routeSigil
@@ -81,6 +82,26 @@ class ShareQrScanTest {
     @Test
     fun shareQrWithTheSigilLogoStillScans() {
         assertEquals(uri, decode(render(QrCodePainter(uri, shareQrOptions(logo = sigilLogo())))))
+    }
+
+    @Test
+    fun aLongUnicodeNameStillScans() {
+        // W21-03: the code must still read back with the longest name the
+        // 40-character contract allows, with its sigil, not only ASCII.
+        val name = "Café 圖書館 🏛️ 三樓梯間轉角 🚀 ok"
+        val payload = QrPayload(
+            host = "192.168.43.17",
+            port = 48217,
+            token = ByteArray(16) { (it + 1).toByte() },
+            key = ByteArray(32) { (it + 1).toByte() },
+            sha8Hex = "f3a9c2d1e0b74658",
+            name = name,
+        ).build()
+
+        val decoded = decode(render(QrCodePainter(payload, shareQrOptions(logo = sigilLogo())), px = 900), px = 900)
+
+        assertEquals(payload, decoded)
+        assertEquals(name, QrPayload.parse(decoded).getOrThrow().name)
     }
 
     @Test

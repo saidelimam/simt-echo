@@ -53,6 +53,9 @@ kotlin {
             // are built in composition (see EchoFonts.kt).
             implementation(compose.components.resources)
             implementation(libs.kotlinx.coroutines.core)
+            // W17 parallax capture holds a monitor from commonMain; the
+            // `locks` API is the multiplatform `synchronized`.
+            implementation(libs.kotlinx.atomicfu)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.okio)
             // Navigation shell (W0-03) and per-screen ViewModels. These are

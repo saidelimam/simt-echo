@@ -10,6 +10,9 @@ androidx-navigationCompose = "2.9.2"
 compose-multiplatform = "1.12.0"
 kotlin = "2.4.21"
 kotlinx-coroutines = "1.10.2"
+# Multiplatform lock: commonMain capture code holds a real monitor on JVM
+# and a platform lock on native (`synchronized` is JVM-only).
+kotlinx-atomicfu = "0.33.0"
 kotlinx-serialization = "1.10.0"
 okio = "3.16.0"
 ktor = "3.2.3"
@@ -47,6 +50,7 @@ androidx-navigation-compose = { group = "org.jetbrains.androidx.navigation", nam
 
 # Coroutines / serialization
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
+kotlinx-atomicfu = { group = "org.jetbrains.kotlinx", name = "atomicfu", version.ref = "kotlinx-atomicfu" }
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
 

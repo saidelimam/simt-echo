@@ -129,12 +129,10 @@ data class SelectResponse(
 }
 
 /**
- * A protocol status, which is never secret. The stack trace is suppressed:
- * the caller maps the status to a typed failure and no message is shown.
+ * A protocol status, which is never secret. The caller maps the status to a
+ * typed failure and no message is shown.
  */
-class ApduStatusException(val status: Int) : Exception("APDU status ${status.toString(16)}") {
-    override fun fillInStackTrace(): Throwable = this
-}
+class ApduStatusException(val status: Int) : Exception("APDU status ${status.toString(16)}")
 
 /**
  * One immutable published offer as the APDU service sees it (plan 0005
