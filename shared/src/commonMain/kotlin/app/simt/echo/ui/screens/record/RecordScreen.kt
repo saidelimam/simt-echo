@@ -111,6 +111,12 @@ fun RecordScreen(
     resumeDraftId: String? = null,
     /** Upload while walking (W11-09); null builds a screen that stages nothing. */
     walkStagers: WalkStagerFactory = WalkStagerFactory { _, _, _ -> null },
+    /**
+     * Leaves the screen (host: back to Home). Wired to the finish sheet's
+     * dismiss so system back can never strand the walk on a dead form: the
+     * stopped draft stays on disk and Home lists it under interrupted drafts.
+     */
+    onAbandon: () -> Unit = {},
 ) {
     val motion = rememberMotionSource()
     // Record graph: Preview + Video + Analysis (plan W10-03); the bind
@@ -189,6 +195,7 @@ fun RecordScreen(
             onSave = { name, destination ->
                 viewModel.finish(name, destination, onSaved)
             },
+            onAbandon = onAbandon,
             readyOptIn = readyOptIn,
             onOptInChange = viewModel::setReadyOptIn,
             onGrantConsent = viewModel::grantReadyConsent,
@@ -219,6 +226,8 @@ internal fun RecordInstrument(
     onBeginFinish: () -> Unit,
     onSave: (String, String) -> Unit,
     modifier: Modifier = Modifier,
+    /** Leaves the screen when the finish form is dismissed; never a no-op in production. */
+    onAbandon: () -> Unit = {},
     walk: EchoWalkSnapshot = EchoWalkSnapshot(),
     onHighlightExpired: () -> Unit = {},
     preview: @Composable () -> Unit = {},
@@ -304,7 +313,7 @@ internal fun RecordInstrument(
         }
     }
     if (state == CaptureState.FINISHING || state == CaptureState.SAVED) {
-        FinishSheet(onSave = onSave)
+        FinishSheet(onSave = onSave, onDismiss = onAbandon)
     }
     if (readyOptIn.consentPending) {
         ReadyConsentSheet(
@@ -450,20 +459,26 @@ internal fun formatHeadingTick(yawRad: Double): String {
 
 /**
  * Finish sheet on the shared canopy surface: route name + destination,
- * one Continue. Back/scrim dismiss is a no-op on purpose — the walk is
- * already stopped, so the sheet is the only forward path; leaving the
- * screen abandons it like the pre-Cosmos inline form did.
+ * one Continue.
+ *
+ * Back and scrim both route to [onDismiss], which leaves the screen. It
+ * used to be a deliberate no-op, and because a modal sheet owns the back
+ * gesture that made system back dead: the walk was stopped, the form was
+ * the only forward path, and nothing could dismiss it — the screen was
+ * stuck. Leaving is the honest exit: the stopped draft is already on disk,
+ * so Home lists it under interrupted drafts and the walk is recoverable.
  */
 @Composable
 internal fun FinishSheet(
     onSave: (String, String) -> Unit,
     modifier: Modifier = Modifier,
+    onDismiss: () -> Unit = {},
 ) {
     var name by remember { mutableStateOf("") }
     var destination by remember { mutableStateOf("") }
     CosmosSheet(
         title = "Name this walk",
-        onDismiss = {},
+        onDismiss = onDismiss,
         primaryLabel = "Continue",
         onPrimary = { onSave(name, destination) },
         modifier = modifier,
