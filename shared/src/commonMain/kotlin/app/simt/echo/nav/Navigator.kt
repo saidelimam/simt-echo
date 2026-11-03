@@ -15,6 +15,8 @@ import app.simt.echo.model.TurnDir
 import app.simt.echo.model.defaultCue
 import app.simt.echo.nav.ghost.GhostFilter
 import app.simt.echo.nav.ghost.HitDebounce
+import app.simt.echo.nav.ghost.DepthSignatureMatch
+import app.simt.echo.nav.ghost.DepthSignatureTracker
 import app.simt.echo.nav.ghost.FingerprintHit
 import app.simt.echo.nav.ghost.FixGate
 import app.simt.echo.nav.ghost.FingerprintPrompt
@@ -201,6 +203,15 @@ class Navigator(
     private var lastMagMatchBucket: Int = -1
     private val magFixGate = FixGate()
 
+    /**
+     * Live depth-profile signature (W17-04): accumulates (ρ, s_odometer)
+     * buckets from visual ego frames and matches against the route's
+     * ParallaxProfile by DTW (including as a fourth Relock source).
+     */
+    private val depthTracker = DepthSignatureTracker()
+    private var lastDepthMatchBucket: Int = -1
+    private val depthFixGate = FixGate()
+
     /** Raw yaws seen on the current leg, for the wrong-start rule. */
     private val legYaws = mutableListOf<Double>()
 
@@ -259,6 +270,8 @@ class Navigator(
         missedStepSigmaBonusM = 0.0
         missedStepSuspectCount = 0
         viewFixMatcher.reset()
+        depthTracker.reset()
+        lastDepthMatchBucket = -1
         turnDetector.reset()
         yawTrail.clear()
         legYaws.clear()
@@ -507,6 +520,8 @@ class Navigator(
             }
             strideLearner.observeVisualSpeed(obs.nominalMps, obs.visualMps, obs.sigmaMps)
         }
+        onDepthSignatureUpdate(ego, nominalMps)
+        if (phase == NavPhase.RELOCKING) checkRelockConvergence()
         refresh()
     }
 
@@ -532,8 +547,42 @@ class Navigator(
         ghost?.observe(fix)
         val alpha = (0.45 * fix.confidence01).coerceIn(0.05, 0.50)
         yawOffset = wrapPi(yawOffset - alpha * fix.dHeadingRad)
+        if (phase == NavPhase.RELOCKING) checkRelockConvergence()
         refresh()
         return fix
+    }
+
+    /**
+     * Depth-profile signature update (W17-04): accumulates `ρ = expansionPerSec / nominalMps`
+     * into 0.5 m odometer buckets and matches the last window against the
+     * route's [app.simt.echo.model.ParallaxProfile]. Feeds Relock as a fourth
+     * source after turn signature, fingerprints and magnetic.
+     */
+    private fun onDepthSignatureUpdate(
+        ego: app.simt.echo.capture.visual.VisualEgo,
+        nominalMps: Double,
+    ) {
+        val g = ghost ?: return
+        val parallax = route.perception?.parallax ?: return
+        if (!ego.confidence01.isFinite() || ego.confidence01 < 0.5) return
+        if (!ego.expansionPerSec.isFinite() || ego.expansionPerSec <= 0.0) return
+        val speed = if (nominalMps.isFinite() && nominalMps > 0.15) nominalMps else 1.0
+        val rho = ego.expansionPerSec / speed
+        depthTracker.onSample(dist, rho)
+        val bucket = (dist / app.simt.echo.model.ParallaxProfile.STEP_M).toInt()
+        if (bucket == lastDepthMatchBucket) return
+        lastDepthMatchBucket = bucket
+        val windowM = if (phase == NavPhase.RELOCKING) {
+            (dist - relockStartOdo).coerceIn(DepthSignatureMatch.MIN_RELOCK_QUERY_M, DepthSignatureMatch.QUERY_M)
+        } else {
+            DepthSignatureMatch.QUERY_M
+        }
+        val obsRho = depthTracker.lastWindow(windowM, dist) ?: return
+        DepthSignatureMatch.match(parallax, obsRho, g.meanS, g.sigma)?.let { fix ->
+            if (phase == NavPhase.RELOCKING || depthFixGate.accept(dist, fix.estimatedS)) {
+                g.observe(Observation.Magnetic(fix.estimatedS))
+            }
+        }
     }
 
     fun onFingerprintHit(hit: FingerprintHit) {

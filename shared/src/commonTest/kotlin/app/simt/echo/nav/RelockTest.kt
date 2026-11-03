@@ -1,9 +1,14 @@
 package app.simt.echo.nav
 
 import app.simt.echo.Fixtures
+import app.simt.echo.capture.visual.EgoMotionFit
+import app.simt.echo.capture.visual.ParallaxProfiler
+import app.simt.echo.capture.visual.egoMotionTestFlow
+import app.simt.echo.capture.visual.withParallax
 import app.simt.echo.model.CaptureLog
 import app.simt.echo.model.EchoConfig
 import app.simt.echo.model.NavigatorEngine
+import app.simt.echo.model.ParallaxProfile
 import app.simt.echo.nav.ghost.GhostFilter
 import app.simt.echo.nav.ghost.Observation
 import app.simt.echo.model.TurnDir
@@ -11,8 +16,10 @@ import app.simt.echo.nav.ghost.FingerprintHit
 import app.simt.echo.platform.MotionUpdate
 import app.simt.echo.ui.screens.navigate.NavigateAction
 import app.simt.echo.ui.screens.navigate.navigatePhasePresentation
+import kotlin.io.encoding.Base64
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.exp
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -207,5 +214,65 @@ class RelockTest {
         val signature = doubleArrayOf(0.0, 0.0, 0.0, 0.0, PI / 2, 0.0)
         repeat(6) { filter.observe(Observation.TurnSignature(signature, 1.0)) }
         assertTrue(abs(filter.meanS - 22.0) <= 2.0, "post-signature mean was ${filter.meanS}")
+    }
+
+    @Test
+    fun midRouteDropWithDepthProfileSignatureRelocksWithinSixMetres() {
+        val totalBuckets = (Fixtures.L_ROUTE.totalLengthM / ParallaxProfile.STEP_M).toInt()
+        val rhos = DoubleArray(totalBuckets) { b ->
+            val s = b * ParallaxProfile.STEP_M
+            // Junction opening signature between 16 m and 22 m.
+            val drop = -0.16 * exp(-((s - 18.0) * (s - 18.0)) / 3.5)
+            val rise = 0.14 * exp(-((s - 21.0) * (s - 21.0)) / 2.0)
+            (0.25 + drop + rise).coerceAtLeast(0.05)
+        }
+        val profile = ParallaxProfile(
+            inverseDepth = Base64.encode(ByteArray(totalBuckets) { ParallaxProfiler.quantiseRho(rhos[it]) }),
+            trackability = Base64.encode(ByteArray(totalBuckets) { 220.toByte() }),
+            estimatorId = ParallaxProfiler.DEFAULT_ESTIMATOR_ID,
+            intrinsicsClass = ParallaxProfiler.DEFAULT_INTRINSICS_CLASS,
+        )
+        val route = Fixtures.L_ROUTE.withParallax(profile)
+        val nav = Navigator(
+            route = route,
+            config = EchoConfig(navigatorEngine = NavigatorEngine.GHOST, visualAssist = true),
+            ghostSeed = GhostFilter.DEFAULT_SEED,
+        )
+        val fitter = EgoMotionFit()
+        val updates = updatesOf(walkLog(listOf(20.0 to 0.0, 15.0 to 90.0, 10.0 to 0.0)))
+        nav.onInput(NavInput.Motion(updates[0]))
+        nav.onInput(NavInput.Aligned)
+
+        var i = 1
+        while (i < updates.size && updates[i].distanceM < 15.0) {
+            val u = updates[i]
+            val b = (u.distanceM / ParallaxProfile.STEP_M).toInt().coerceIn(0, rhos.lastIndex)
+            val ego = fitter.fit(egoMotionTestFlow(expansionPerSec = rhos[b]), usability01 = 0.90)
+            nav.onInput(NavInput.Motion(u))
+            nav.onVisualEgo(ego, usability01 = 0.90, nominalMps = 1.0)
+            i++
+        }
+        val lostAt = updates[i].distanceM
+        nav.onInput(NavInput.Lost)
+        assertEquals(NavPhase.RELOCKING, nav.ui.value.phase)
+
+        var lockedAt = -1.0
+        while (i < updates.size) {
+            val u = updates[i]
+            val b = (u.distanceM / ParallaxProfile.STEP_M).toInt().coerceIn(0, rhos.lastIndex)
+            val ego = fitter.fit(egoMotionTestFlow(expansionPerSec = rhos[b]), usability01 = 0.90)
+            nav.onInput(NavInput.Motion(u))
+            nav.onVisualEgo(ego, usability01 = 0.90, nominalMps = 1.0)
+            if (nav.ui.value.phase == NavPhase.WALK) {
+                lockedAt = u.distanceM
+                break
+            }
+            i++
+        }
+        assertTrue(lockedAt >= 0.0, "never relocked")
+        assertTrue(
+            lockedAt - lostAt <= 6.0,
+            "mid-route drop with depth signature must relock within 6 m, took ${lockedAt - lostAt} m",
+        )
     }
 }
