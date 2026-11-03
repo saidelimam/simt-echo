@@ -3,6 +3,7 @@ import type { WorkflowStep as RuntimeWorkflowStep } from "cloudflare:workers";
 import { app } from "./index";
 import { EchoPipeline } from "./pipeline";
 import {
+  CANDIDATE_JSON_SCHEMA,
   CHECKPOINT_JSON_SCHEMA,
   SPARK_JSON_SCHEMA,
   SPARK_MODEL,
@@ -312,6 +313,98 @@ describe("runScout validation", () => {
     expect(userContent[0].text).toContain("Return only JSON");
     // The first message still carries the shared SYSTEM prompt.
     expect((retry.messages[0] as { content: unknown }).content).toBe(SYSTEM);
+  });
+
+  it("keeps the wire cue contract aligned with the validator (non-empty)", () => {
+    // The failed run: llama satisfied a wire schema that allowed `cue: ""`
+    // while zod demanded `min(1)` — one contract, two shapes.
+    expect(CANDIDATE_JSON_SCHEMA.properties.cue).toEqual({ type: "string", minLength: 1 });
+  });
+
+  it("accepts empty cues, synthesizing the direction+landmark directive", async () => {
+    const media = new FakeR2();
+    const jobId = "job-1";
+    seedMedia(media, jobId);
+    const ai = new FakeAI({
+      [LLAMA]: () => ({ response: checkpointResult("n2", [candidate({ cue: "" })]) }),
+    });
+
+    const result = await runScout(envFor(media, ai), jobId, structuredClone(validManifest()) as never);
+
+    expect(result.model).toBe(LLAMA);
+    // n2 is a TURN LEFT: the synthesis follows the SYSTEM prompt's own
+    // cue definition.
+    expect(result.checkpoints[0].candidates[0].cue).toBe("Turn left at the red pillar");
+  });
+
+  it("still falls back when a candidate is unusable beyond its cue", async () => {
+    const media = new FakeR2();
+    const jobId = "job-1";
+    seedMedia(media, jobId);
+    const ai = new FakeAI({
+      // An empty cue alone is synthesized; an empty samPhrase has nothing
+      // to synthesize from — the candidate is genuinely unusable.
+      [LLAMA]: () => ({ response: checkpointResult("n2", [candidate({ cue: "", samPhrase: "" })]) }),
+      [GEMMA]: () => ({ response: checkpointResult() }),
+    });
+
+    const result = await runScout(envFor(media, ai), jobId, structuredClone(validManifest()) as never);
+
+    expect(result.model).toBe(GEMMA);
+  });
+
+  it("sends enable_thinking:false for gemma-4 and nothing for llama", async () => {
+    const media = new FakeR2();
+    const jobId = "job-1";
+    seedMedia(media, jobId);
+    const ai = new FakeAI({
+      [LLAMA]: () => {
+        throw new Error("retryable 500");
+      },
+      [GEMMA]: () => ({ response: checkpointResult() }),
+    });
+
+    const result = await runScout(envFor(media, ai), jobId, structuredClone(validManifest()) as never);
+
+    expect(result.model).toBe(GEMMA);
+    const llama = ai.calls.find((c) => c.model === LLAMA)!;
+    expect("chat_template_kwargs" in (llama.input as object)).toBe(false);
+    const gemma = ai.calls.find((c) => c.model === GEMMA)!;
+    expect((gemma.input as { chat_template_kwargs: unknown }).chat_template_kwargs).toEqual({
+      enable_thinking: false,
+    });
+  });
+
+  it("persists per-model raw and rejection reason when every model fails", async () => {
+    const media = new FakeR2();
+    const jobId = "job-1";
+    seedMedia(media, jobId);
+    const ai = new FakeAI({
+      // A validation failure carries the raw output into the evidence.
+      [LLAMA]: () => ({ response: checkpointResult("n2", [candidate({ cue: "", samPhrase: "" })]) }),
+      // A transport failure carries only the reason.
+      [GEMMA]: () => {
+        throw new Error("retryable 429");
+      },
+    });
+
+    const err = await runScout(envFor(media, ai), jobId, structuredClone(validManifest()) as never).catch(
+      (e) => e,
+    );
+    expect(err).toBeInstanceOf(ScoutError);
+    expect((err as ScoutError).message).toContain("all_models_failed");
+
+    const evidence = JSON.parse(
+      new TextDecoder().decode(media.store.get(`jobs/${jobId}/scout/raw/n2.failed.json`)!),
+    );
+    expect(evidence.nodeId).toBe("n2");
+    expect(evidence.attempts).toHaveLength(2);
+    expect(evidence.attempts[0].model).toBe(LLAMA);
+    expect(evidence.attempts[0].raw.candidates).toHaveLength(1);
+    expect(evidence.attempts[1].model).toBe(GEMMA);
+    expect(evidence.attempts[1].error).toContain("retryable 429");
+    expect("raw" in evidence.attempts[1]).toBe(false);
+    expect(media.store.has(`jobs/${jobId}/scout.json`)).toBe(false);
   });
 
   it("sends ≤ 3 images through the AI Gateway with the strict schema", async () => {

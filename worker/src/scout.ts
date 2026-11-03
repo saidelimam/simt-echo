@@ -27,12 +27,17 @@ export type ScoutErrorCode = (typeof SCOUT_ERROR_CODES)[number];
 
 export class ScoutError extends Error {
   readonly code: ScoutErrorCode;
-  constructor(code: ScoutErrorCode, message: string) {
+  /** Per-model failure evidence on `all_models_failed` (the raw output
+   * where one exists, always the rejection reason); `runScout` persists it
+   * under `scout/raw/<nodeId>.failed.json`. */
+  readonly details?: Array<{ model: string; error: string; raw?: unknown }>;
+  constructor(code: ScoutErrorCode, message: string, details?: ScoutError["details"]) {
     // The code rides in the message: the pipeline persists only messages to
     // error.json, so the typed code stays greppable there too.
     super(`[${code}] ${message}`);
     this.name = "ScoutError";
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -76,7 +81,7 @@ export type ScoutResult = z.infer<typeof ScoutResultSchema>;
  * (whole-job, §7.1) compose from it, so the wire shape cannot drift between
  * providers; zod validates either way.
  */
-const CANDIDATE_JSON_SCHEMA = {
+export const CANDIDATE_JSON_SCHEMA = {
   type: "object",
   properties: {
     title: { type: "string" },
@@ -89,7 +94,10 @@ const CANDIDATE_JSON_SCHEMA = {
     signText: { type: ["string", "null"] },
     ambiguous: { type: "boolean" },
     privacyRisk: { type: "boolean" },
-    cue: { type: "string" },
+    // `minLength: 1` matches `ScoutCandidateSchema.cue` exactly: the wire
+    // contract and the validator are one contract. Models that return `""`
+    // are rescued by cue synthesis (`withCues`), not rejected wholesale.
+    cue: { type: "string", minLength: 1 },
   },
   required: [
     "title",
@@ -177,7 +185,9 @@ export const SPARK_MAX_IMAGES = 48;
 // `jobs/<id>/in/`, scout evidence under `jobs/<id>/scout/`.
 const inputKey = (jobId: string, id: string) => `jobs/${jobId}/in/${id}`;
 const scoutKey = (jobId: string) => `jobs/${jobId}/scout.json`;
-const rawKey = (jobId: string, nodeId: string, attempt: number) =>
+// `attempt` is the success-sequence number, or `"failed"` for the
+// every-model-failed evidence object.
+const rawKey = (jobId: string, nodeId: string, attempt: number | string) =>
   `jobs/${jobId}/scout/raw/${nodeId}.${attempt}.json`;
 
 const DEFAULT_WORKERS_AI_MODELS =
@@ -238,7 +248,13 @@ const workersAiProvider: ScoutProvider = {
     const gateway = env.AI_GATEWAY_ID;
     const timeoutMs = modelTimeoutMs(env);
     let lastError: unknown = null;
+    // Per-model evidence for the `all_models_failed` typed failure: the raw
+    // output where one exists (validation failures) plus always the
+    // rejection reason. `runScout` persists it under
+    // `scout/raw/<nodeId>.failed.json` so a failed job leaves a trace.
+    const attempts: Array<{ model: string; error: string; raw?: unknown }> = [];
     for (const model of models) {
+      let raw: unknown;
       for (let attempt = 0; attempt < 2; attempt++) {
         const withSchema = attempt === 0;
         let out: unknown;
@@ -275,6 +291,7 @@ const workersAiProvider: ScoutProvider = {
                   : {}),
                 max_tokens: 1500,
                 temperature: 0.1,
+                ...thinkingOffKwargs(model),
               },
               { gateway: { id: gateway } },
             ),
@@ -283,6 +300,7 @@ const workersAiProvider: ScoutProvider = {
           );
         } catch (e) {
           lastError = e;
+          attempts.push({ model, error: errorMessage(e) });
           // Only a binding-level rejection of `response_format` earns the
           // no-schema retry (plan §7.2). Parse/validation failures never
           // reach this catch — they are handled below and move straight
@@ -291,18 +309,22 @@ const workersAiProvider: ScoutProvider = {
           continue;
         }
         try {
-          const raw = extractResponse(out);
-          const result = ScoutCheckpointSchema.parse(raw);
+          raw = extractResponse(out);
+          const result = ScoutCheckpointSchema.parse(withCues(raw, checkpoint));
           // An answer for a different checkpoint is invalid output from
           // this model, not a chain failure: fall through to the next one.
           if (result.nodeId !== checkpoint.nodeId) {
-            throw new Error(
+            const err = new Error(
               `workers-ai: model answered for ${result.nodeId}, asked for ${checkpoint.nodeId}`,
             );
+            lastError = err;
+            attempts.push({ model, error: err.message, raw });
+            break;
           }
           return { model, raw, result };
         } catch (e) {
           lastError = e;
+          attempts.push({ model, error: errorMessage(e), ...(raw !== undefined ? { raw } : {}) });
           break;
         }
       }
@@ -310,9 +332,20 @@ const workersAiProvider: ScoutProvider = {
     throw new ScoutError(
       "all_models_failed",
       `workers-ai: every model failed (${models.join(", ") || "no models configured"}): ${errorMessage(lastError)}`,
+      attempts,
     );
   },
 };
+
+/** `chat_template_kwargs` that turns reasoning off, keyed to the model
+ * family that needs it: gemma-4 spends `max_tokens` on thinking before
+ * emitting `content` (live-verified on the failed run: `content: null`,
+ * `finish_reason: "length"` at 1500 tokens). The key is per-model — K2.6
+ * uses `thinking`, llama takes neither — so it is not applied to the whole
+ * chain. */
+function thinkingOffKwargs(model: string): Record<string, unknown> {
+  return /gemma-4/i.test(model) ? { chat_template_kwargs: { enable_thinking: false } } : {};
+}
 
 const PROVIDERS: Record<string, ScoutProvider> = {
   "workers-ai": workersAiProvider,
@@ -465,6 +498,7 @@ export async function metaSparkScout(env: Env, jobId: string, manifest: Manifest
       throw new ScoutError("all_models_failed", `meta-spark: unparseable output: ${errorMessage(e)}`);
     }
   }
+  parsed = withSparkCues(parsed, manifest);
 
   let response: z.infer<typeof SparkResponseSchema>;
   try {
@@ -609,6 +643,70 @@ export function cleanCandidates(
     .slice(0, 2);
 }
 
+/** Fallback cue for a candidate the model returned with an empty `cue`:
+ * the sensor-measured direction + the landmark the model named — the
+ * SYSTEM prompt's own definition of a cue. Synthesizing preserves the rest
+ * of a usable answer instead of rejecting the whole checkpoint into a
+ * typed failure (the wire contract asks for non-empty; models return ""). */
+function synthesizeCue(cp: Pick<Checkpoint, "type" | "turn">, samPhrase: string): string {
+  if (cp.type === "TURN" && cp.turn) return `Turn ${cp.turn.toLowerCase()} at the ${samPhrase}`;
+  return `Look for the ${samPhrase}`;
+}
+
+function fillCue(cand: { cue?: unknown; samPhrase?: unknown }, cp: Pick<Checkpoint, "type" | "turn">): void {
+  const phrase = typeof cand.samPhrase === "string" ? cand.samPhrase.trim() : "";
+  if (phrase !== "" && (typeof cand.cue !== "string" || cand.cue.trim() === "")) {
+    cand.cue = synthesizeCue(cp, phrase);
+  }
+}
+
+/** Fill empty `cue` values in a per-checkpoint raw answer before zod
+ * validation (a no-op for anything that is not the expected shape). */
+function withCues(raw: unknown, cp: Pick<Checkpoint, "type" | "turn">): unknown {
+  if (typeof raw === "object" && raw !== null && Array.isArray((raw as { candidates?: unknown }).candidates)) {
+    for (const cand of (raw as { candidates: unknown[] }).candidates) {
+      if (typeof cand === "object" && cand !== null) fillCue(cand as { cue?: unknown; samPhrase?: unknown }, cp);
+    }
+  }
+  return raw;
+}
+
+/** The same fill for a whole-job raw answer (`{ checkpoints: [...] }`):
+ * each item is matched to its manifest checkpoint for the direction. */
+function withSparkCues(raw: unknown, manifest: Manifest): unknown {
+  if (typeof raw === "object" && raw !== null && Array.isArray((raw as { checkpoints?: unknown }).checkpoints)) {
+    const byNode = new Map(manifest.checkpoints.map((cp) => [cp.nodeId, cp] as const));
+    for (const item of (raw as { checkpoints: unknown[] }).checkpoints) {
+      if (typeof item !== "object" || item === null || !Array.isArray((item as { candidates?: unknown }).candidates)) {
+        continue;
+      }
+      const nodeId = (item as { nodeId?: unknown }).nodeId;
+      const cp = typeof nodeId === "string" ? byNode.get(nodeId) : undefined;
+      if (!cp) continue;
+      for (const cand of (item as { candidates: unknown[] }).candidates) {
+        if (typeof cand === "object" && cand !== null) fillCue(cand as { cue?: unknown; samPhrase?: unknown }, cp);
+      }
+    }
+  }
+  return raw;
+}
+
+/** Raw evidence for a checkpoint whose every model failed: the per-model
+ * raw outputs and rejection reasons under `scout/raw/<nodeId>.failed.json`.
+ * Raw writes exist only on the success path, so without this a failed job
+ * leaves no scout trace in R2. Best-effort: an evidence write must never
+ * mask the typed failure. */
+async function persistFailedRaw(env: Env, jobId: string, nodeId: string, e: ScoutError): Promise<void> {
+  try {
+    await env.MEDIA.put(
+      rawKey(jobId, nodeId, "failed"),
+      JSON.stringify({ nodeId, error: e.message, attempts: e.details ?? [] }),
+    );
+  } catch {
+    // Diagnostic only; the typed failure stands on its own.
+  }
+}
+
 /** True for the Meta transport's retryable (429/5xx) signal: a plain
  * Error the Workflow step is supposed to retry, not a typed failure. */
 function isRetryableMetaError(e: unknown): boolean {
@@ -716,9 +814,11 @@ export async function runScout(
               return { model: attempt.model, result: attempt.result, loaded };
             } catch (e) {
               // all_models_failed is deterministic: every model for this
-              // checkpoint already failed. Retrying the step would re-bill
-              // the same calls, so the step must not retry (R10-04).
+              // checkpoint already failed. Persist the raw evidence, then
+              // make the step non-retryable so a replay re-bills nothing
+              // (R10-04).
               if (e instanceof ScoutError && e.code === "all_models_failed") {
+                await persistFailedRaw(env, jobId, cp.nodeId, e);
                 throw new NonRetryableError(e.message);
               }
               throw e;
