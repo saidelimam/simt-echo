@@ -43,7 +43,7 @@ BLOCK. Tracker rows below are the fix slices; all start `Queued`.
 | R10-09 | Complete | F8 every upload-create scans all staging + all idempotency records: sweep removed from the create path (cron only) or sharded; op-count note in the slice | Medium | uploads | — | fe94dc1c84d9ac1612f7bdf875ecc820fec73e3e · test: npm test |
 | R10-10 | Complete | F9 whole-job media held in memory twice (intake move + lens planning): streamed/lazy media handling; max-size job (80 MB) completes in a local Workers runtime test | Medium | memory | — | 334beabce396e56cc1452d39c53eb6c464016e12 · test: npm test |
 | R10-11 | Complete | F10 idempotency not bound to payload; manifest-only creates; duplicate ids accepted: payload-hash conflict (409), required upload reference, uniqueness refinements + tests | Medium | uploads | — | 33dc6d75ad0a216d0037a2eaed744d9c4f4ac1a0 · test: npm test |
-| R10-12 | In progress | F11 inconsistent error envelope; vendor error text reaches clients: app.onError JSON envelope, sanitized job errors, Retry-After, request ids; contract tests | Medium | api | — |  |
+| R10-12 | Complete | F11 inconsistent error envelope; vendor error text reaches clients: app.onError JSON envelope, sanitized job errors, Retry-After, request ids; contract tests | Medium | api | — | 714149836b37bb5a95050280707e6640febc3a40 · test: npm test |
 | R10-13 | Queued | F12 duplicate in-flight SAM calls; image phase can starve video; legacy ground path: in-flight dedupe by cache key, video-first reservation, legacy removal or explicit keep-decision | Low | lens | — | |
 | R10-14 | Queued | F13 config hygiene (ENV=dev in prod, workers_dev on, health disclosure, SAM box bounds): config diff + a bounds test in samParse | Low | config | — | |
 
