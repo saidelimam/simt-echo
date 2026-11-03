@@ -9,7 +9,7 @@ import {
 } from "./relay";
 import { bearer, seedDevice } from "./testkit";
 
-// R9-01: the bearer is a per-install device key. Two fixed installs prove
+// R10-01: the bearer is a per-install device key. Two fixed installs prove
 // isolation; the minted key in the isolation test proves the entropy path.
 const KEY = "dk_test_install_one";
 const OTHER = "dk_test_install_two";
@@ -33,7 +33,7 @@ class FakeBucket {
       onlyIf?: { etagDoesNotMatch?: string };
     },
   ) {
-    // R9-07: honor R2's create-if-absent guard — the put fails when the
+    // R10-07: honor R2's create-if-absent guard — the put fails when the
     // object exists, which is what the allocation relies on.
     if (options?.onlyIf?.etagDoesNotMatch !== undefined && this.objects.has(key)) {
       throw new Error("R2ConditionalPutFailed");
@@ -89,7 +89,7 @@ async function upload(bucket: FakeBucket, body: Uint8Array, headers = bearer(KEY
 }
 
 describe("W4-05 relay codes", () => {
-  it("generates 8-char codes without ambiguous glyphs (R9-07)", () => {
+  it("generates 8-char codes without ambiguous glyphs (R10-07)", () => {
     let n = 0;
     const code = generateRelayCode(() => (n += 29));
     expect(code).toHaveLength(8);
@@ -97,7 +97,7 @@ describe("W4-05 relay codes", () => {
     expect(code).not.toMatch(/[01IOL]/);
   });
 
-  it("retries allocation on a thrown collision and gives up after 5 (R9-07)", async () => {
+  it("retries allocation on a thrown collision and gives up after 5 (R10-07)", async () => {
     const taken = new Set(["AAAAAAAA", "BBBBBBBB"]);
     const sequence = ["AAAAAAAA", "BBBBBBBB", "CCCCCCCC"];
     let i = 0;
@@ -137,7 +137,7 @@ describe("W4-05 relay endpoints", () => {
     expect(stored!.body).toEqual(sealed);
     expect(new TextDecoder().decode(stored!.body)).not.toContain("routeId");
     expect(stored!.customMetadata?.expiresAt).toBe(String(json.expiresAt));
-    // R9-01: the code is stamped with the minting install's id.
+    // R10-01: the code is stamped with the minting install's id.
     const id = await seedDevice(bucket, KEY);
     expect(stored!.customMetadata?.owner).toBe(id);
   });
@@ -185,7 +185,7 @@ describe("W4-05 relay endpoints", () => {
     expect(bucket.objects.has("relay/ABCDEFGH")).toBe(false);
   });
 
-  it("never overwrites a bundle when two POSTs race the same code (R9-07)", async () => {
+  it("never overwrites a bundle when two POSTs race the same code (R10-07)", async () => {
     const bucket = new FakeBucket();
     const testEnv = await env(bucket);
     const rival = new Uint8Array(64);
@@ -242,7 +242,7 @@ describe("W4-05 relay endpoints", () => {
     expect([...bucket.objects.keys()].filter((k) => k.startsWith("relay/"))).toEqual([]);
   });
 
-  it("keeps a code unreadable to every other install (R9-01)", async () => {
+  it("keeps a code unreadable to every other install (R10-01)", async () => {
     const bucket = new FakeBucket();
     await seedDevice(bucket, OTHER);
     const testEnv = await env(bucket);

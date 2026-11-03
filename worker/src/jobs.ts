@@ -59,7 +59,7 @@ const eventsPrefix = (jobId: string) => `jobs/${jobId}/events/`;
 const eventKey = (jobId: string, id: string) => `jobs/${jobId}/events/${id}.json`;
 
 /** Event id: zero-padded base-36 epoch ms (fixed width) plus the full
- * UUID as tiebreak. No isolate state (R9-08, review 0009 F7): two emits
+ * UUID as tiebreak. No isolate state (R10-08, review 0010 F7): two emits
  * in the same millisecond from two isolates share the timestamp part,
  * and [readJobEvents] orders by that part, so neither can sort before
  * the other's cursor and be skipped on resume. */
@@ -83,7 +83,7 @@ function eventIdTimestamp(id: string): number {
 }
 
 /** Stored events for a job in id (key) order, only those whose timestamp
- * is at least `afterId`'s when given (R9-08, review 0009 F7). Same-
+ * is at least `afterId`'s when given (R10-08, review 0010 F7). Same-
  * timestamp events are included even if the client saw them: the
  * stream's events are additive and the client merges them idempotently,
  * so an event emitted after the client's cursor can never sort before
@@ -146,7 +146,7 @@ export function jobEventStream(
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   let cancelled = false;
-  // R9-08: the timestamp filter re-includes the cursor's millisecond
+  // R10-08: the timestamp filter re-includes the cursor's millisecond
   // bucket on every poll; within one connection the client has already
   // seen those ids, so skip re-sending them. A fresh connection with
   // Last-Event-ID still drains the bucket once — at-least-once across
@@ -208,7 +208,7 @@ export function registerJobsRoutes(app: Hono<AppEnv>): void {
     if ((c.req.header("content-type") ?? "").includes("application/json")) {
       return handleCreateJobV11(c);
     }
-    // R9-05 (F4): the daily cap precedes storage — a halted deployment
+    // R10-05 (F4): the daily cap precedes storage — a halted deployment
     // creates nothing, and the ledger is untouched.
     if (spendDisabled(c.env)) {
       return c.json({ ok: false, error: "spend_disabled" }, 503);
@@ -226,7 +226,7 @@ export function registerJobsRoutes(app: Hono<AppEnv>): void {
     if (!manifest.consent.sendFramesToCloudAi) {
       return c.json({ ok: false, error: "consent_required" }, 400);
     }
-    // R9-11 (review 0009, F10): part names are validated against the
+    // R10-11 (review 0010, F10): part names are validated against the
     // manifest — the old loop silently dropped unknown and duplicate
     // parts. These are client errors, not manifest problems, so they sit
     // outside the parse catch and report their own 400s.
@@ -258,7 +258,7 @@ export function registerJobsRoutes(app: Hono<AppEnv>): void {
     if (totalBytes > MAX_TOTAL_BYTES) {
       return c.json({ ok: false, error: "payload_too_large" }, 413);
     }
-    // R9-05 (F4): reserve the job's worst case before any file lands —
+    // R10-05 (F4): reserve the job's worst case before any file lands —
     // v1 carries no budget, so the hard ceiling is what a job can spend.
     // Over the cap is 503; a contention storm is the handler's 500 —
     // nothing was written.
@@ -278,7 +278,7 @@ export function registerJobsRoutes(app: Hono<AppEnv>): void {
         });
       }
       await c.env.MEDIA.put(manifestKey(jobId), JSON.stringify(manifest));
-      // R9-01: bind the job to the creating install.
+      // R10-01: bind the job to the creating install.
       await writeJobOwner(c.env, jobId, c.get("deviceId"));
       await putProgress(c.env, jobId, "queued");
       await c.env.PIPELINE.create({ id: jobId, params: { jobId } });
@@ -300,7 +300,7 @@ export function registerJobsRoutes(app: Hono<AppEnv>): void {
     }
     const id = c.req.param("id");
     if (!isJobId(id)) return c.json({ ok: false, error: "job_not_found" }, 404);
-    // R9-01: a job of another install is indistinguishable from a missing one.
+    // R10-01: a job of another install is indistinguishable from a missing one.
     if ((await readJobOwner(c.env, id)) !== c.get("deviceId")) {
       return c.json({ ok: false, error: "job_not_found" }, 404);
     }
@@ -343,7 +343,7 @@ export function registerJobsRoutes(app: Hono<AppEnv>): void {
     }
     const id = c.req.param("id");
     if (!isJobId(id)) return c.json({ ok: false, error: "job_not_found" }, 404);
-    // R9-01: a foreign install's stream is a missing job, not a 200 with no
+    // R10-01: a foreign install's stream is a missing job, not a 200 with no
     // data — the events carry the job's route context.
     if ((await readJobOwner(c.env, id)) !== c.get("deviceId")) {
       return c.json({ ok: false, error: "job_not_found" }, 404);
@@ -372,7 +372,7 @@ export function registerJobsRoutes(app: Hono<AppEnv>): void {
     // The id becomes an R2 prefix: `staging` and `idem` are other trees,
     // and an encoded slash would reach into them.
     if (!isJobId(id)) return c.json({ ok: false, error: "invalid_request" }, 400);
-    // R9-01: a job owned by another install is a 404 (no existence leak, no
+    // R10-01: a job owned by another install is a 404 (no existence leak, no
     // cross-install sweep). A job with no owner record is the unknown/legacy
     // case and keeps the idempotent 204.
     const owner = await readJobOwner(c.env, id);

@@ -1,4 +1,4 @@
-# Spend governance (R9-05, review 0009 F4)
+# Spend governance (R10-05, review 0010 F4)
 
 The per-job SAM governor (`worker/src/samLens.ts`) caps one job at
 `budget.maxSamFrames` (hard ceiling 240 frames, `types.ts`). The daily

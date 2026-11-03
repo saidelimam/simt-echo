@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { app } from "./index";
 import { bearer, mintDevice, seedDevice } from "./testkit";
 
-// R9-01: the bearer is a per-install device key resolved against R2.
+// R10-01: the bearer is a per-install device key resolved against R2.
 // Fixed literal keys stand in for minted ones wherever a test asserts
 // identity; mintDevice() exercises the real entropy path.
 
@@ -34,7 +34,7 @@ function envFor(media: FakeR2, rl?: { limit: (args: { key: string }) => Promise<
   return { MEDIA: media, ...(rl ? { RL: rl } : {}) } as never;
 }
 
-describe("W0-05 auth + rate limit gate (R9-01 device keys)", () => {
+describe("W0-05 auth + rate limit gate (R10-01 device keys)", () => {
   it("leaves /v1/health public without credentials", async () => {
     const res = await app.request("/v1/health", {}, envFor(new FakeR2()));
     expect(res.status).toBe(200);

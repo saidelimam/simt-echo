@@ -26,7 +26,7 @@ const STEP_OPTS = {
  * step `ground:<nodeId>:<k>:<phraseHash>` per SAM call, so a retry re-bills one
  * call, never all. `GROUND_MODE=legacy` keeps the single W3-05 `ground`
  * step until W11-10.
- * R9-04: the scout phase is per-checkpoint steps too — one
+ * R10-04: the scout phase is per-checkpoint steps too — one
  * `scout:<provider>:<nodeId>` per checkpoint (one `scout:<provider>` for
  * whole-job providers) — so a replay re-bills the failed checkpoint,
  * never 1..n-1. */
@@ -94,7 +94,7 @@ async function runScoutPhase(
 ): Promise<ScoutResult> {
   await putProgress(env, jobId, "scouting");
   try {
-    // R9-04: per-checkpoint steps — a replay re-bills the failed
+    // R10-04: per-checkpoint steps — a replay re-bills the failed
     // checkpoint, never 1..n-1.
     return await runScout(env, jobId, manifest, runner);
   } catch (e) {

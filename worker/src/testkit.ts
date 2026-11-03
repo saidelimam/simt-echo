@@ -1,4 +1,4 @@
-// Shared test helpers for the per-install device credential (R9-01).
+// Shared test helpers for the per-install device credential (R10-01).
 //
 // Every fake bucket in the suite accepts a `put` of the shape below; seeding
 // writes the device record as a Uint8Array so it round-trips through all of

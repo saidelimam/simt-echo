@@ -17,7 +17,7 @@ import {
 //   jobs/staging/<uploadId>/<name>      staged blob, sha-verified on PUT
 //   jobs/idem/<jobId>.json  {jobId} marking a completed idempotent create;
 //     the job id itself is derived from the idempotency key (see jobIdForKey)
-//   jobs/<jobId>/owner.json  {owner:<deviceId>} — R9-01: the minting
+//   jobs/<jobId>/owner.json  {owner:<deviceId>} — R10-01: the minting
 //     install that created the job; a foreign id reads it as 404
 // The v1 multipart path in jobs.ts is untouched; JSON job creates dispatch here.
 
@@ -32,7 +32,7 @@ export const jobOwnerKey = (jobId: string) => `jobs/${jobId}/owner.json`;
 
 interface StoredUploadMeta {
   files: UploadFileRef[];
-  /** R9-01: the install that opened this session; every read/put/delete is
+  /** R10-01: the install that opened this session; every read/put/delete is
    *  bound to it. */
   owner: string;
   createdAt: number;
@@ -70,8 +70,8 @@ function isValidMeta(raw: unknown): raw is StoredUploadMeta {
   return Array.isArray(m.files) && typeof m.owner === "string" && typeof m.createdAt === "number";
 }
 
-/** R9-01: the install id a job was created by, or null when the job has no
- * owner record (a pre-R9-01 job, or a swept one). */
+/** R10-01: the install id a job was created by, or null when the job has no
+ * owner record (a pre-R10-01 job, or a swept one). */
 export async function readJobOwner(env: Env, jobId: string): Promise<string | null> {
   const rec = await readJson<{ owner?: unknown }>(env, jobOwnerKey(jobId));
   return typeof rec?.owner === "string" ? rec.owner : null;
@@ -105,7 +105,7 @@ async function jobIdForKey(idempotencyKey: string): Promise<string> {
 
 /** Reads a request body, giving up (null) as soon as it exceeds `limit`
  * bytes so an oversized upload is never fully buffered. Used by the
- * upload PUTs and the relay POST (R9-07). */
+ * upload PUTs and the relay POST (R10-07). */
 export async function readBodyCapped(
   body: ReadableStream<Uint8Array> | null,
   limit: number,
@@ -242,7 +242,7 @@ export async function sweepExpiredUploads(env: Env, now: number = Date.now()): P
   return swept;
 }
 
-// R9-02 (review 0009, F2): indoor photos are the privacy-sensitive payload,
+// R10-02 (review 0010, F2): indoor photos are the privacy-sensitive payload,
 // so a job's prefix — inputs, events, SAM evidence, results — is retained
 // 24 h after the job reaches a terminal stage, then deleted wholesale. The
 // R2 lifecycle rule in wrangler.jsonc (same window) is the final backstop
@@ -291,7 +291,7 @@ export async function sweepExpiredJobs(env: Env, now: number = Date.now()): Prom
 }
 
 /**
- * R9-02: deletes relay objects whose `expiresAt` has passed even though no
+ * R10-02: deletes relay objects whose `expiresAt` has passed even though no
  * one GETted them — `getRelay` covers the read path, this covers abandoned
  * codes. Returns the number of objects deleted.
  */
@@ -313,7 +313,7 @@ export async function sweepExpiredRelayObjects(env: Env, now: number = Date.now(
 
 /** POST /v1/jobs with a JSON v1.1 body (jobs.ts dispatches here). */
 export async function handleCreateJobV11(c: Context<AppEnv>): Promise<Response> {
-  // R9-05 (F4): the kill switch precedes everything, including idempotent
+  // R10-05 (F4): the kill switch precedes everything, including idempotent
   // replays — a halted deployment creates nothing, ledger untouched.
   if (spendDisabled(c.env)) {
     return c.json({ ok: false, error: "spend_disabled" }, 503);
@@ -339,13 +339,13 @@ export async function handleCreateJobV11(c: Context<AppEnv>): Promise<Response> 
     return c.json({ ok: false, error: "invalid_request" }, 400);
   }
   if (uploadId === undefined && uploadIds === undefined) {
-    // R9-11 (review 0009, F10.2): a manifest-only create has no staged
+    // R10-11 (review 0010, F10.2): a manifest-only create has no staged
     // media to move; its scout would burn a paid Workflow instance only to
     // hit media_missing. Fail at intake.
     return c.json({ ok: false, error: "upload_reference_required" }, 400);
   }
 
-  // R9-11 (review 0009, F10.1): the idempotency record binds to the
+  // R10-11 (review 0010, F10.1): the idempotency record binds to the
   // payload. zod's parsed.data is canonical — declared field order, unknown
   // keys dropped — so the hash is stable across replays of the same logical
   // request and differs for a changed one.
@@ -357,7 +357,7 @@ export async function handleCreateJobV11(c: Context<AppEnv>): Promise<Response> 
 
   // Idempotent replay: a completed create returns the original job id only
   // when the payload matches the recorded one — a changed payload under the
-  // same key is 409, not a silent wrong job (R9-11, F10.1). Records written
+  // same key is 409, not a silent wrong job (R10-11, F10.1). Records written
   // before this deploy carry no hash and cannot prove a match: 409 as well
   // (decision: strict). A record whose job lost its manifest is stale:
   // discard it and create afresh.
@@ -368,7 +368,7 @@ export async function handleCreateJobV11(c: Context<AppEnv>): Promise<Response> 
     );
     if (record !== null) {
       if ((await c.env.MEDIA.head(jobManifestKey(jobId))) !== null) {
-        // R9-01: the replay hands out the creating install's job id, so only
+        // R10-01: the replay hands out the creating install's job id, so only
         // that install gets it; to every other install the key is unknown.
         if ((await readJobOwner(c.env, jobId)) !== c.get("deviceId")) {
           return c.json({ ok: false, error: "job_not_found" }, 404);
@@ -384,7 +384,7 @@ export async function handleCreateJobV11(c: Context<AppEnv>): Promise<Response> 
 
   // resumeOf later becomes an R2 key prefix for cache adoption, so it must
   // name a job that exists in this deployment AND was created by this
-  // install: a foreign job's SAM cache is not adoptable (R9-01).
+  // install: a foreign job's SAM cache is not adoptable (R10-01).
   if (
     resumeOf !== undefined &&
     ((await c.env.MEDIA.head(jobManifestKey(resumeOf))) === null ||
@@ -396,7 +396,7 @@ export async function handleCreateJobV11(c: Context<AppEnv>): Promise<Response> 
   // Staged blobs to move under the job. One session (uploadId) or several
   // per-window sessions (uploadIds, W11-09): completeness is measured over
   // the union of staged names.
-  // R9-10 (review 0009, F9): the move streams each blob R2→R2, one at a
+  // R10-10 (review 0010, F9): the move streams each blob R2→R2, one at a
   // time — the old path held every staged byte (up to the 80 MB cap) in
   // memory at once. Caps are measured on the stored sizes, never the
   // declared ones.
@@ -431,7 +431,7 @@ export async function handleCreateJobV11(c: Context<AppEnv>): Promise<Response> 
       return c.json({ ok: false, error: "upload_incomplete", missing }, 400);
     }
     // Caps are measured on stored sizes (head), so no body is read here.
-    // R9-11 (F10.3): a name staged in two sessions is a client error — the
+    // R10-11 (F10.3): a name staged in two sessions is a client error — the
     // old first-wins move silently dropped one of the two payloads.
     let totalBytes = 0;
     const seen = new Set<string>();
@@ -455,7 +455,7 @@ export async function handleCreateJobV11(c: Context<AppEnv>): Promise<Response> 
     }
   }
 
-  // R9-05 (F4): reserve the declared budget (or the hard ceiling) before
+  // R10-05 (F4): reserve the declared budget (or the hard ceiling) before
   // the move consumes staging. A later failure leaves the reservation
   // standing — over-reserving toward the cap, never under. Over the cap
   // is 503; a contention storm is 500 — nothing was written.
@@ -476,7 +476,7 @@ export async function handleCreateJobV11(c: Context<AppEnv>): Promise<Response> 
       await c.env.MEDIA.put(`jobs/${jobId}/in/${name}`, obj.body);
     }
     await c.env.MEDIA.put(`jobs/${jobId}/manifest.json`, JSON.stringify(manifest));
-    // R9-01: bind the job to the creating install.
+    // R10-01: bind the job to the creating install.
     await writeJobOwner(c.env, jobId, c.get("deviceId"));
     // W11-06: the SAM lens governor reads this (never the request body —
     // the Workflow only gets the job id). An absent file caps at the hard
@@ -504,7 +504,7 @@ export async function handleCreateJobV11(c: Context<AppEnv>): Promise<Response> 
     }
     instanceCreated = true;
     if (idempotencyKey !== undefined) {
-      // R9-11 (F10.1): record the payload hash the create was made with, so
+      // R10-11 (F10.1): record the payload hash the create was made with, so
       // a later replay can be checked against it (a mismatch is 409).
       await c.env.MEDIA.put(
         idemKey(jobId),
@@ -561,7 +561,7 @@ export function registerUploadRoutes(app: Hono<AppEnv>): void {
       const uploadId = crypto.randomUUID();
       const meta: StoredUploadMeta = { files, owner: c.get("deviceId"), createdAt: Date.now() };
       await c.env.MEDIA.put(stagingMetaKey(uploadId), JSON.stringify(meta));
-      // R9-09 (review 0009, F8): no opportunistic sweep here. It cost
+      // R10-09 (review 0010, F8): no opportunistic sweep here. It cost
       // O(staging + idem) list/GET/HEAD ops on every create — quadratically
       // punishing the bursty ready-on-arrival client this endpoint serves.
       // Cleanup is owned off the request path: the hourly cron runs
@@ -585,7 +585,7 @@ export function registerUploadRoutes(app: Hono<AppEnv>): void {
         ? c.json({ ok: false, error: "upload_expired" }, 410)
         : c.json({ ok: false, error: "upload_not_found" }, 404);
     }
-    // R9-01: another install's session is indistinguishable from a missing one.
+    // R10-01: another install's session is indistinguishable from a missing one.
     if (loaded.meta.owner !== c.get("deviceId")) {
       return c.json({ ok: false, error: "upload_not_found" }, 404);
     }
@@ -608,7 +608,7 @@ export function registerUploadRoutes(app: Hono<AppEnv>): void {
         ? c.json({ ok: false, error: "upload_expired" }, 410)
         : c.json({ ok: false, error: "upload_not_found" }, 404);
     }
-    // R9-01: a foreign session cannot be written into.
+    // R10-01: a foreign session cannot be written into.
     if (loaded.meta.owner !== c.get("deviceId")) {
       return c.json({ ok: false, error: "upload_not_found" }, 404);
     }
@@ -645,7 +645,7 @@ export function registerUploadRoutes(app: Hono<AppEnv>): void {
 
   // W11-09 ready-on-arrival: cancel/discard deletes staged uploads.
   // Idempotent like the job DELETE — unknown or expired sessions are
-  // already gone, so both answer 204 with nothing to sweep. R9-01: a
+  // already gone, so both answer 204 with nothing to sweep. R10-01: a
   // session owned by another install is a 404, so the delete cannot be
   // used to probe or destroy it.
   app.delete("/v1/uploads/:uploadId", async (c) => {

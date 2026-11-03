@@ -331,7 +331,7 @@ describe("EchoPipeline lens phase (W11-06)", () => {
     const pipeline = new EchoPipeline({} as never, env);
     const out = (await pipeline.run({ payload: { jobId: "job1" } } as never, step as never)) as JobResult;
 
-    // One step per SAM call — a retry re-bills one call, never all. R9-04:
+    // One step per SAM call — a retry re-bills one call, never all. R10-04:
     // the scout is one step per checkpoint too.
     expect(names.filter((n) => /^ground:n2:\d+:[0-9a-f]{12}/.test(n))).toHaveLength(1);
     expect(names).toEqual([
@@ -349,14 +349,14 @@ describe("EchoPipeline lens phase (W11-06)", () => {
     expect(out.models).toEqual({ scout: expect.any(String), ground: "sam-3.1" });
     expect(out.checkpoints[0].candidates[0].source).toBe("AI_GROUNDED");
     expect(out.usage.samFrames).toBe(1);
-    // R9-05: the vendor omitted usage, so the one sent frame stands in
+    // R10-05: the vendor omitted usage, so the one sent frame stands in
     // for billed — a call that went out never reports zero.
     expect(out.usage.samFramesBilled).toBe(1);
     expect(out.usage.budgetExhausted).toBe(false);
 
     const events = await readJobEvents(env, "job1");
     // One of each event; chronological across milliseconds is contract,
-    // same-millisecond order is not (R9-08: the id's tiebreak is random).
+    // same-millisecond order is not (R10-08: the id's tiebreak is random).
     expect(events.map((e) => e.type).sort()).toEqual([
       "checkpoint",
       "complete",

@@ -54,7 +54,7 @@ export const ApproachSampleSchema = z.object({
 });
 
 /**
- * R9-03 (review 0009, F3): fan-out caps. Every checkpoint costs paid vision
+ * R10-03 (review 0010, F3): fan-out caps. Every checkpoint costs paid vision
  * calls, so the schema bounds what one job can fan out to. Each value sits
  * well above what the app produces today — ≤3 keyframes per checkpoint
  * (`keyframeTimes`), ≤12 approach samples (`APPROACH_MAX_FRAMES`), one
@@ -96,7 +96,7 @@ export const ManifestSchema = z
     checkpoints: z.array(CheckpointSchema).min(1).max(MAX_CHECKPOINTS),
   })
   .superRefine((m, ctx) => {
-    // R9-11 (review 0009, F10): uniqueness and cross-field checks. Duplicate
+    // R10-11 (review 0010, F10): uniqueness and cross-field checks. Duplicate
     // nodeIds collapse in the Maps scout/ground/assemble build and yield
     // duplicated result checkpoints; duplicate media ids collide in the
     // staging move; a hero pointing at no keyframe of its checkpoint breaks
@@ -195,7 +195,7 @@ export const JobResultCheckpointSchema = z.object({
  * results stay Rpc.Serializable across the Workflow boundary.
  * W11-06 adds two optional fields (still closed, still serializable):
  * `samFramesBilled` sums vendor-reported `response.completed` frames,
- * falling back to the sent frames when the vendor omits usage (R9-05;
+ * falling back to the sent frames when the vendor omits usage (R10-05;
  * cache hits bill zero), and `budgetExhausted` records the governor
  * refusing a call. Both are absent when SAM never ran. */
 export const JobUsageSchema = z.object({
@@ -315,7 +315,7 @@ export const CreateJobV11RequestSchema = z.object({
   uploadId: UuidSchema.optional(),
   // W11-09 ready-on-arrival: per-window upload sessions staged during the
   // walk; Finish creates the job against all of them. Never alongside
-  // uploadId — one addressing mode per create. R9-11 (F10): duplicates
+  // uploadId — one addressing mode per create. R10-11 (F10): duplicates
   // would double-list one session in the move.
   uploadIds: z
     .array(UuidSchema)

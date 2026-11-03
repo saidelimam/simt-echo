@@ -15,7 +15,7 @@
 // The budget governor reserves every estimate before any call is sent and
 // never exceeds `budget.maxSamFrames`; `usage.samFramesBilled` sums
 // vendor-reported `response.completed` frames, falling back to the sent
-// frames when the vendor omits usage (R9-05), and `budgetExhausted`
+// frames when the vendor omits usage (R10-05), and `budgetExhausted`
 // records a refusal. W10-06 checkpoint + usage events are emitted per
 // checkpoint.
 //
@@ -57,7 +57,7 @@ export type StepRunner = <T extends Rpc.Serializable<T>>(
 export const inlineRunner: StepRunner = (_name, fn) => fn();
 
 /** Emits one job event inside its own step. The id is minted before the
- * step runs (R9-08, review 0009 F7): a step retry after a successful
+ * step runs (R10-08, review 0010 F7): a step retry after a successful
  * put re-records the same event under the same id instead of a
  * duplicate under a fresh one, and a Workflow replay returns the
  * recorded step without emitting at all. */
@@ -506,7 +506,7 @@ export async function runGroundLens(
     kept: ScoutCandidate[];
     /** Survivor indexes into kept (top-2, flags passing). */
     survivors: number[];
-    /** Cache key per survivor hero frame. R9-10 (review 0009, F9): the media
+    /** Cache key per survivor hero frame. R10-10 (review 0010, F9): the media
      * is not retained — planning derives the key from a transient read,
      * and each step reloads its own frame, releasing it when done. */
     heroKeys: Map<number, string>;
@@ -519,7 +519,7 @@ export async function runGroundLens(
   // Planning is a pure function of the manifest, the scout step output, the
   // staged media and budget.json, so a replay reproduces it exactly. Each
   // media read below is transient: the bytes are hashed into the cache key
-  // and then released, so planning retains no job media at all (R9-10).
+  // and then released, so planning retains no job media at all (R10-10).
   const planned: Planned[] = [];
   for (let index = 0; index < manifest.checkpoints.length; index++) {
     const cp = manifest.checkpoints[index];
@@ -618,7 +618,7 @@ export async function runGroundLens(
       perCp,
       run: () =>
         runner(name, async () => {
-          // R9-10: the frame is loaded inside its step and released when the
+          // R10-10: the frame is loaded inside its step and released when the
           // step returns — planning retained only its cache key.
           const obj = await env.MEDIA.get(`jobs/${jobId}/in/${sc.imageId}`);
           if (!obj) return { k, candidate: fallback, reason: "media_missing", ...NO_SPEND };
@@ -642,7 +642,7 @@ export async function runGroundLens(
   // Video phase: top survivor only, TURN/DESTINATION or mid confidence. The
   // clip's cache key needs the top survivor's phrase, so it is derived here
   // — after the image phase — from a transient read: hashed, then released
-  // (R9-10). The call itself reloads the clip inside its step.
+  // (R10-10). The call itself reloads the clip inside its step.
   const videoCalls: Array<{
     p: Planned;
     perCp: Map<number, Candidate>;
@@ -689,7 +689,7 @@ export async function runGroundLens(
       perCp,
       run: () =>
         runner(name, async () => {
-          // R9-10: the clip is loaded inside its step and released when the
+          // R10-10: the clip is loaded inside its step and released when the
           // step returns; only its cache key survived planning.
           const clipObj = await env.MEDIA.get(`jobs/${jobId}/in/${p.cp.clip!.id}`);
           if (!clipObj) return { k: topK, candidate: null, reason: "media_missing", ...NO_SPEND };
@@ -765,7 +765,7 @@ async function imageCall(
   try {
     const call = await samCall(env, jobId, media, key, (b64) => imageBody(sc.samPhrase, b64), resumeOf, mustHit, lensOpts);
     // Single hero frame sent; when the vendor omits usage the sent frame
-    // stands in for billed (R9-05) — a call that went out must never
+    // stands in for billed (R10-05) — a call that went out must never
     // report zero cost. Vendor-reported usage wins when present.
     const spend: CallSpend = call.cached
       ? NO_SPEND
@@ -808,7 +808,7 @@ async function videoCall(
   try {
     const call = await samCall(env, jobId, media, key, (b64) => videoBody(phrase, b64), resumeOf, mustHit, lensOpts);
     // Vendor-reported usage wins; when it is omitted the clip estimate
-    // stands in for billed (R9-05) — the same basis as sentFrames, never
+    // stands in for billed (R10-05) — the same basis as sentFrames, never
     // zero for a call that went out.
     const spend: CallSpend = call.cached
       ? NO_SPEND

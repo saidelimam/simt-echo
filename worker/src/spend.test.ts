@@ -1,4 +1,4 @@
-// R9-05 (review 0009, F4) test delta: the daily spend ledger — cap
+// R10-05 (review 0010, F4) test delta: the daily spend ledger — cap
 // enforcement, etag-conditional concurrency, fail-closed storm, and the
 // kill switch / cap-var parsing. The FakeR2 honors R2's etag semantics: a
 // conditional put fails when the object's etag moved (or the object does
@@ -68,7 +68,7 @@ function envFor(r2: LedgerR2, cap?: string) {
   } as never;
 }
 
-describe("daily cap var and kill switch (R9-05)", () => {
+describe("daily cap var and kill switch (R10-05)", () => {
   it("parses DAILY_MAX_SAM_FRAMES, defaulting on absent or unparseable", () => {
     expect(dailyMaxFrames({} as never)).toBe(DEFAULT_DAILY_MAX_SAM_FRAMES);
     expect(dailyMaxFrames({ DAILY_MAX_SAM_FRAMES: "" } as never)).toBe(
@@ -97,7 +97,7 @@ describe("daily cap var and kill switch (R9-05)", () => {
   });
 });
 
-describe("reserveDailySpend (R9-05)", () => {
+describe("reserveDailySpend (R10-05)", () => {
   it("reserves under the cap and writes the UTC day's ledger object", async () => {
     const r2 = new LedgerR2();
     const out = await reserveDailySpend(envFor(r2, "1200"), 240);

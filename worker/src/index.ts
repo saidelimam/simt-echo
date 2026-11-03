@@ -23,7 +23,7 @@ export interface Env {
   SCOUT_MODEL_TIMEOUT_MS?: string;
   ENV?: string;
   META_API_KEY?: string;
-  /** Retired as the bearer (R9-01): the per-install device key is now the
+  /** Retired as the bearer (R10-01): the per-install device key is now the
    * credential. Kept deployed only as a public client identifier during the
    * migration window — auth no longer compares against it. */
   ECHO_APP_TOKEN?: string;
@@ -34,11 +34,11 @@ export interface Env {
   /** W11-06: reserved for the W11-07 multi-phrase probe outcome (default
    * off; probe TBD in docs/measurements.md, so single-phrase-per-call). */
   MULTI_PHRASE?: string;
-  /** R9-05 (review 0009, F4): daily SAM-frame cap the create paths
+  /** R10-05 (review 0010, F4): daily SAM-frame cap the create paths
    * reserve against (spend.ts). Unset → 1200, five jobs at the 240
    * ceiling. Ops: docs/operations/spend.md. */
   DAILY_MAX_SAM_FRAMES?: string;
-  /** R9-05: exactly `on` rejects every job create with 503
+  /** R10-05: exactly `on` rejects every job create with 503
    * spend_disabled without touching the ledger. */
   SPEND_KILL_SWITCH?: string;
 }
@@ -72,7 +72,7 @@ function clientIp(req: HeaderReader): string {
   return "unknown";
 }
 
-// The context carries the authenticated device id (R9-01): the middleware
+// The context carries the authenticated device id (R10-01): the middleware
 // resolves the bearer to a per-install id, and handlers read it to enforce
 // ownership of the jobs, uploads, and relay objects that id created.
 export type AppEnv = { Bindings: Env; Variables: { deviceId: string } };
@@ -83,7 +83,7 @@ export const app = new Hono<AppEnv>();
 // the device-mint route. Registered before any route so later slices inherit
 // the policy automatically. Future routes only add handlers.
 //
-// F1 (R9-01): the bearer is now a per-install device key, resolved against R2
+// F1 (R10-01): the bearer is now a per-install device key, resolved against R2
 // — one install cannot read or delete another's. Two limits: an IP-based one
 // in front of auth (unauthenticated traffic and device minting are throttled
 // too, not just holders of the old shared token) and a per-install one behind
@@ -144,7 +144,7 @@ registerJobsRoutes(app);
 // W11-05: resumable v1.1 uploads (auth + rate limit above apply).
 registerUploadRoutes(app);
 
-// R9-01: first-run mint of the per-install device key. Public but throttled
+// R10-01: first-run mint of the per-install device key. Public but throttled
 // by the pre-auth IP limit in the gate above.
 app.post("/v1/device", postDevice);
 
@@ -163,7 +163,7 @@ export default {
   fetch: app.fetch,
   // Hourly cron (wrangler.jsonc `triggers.crons`): staged uploads and
   // orphaned idempotency records otherwise expire only when someone next
-  // touches the upload API; R9-02 adds the 24 h retention sweep for
+  // touches the upload API; R10-02 adds the 24 h retention sweep for
   // terminal jobs and the no-GET expiry of abandoned relay codes. The R2
   // lifecycle rule in wrangler.jsonc is the backstop for whatever a cycle
   // misses.

@@ -628,7 +628,7 @@ function isRetryableMetaError(e: unknown): boolean {
  * `Candidate` rows are W3-05/W3-06's expansion. Throws `ScoutError` with a
  * closed code set — never raw model text.
  *
- * R9-04 (review 0009, F3): every paid call runs inside a Workflow step —
+ * R10-04 (review 0010, F3): every paid call runs inside a Workflow step —
  * one `scout:<provider>:<nodeId>` per checkpoint, one `scout:<provider>`
  * for whole-job providers — so on a replay a completed step returns its
  * recorded output and a failed checkpoint re-bills itself, never
@@ -659,7 +659,7 @@ export async function runScout(
       }
       try {
         // One step for the whole job: a replay returns the recorded
-        // ScoutResult, so the single paid call is never re-billed (R9-04).
+        // ScoutResult, so the single paid call is never re-billed (R10-04).
         return await runner(`scout:${id}`, () => batch.proposeAll(env, jobId, manifest));
       } catch (e) {
         lastError = e;
@@ -680,7 +680,7 @@ export async function runScout(
       const ranModels: string[] = [];
       const rawAttempts = new Map<string, number>();
       for (const cp of manifest.checkpoints) {
-        // One step per checkpoint (R9-04), mirroring the lens: a replay
+        // One step per checkpoint (R10-04), mirroring the lens: a replay
         // returns the recorded output, so a failed checkpoint re-bills
         // itself, never checkpoints 1..n-1. The step returns what the
         // continuation needs; the raw model output is written inside the
@@ -717,7 +717,7 @@ export async function runScout(
             } catch (e) {
               // all_models_failed is deterministic: every model for this
               // checkpoint already failed. Retrying the step would re-bill
-              // the same calls, so the step must not retry (R9-04).
+              // the same calls, so the step must not retry (R10-04).
               if (e instanceof ScoutError && e.code === "all_models_failed") {
                 throw new NonRetryableError(e.message);
               }

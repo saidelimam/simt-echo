@@ -11,7 +11,7 @@ import { readBodyCapped } from "./uploads";
  * inspect ciphertext. Codes are 8 characters of Crockford-style base32
  * without ambiguous glyphs (no 0/O, 1/I/L): ≈ 39.6 bits per code,
  * carried in the QR and guessed only by the receiver's own install
- * (R9-07, review 0009 F6).
+ * (R10-07, review 0010 F6).
  */
 
 export const RELAY_MAX_BYTES = 5 * 1024 * 1024;
@@ -68,7 +68,7 @@ function relayKey(code: string): string {
 
 export async function postRelay(c: Context<AppEnv>) {
   const bucket = c.env.MEDIA;
-  // R9-07 (review 0009 F6): cap the read, don't buffer past the cap — an
+  // R10-07 (review 0010 F6): cap the read, don't buffer past the cap — an
   // oversized body is never fully read into the worker's memory.
   const body = await readBodyCapped(c.req.raw.body, RELAY_MAX_BYTES);
   if (body === null) {
@@ -79,11 +79,11 @@ export async function postRelay(c: Context<AppEnv>) {
   }
   const expiresAt = Date.now() + RELAY_TTL_MS;
   const code = await allocateRelayCode(
-    // R9-07: the guard is on the put, not a preceding head — a rival POST
+    // R10-07: the guard is on the put, not a preceding head — a rival POST
     // landing between head and put loses its conditional put and retries
     // with a fresh code, so a bundle is never overwritten.
     async (candidate) => {
-      // R9-01: the minting install owns the code; a foreign GET is a 404.
+      // R10-01: the minting install owns the code; a foreign GET is a 404.
       await bucket.put(
         relayKey(candidate),
         body,
@@ -119,7 +119,7 @@ export async function getRelay(c: Context<AppEnv>) {
     await bucket.delete(relayKey(code));
     return c.json({ ok: false, error: "not_found" }, 404);
   }
-  // R9-01: the owner check comes after expiry (expiry sweeps regardless of
+  // R10-01: the owner check comes after expiry (expiry sweeps regardless of
   // who asks) and never deletes — a foreign read must not burn the owner's
   // code, and it must not reveal that the code exists. Legacy objects with
   // no owner stamp predate the model; the app pair that produced the QR

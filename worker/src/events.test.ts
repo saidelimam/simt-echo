@@ -6,7 +6,7 @@ import type { JobEvent } from "./types";
 import { bearer, seedDevice } from "./testkit";
 
 // GET /v1/jobs/:id/events (SSE). FakeR2/FakeInstance mirror jobs.test.ts
-// (duplicated per file, the established pattern). R9-01: the stream is bound
+// (duplicated per file, the established pattern). R10-01: the stream is bound
 // to the creating install — setup writes the job's owner record.
 
 const KEY = "dk_test_install_one";
@@ -56,7 +56,7 @@ async function setup(status: Status) {
   const pipeline = new FakePipeline();
   const instance = new FakeInstance(status);
   pipeline.instances.set("job1", instance);
-  // R9-01: seed the test install and bind job1 to it.
+  // R10-01: seed the test install and bind job1 to it.
   const id = await seedDevice(media, KEY);
   await media.put("jobs/job1/owner.json", JSON.stringify({ owner: id }));
   const env = { ECHO_APP_TOKEN: "retired", MEDIA: media, PIPELINE: pipeline } as never;
@@ -103,7 +103,7 @@ describe("GET /v1/jobs/:id/events", () => {
     expect(body).toContain(`data: ${JSON.stringify(stage("a-1"))}\n\n`);
   });
 
-  it("replays the cursor's millisecond bucket and everything after (R9-08)", async () => {
+  it("replays the cursor's millisecond bucket and everything after (R10-08)", async () => {
     const { env, store } = await setup("complete");
     // Distinct timestamp parts (b < c < d in base 36): the at-least-once
     // contract re-sends the cursor's own bucket (the client merges
@@ -119,7 +119,7 @@ describe("GET /v1/jobs/:id/events", () => {
     expect(frameIds(await byQuery.text())).toEqual(["d-3"]);
   });
 
-  it("delivers a same-millisecond event that sorts before the cursor (R9-08)", async () => {
+  it("delivers a same-millisecond event that sorts before the cursor (R10-08)", async () => {
     const { store } = await setup("complete");
     // Two ids sharing a timestamp part; the later-emitted one sorts
     // lexicographically before the cursor the client holds. The old
@@ -133,7 +133,7 @@ describe("GET /v1/jobs/:id/events", () => {
     expect(events.map((e) => e.id)).toEqual([later, cursor]);
   });
 
-  it("orders same-millisecond ids without isolate state (R9-08)", async () => {
+  it("orders same-millisecond ids without isolate state (R10-08)", async () => {
     const { store } = await setup("complete");
     const t = 1_700_000_000_000;
     const a = newEventId(t);
@@ -153,7 +153,7 @@ describe("GET /v1/jobs/:id/events", () => {
     expect(ids).not.toContain(earlier);
   });
 
-  it("retries a step without emitting a duplicate under a fresh id (R9-08)", async () => {
+  it("retries a step without emitting a duplicate under a fresh id (R10-08)", async () => {
     const { store } = await setup("complete");
     // First attempt: the put lands, then the step result is lost (the
     // failure mode a retry exists for). Second attempt re-records.
@@ -172,7 +172,7 @@ describe("GET /v1/jobs/:id/events", () => {
     expect(events).toHaveLength(1);
   });
 
-  it("404s a job owned by another install (R9-01)", async () => {
+  it("404s a job owned by another install (R10-01)", async () => {
     const { media, env } = await setup("running");
     await seedDevice(media, OTHER);
     const res = await app.request("/v1/jobs/job1/events", { headers: bearer(OTHER) }, env);

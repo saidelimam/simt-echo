@@ -25,12 +25,12 @@ import {
   UsageEventSchema,
 } from "./types";
 
-// R9-01: the bearer is a per-install device key. Two fixed installs prove
+// R10-01: the bearer is a per-install device key. Two fixed installs prove
 // isolation; the minted key in the isolation test proves the entropy path.
 const KEY = "dk_test_install_one";
 const OTHER = "dk_test_install_two";
 
-// R9-10: the intake move puts a stream through, so the fake stores what R2
+// R10-10: the intake move puts a stream through, so the fake stores what R2
 // would — a drained body. Consumed exactly once, like a real object body.
 async function streamToArrayBuffer(stream: ReadableStream<Uint8Array>): Promise<ArrayBuffer> {
   const reader = stream.getReader();
@@ -59,14 +59,14 @@ class FakeR2 {
     value: ArrayBuffer | Uint8Array | string | ReadableStream<Uint8Array>,
     opts?: { httpMetadata?: { contentType?: string }; onlyIf?: { etagMatches?: string } },
   ): Promise<null> {
-    // R9-05: honor R2's etag semantics — a conditional put fails when the
+    // R10-05: honor R2's etag semantics — a conditional put fails when the
     // etag moved or the object does not exist.
     if (opts?.onlyIf?.etagMatches !== undefined) {
       const entry = this.store.get(key);
       if (!entry || entry.etag !== opts.onlyIf.etagMatches) throw new Error("etag mismatch");
     }
     // Normalize to a detached ArrayBuffer: a Uint8Array view aliases its pool
-    // buffer, and TS's generics treat the view as a distinct type. R9-10: a
+    // buffer, and TS's generics treat the view as a distinct type. R10-10: a
     // stream is consumed eagerly so the stored body mirrors R2's stored size.
     const body =
       value instanceof ReadableStream
@@ -94,7 +94,7 @@ class FakeR2 {
     };
   }
 
-  // R9-10: the intake caps measure stored sizes via head — mirror R2.
+  // R10-10: the intake caps measure stored sizes via head — mirror R2.
   head = async (key: string) =>
     this.store.has(key) ? { key, size: this.store.get(key)!.body.byteLength } : null;
 
@@ -151,7 +151,7 @@ class FakePipeline {
 }
 
 async function envFor(media: FakeR2, pipeline?: FakePipeline) {
-  // R9-01: register the test install so every authenticated request resolves.
+  // R10-01: register the test install so every authenticated request resolves.
   await seedDevice(media, KEY);
   return {
     ECHO_APP_TOKEN: "retired",
@@ -234,7 +234,7 @@ describe("POST /v1/jobs", () => {
     const pipeline = new FakePipeline();
     const env = await envFor(media, pipeline);
 
-    // R9-11 (F10): the old loop dropped unknown parts silently; now they are
+    // R10-11 (F10): the old loop dropped unknown parts silently; now they are
     // client errors, as is the same part twice.
     const unknown = await postJob(env, validManifest(), [
       { id: "kf_n2_0", bytes: new Uint8Array([1]), type: "image/jpeg" },
@@ -293,9 +293,9 @@ describe("POST /v1/jobs", () => {
   it("rejects more than 60 files (413)", async () => {
     const media = new FakeR2();
     // 61 keyframes spread over 8 checkpoints (7×8 + 5): past the 60-file
-    // limit while staying inside the per-checkpoint schema cap (R9-03), so
+    // limit while staying inside the per-checkpoint schema cap (R10-03), so
     // the file-count guard — not the schema — is what rejects. Media ids are
-    // unique per checkpoint (R9-11) so the manifest itself is valid.
+    // unique per checkpoint (R10-11) so the manifest itself is valid.
     const manifest = structuredClone(validManifest());
     manifest.checkpoints = [8, 8, 8, 8, 8, 8, 8, 5].map((count, i) => {
       const cp = structuredClone(validManifest().checkpoints[0]);
@@ -325,9 +325,9 @@ describe("POST /v1/jobs", () => {
     const media = new FakeR2();
     const env = await envFor(media, new FakePipeline());
 
-    // One past each cap (R9-03, F3): every variant is rejected before
+    // One past each cap (R10-03, F3): every variant is rejected before
     // anything is stored. Cloned checkpoints carry unique media ids and
-    // heroes (R9-11) so the cap — not the uniqueness rules — rejects.
+    // heroes (R10-11) so the cap — not the uniqueness rules — rejects.
     const tooManyCheckpoints = structuredClone(validManifest());
     while (tooManyCheckpoints.checkpoints.length < MAX_CHECKPOINTS + 1) {
       const n = tooManyCheckpoints.checkpoints.length + 2;
@@ -404,7 +404,7 @@ describe("POST /v1/jobs", () => {
     expect(await res.json()).toEqual({ ok: false, error: "payload_too_large" });
   });
 
-  // R9-05 (F4): the daily spend cap on the v1 create path. v1 carries no
+  // R10-05 (F4): the daily spend cap on the v1 create path. v1 carries no
   // budget, so the hard 240-frame ceiling is what a job reserves.
   it("reserves the daily ledger before storing (240, the v1 ceiling)", async () => {
     const media = new FakeR2();
@@ -619,7 +619,7 @@ describe("DELETE /v1/jobs/:id", () => {
     expect(res.status).toBe(204);
     expect(instance.terminated).toBe(false);
     // Nothing job-related was stored. The seeded device record is not a job
-    // artifact, and the day's spend reservation (R9-05) stands — deleting a
+    // artifact, and the day's spend reservation (R10-05) stands — deleting a
     // job does not claw its reservation back from the cap.
     expect(
       [...media.store.keys()].filter((k) => !k.startsWith("devices/") && !k.startsWith("spend/")),
@@ -646,7 +646,7 @@ describe("DELETE /v1/jobs/:id", () => {
   });
 });
 
-describe("per-install isolation (R9-01)", () => {
+describe("per-install isolation (R10-01)", () => {
   it("keeps one install's jobs unreadable and undeletable by another", async () => {
     const media = new FakeR2();
     const pipeline = new FakePipeline();
@@ -1042,7 +1042,7 @@ describe("v1.1 resumable uploads (W11-05)", () => {
     await media.put(`jobs/${prior}/manifest.json`, "{}");
     const priorId = await seedDevice(media, KEY);
     await media.put(`jobs/${prior}/owner.json`, JSON.stringify({ owner: priorId }));
-    // R9-11 (F10.2): the create is upload-backed like every other one.
+    // R10-11 (F10.2): the create is upload-backed like every other one.
     const uploadId = await createUploadFor(env);
     for (const f of stagedFiles()) await putBlob(env, uploadId, f.name, f.data);
     const res = await postJobJson(env, {
@@ -1093,7 +1093,7 @@ describe("v1.1 resumable uploads (W11-05)", () => {
         { name: "kf_n2_1", sha256: await shaHexOf([4, 5, 6]), bytes: 3 },
         { name: "clip_n2", sha256: await shaHexOf([7, 8, 9]), bytes: 3 },
       ],
-      // R9-01: a backdated meta is still the test install's session.
+      // R10-01: a backdated meta is still the test install's session.
       owner: ownerId,
       createdAt: Date.now() - STAGING_TTL_MS - 1,
     };
@@ -1167,7 +1167,7 @@ describe("v1.1 resumable uploads (W11-05)", () => {
     const pipeline = new FakePipeline();
     const env = await envFor(media, pipeline);
 
-    // R9-11 (F10.2): no upload reference means no media to move; the scout
+    // R10-11 (F10.2): no upload reference means no media to move; the scout
     // would burn a paid instance on a guaranteed media_missing.
     const res = await postJobJson(env, { manifest: validManifest() });
     expect(res.status).toBe(400);
@@ -1236,7 +1236,7 @@ describe("EchoPipeline skeleton", () => {  it("runs load → scout → ground �
     // ground phase still runs (box-only seal below); per-call steps appear
     // only when SAM calls are actually sent (pipeline.test.ts proves it).
     // Event emits and the ground.json seal are their own replay-safe steps.
-    // R9-04: the scout is one step per checkpoint (scout:<provider>:<nodeId>).
+    // R10-04: the scout is one step per checkpoint (scout:<provider>:<nodeId>).
     expect(seen).toEqual([
       "load",
       "scout:workers-ai:n2",

@@ -39,7 +39,7 @@ describe("scheduled() expiry backstop", () => {
   it("sweeps expired staged uploads and orphaned idem records, keeping live ones", async () => {
     const media = new FakeR2();
     const meta = (createdAt: number) =>
-      // R9-01: a live session meta carries its owner, or the sweep treats it
+      // R10-01: a live session meta carries its owner, or the sweep treats it
       // as corrupt and deletes it.
       JSON.stringify({ files: [], owner: "idx-test-install", createdAt });
     await media.put("jobs/staging/old/meta.json", meta(Date.now() - STAGING_TTL_MS - 1));
@@ -58,7 +58,7 @@ describe("scheduled() expiry backstop", () => {
     ]);
   });
 
-  it("sweeps a terminal job's prefix and an expired relay object without a GET (R9-02)", async () => {
+  it("sweeps a terminal job's prefix and an expired relay object without a GET (R10-02)", async () => {
     const media = new FakeR2();
     // Terminal 24 h ago: the whole prefix goes — inputs, events, manifest, progress.
     await media.put("jobs/done-1/manifest.json", "{}");

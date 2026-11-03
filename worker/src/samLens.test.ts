@@ -19,7 +19,7 @@ class FakeR2 {
     const entry = this.store.get(key);
     if (entry === undefined) return null;
     const text = typeof entry === "string" ? entry : new TextDecoder().decode(entry);
-    // R9-10: the lens reloads each step's media inside its callback — serve
+    // R10-10: the lens reloads each step's media inside its callback — serve
     // the stored bytes as a body stream, mirroring R2.
     const bytes = typeof entry === "string" ? new TextEncoder().encode(entry) : new Uint8Array(entry);
     return {
@@ -189,7 +189,7 @@ describe("runGround SAM lens (W11-06)", () => {
     expect(c.trackability).toBeNull();
     expect(c.visibleFromM).toBeNull();
     expect(result.usage.samFrames).toBe(1);
-    // R9-05: the vendor omitted usage, so the one sent frame stands in
+    // R10-05: the vendor omitted usage, so the one sent frame stands in
     // for billed — a call that went out never reports zero.
     expect(result.usage.samFramesBilled).toBe(1);
     expect(result.usage.budgetExhausted).toBe(false);
@@ -253,7 +253,7 @@ describe("runGround SAM lens (W11-06)", () => {
     const result = await runGround(env, "job1", manifest, lensScout());
 
     // 12 vendor-billed strip frames + the 1 sent hero frame (the image
-    // call's vendor omits usage, so its sent frame stands in — R9-05).
+    // call's vendor omits usage, so its sent frame stands in — R10-05).
     expect(result.usage.samFramesBilled).toBe(13);
     expect(result.usage.samFrames).toBe(13);
     expect(result.usage.budgetExhausted).toBe(false);
@@ -517,7 +517,7 @@ describe("runGround SAM lens (W11-06)", () => {
     };
     const first = await runGround(env, "job1", manifest, lensScout(), replaying);
     const eventsAfterFirst = await readJobEvents(env, "job1");
-    expect(first.usage.samFramesBilled).toBe(13); // 12 vendor-reported + 1 sent hero frame (R9-05 fallback)
+    expect(first.usage.samFramesBilled).toBe(13); // 12 vendor-reported + 1 sent hero frame (R10-05 fallback)
     expect(first.checkpoints[0].candidates[0].source).toBe("AI_GROUNDED");
 
     vi.stubGlobal("fetch", async () => {
@@ -581,7 +581,7 @@ describe("runGround SAM lens (W11-06)", () => {
     await runGround(env, "job1", manifest, lensScout());
 
     const events = await readJobEvents(env, "job1");
-    // Same-millisecond order is not contract (R9-08); assert the set.
+    // Same-millisecond order is not contract (R10-08); assert the set.
     expect(events.map((e) => e.type).sort()).toEqual(["checkpoint", "usage"]);
     const checkpoint = events.find((e) => e.type === "checkpoint");
     expect(checkpoint).toMatchObject({ nodeId: "n2", status: "grounded" });

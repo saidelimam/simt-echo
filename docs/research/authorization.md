@@ -1,6 +1,6 @@
 # Authorization: per-install device keys
 
-**Status:** decided (review 0009, finding F1; slice R9-01)
+**Status:** decided (review 0010, finding F1; slice R10-01)
 
 ## Problem
 
@@ -71,7 +71,7 @@ Semantics worth noting:
 
 - **No existence leak.** Every foreign read is the same `404` as a missing
   object; there is no `403` anywhere in the model.
-- **Legacy / unknown owner.** A job with no `owner.json` (pre-R9-01, or swept)
+- **Legacy / unknown owner.** A job with no `owner.json` (pre-R10-01, or swept)
   keeps the idempotent `DELETE → 204`; a relay object with no `owner` metadata
   stays readable (the QR pair both hold the code). Unknown ≠ foreign.
 - **Replay path is owner-checked.** An idempotent job create returns the
@@ -114,6 +114,6 @@ Semantics worth noting:
 
 ## What this does not fix (separate slices)
 
-- Retention (R9-02): stamps bind ownership, not lifetime.
-- Fan-out and spend bounds (R9-03…R9-05): the per-install limit throttles
+- Retention (R10-02): stamps bind ownership, not lifetime.
+- Fan-out and spend bounds (R10-03…R10-05): the per-install limit throttles
   request rate, not manifest size or AI spend.

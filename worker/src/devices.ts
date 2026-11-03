@@ -1,4 +1,4 @@
-// Per-install device credentials (review 0009, finding F1 / slice R9-01).
+// Per-install device credentials (review 0010, finding F1 / slice R10-01).
 //
 // One opaque, high-entropy key per install, minted by `POST /v1/device` on
 // first run. The key is the sole bearer for that install: the shared

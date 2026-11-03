@@ -8,12 +8,12 @@ import { bearer, seedDevice } from "./testkit";
 // create, and staged-upload discard. The FakeR2/FakePipeline stand-ins
 // mirror jobs.test.ts (duplicated per file, the established pattern).
 
-// R9-01: the bearer is a per-install device key. Two fixed installs prove
+// R10-01: the bearer is a per-install device key. Two fixed installs prove
 // isolation; the seeded one is the owner in every test.
 const KEY = "dk_test_install_one";
 const OTHER = "dk_test_install_two";
 
-// R9-10: the intake move puts a stream through, so the fake stores what R2
+// R10-10: the intake move puts a stream through, so the fake stores what R2
 // would — a drained body. Consumed exactly once, like a real object body.
 async function streamToArrayBuffer(stream: ReadableStream<Uint8Array>): Promise<ArrayBuffer> {
   const reader = stream.getReader();
@@ -41,14 +41,14 @@ class FakeR2 {
     value: ArrayBuffer | Uint8Array | string | ReadableStream<Uint8Array>,
     opts?: { httpMetadata?: { contentType?: string }; onlyIf?: { etagMatches?: string } },
   ): Promise<null> {
-    // R9-05: honor R2's etag semantics — a conditional put fails when the
+    // R10-05: honor R2's etag semantics — a conditional put fails when the
     // etag moved or the object does not exist.
     if (opts?.onlyIf?.etagMatches !== undefined) {
       const entry = this.store.get(key);
       if (!entry || entry.etag !== opts.onlyIf.etagMatches) throw new Error("etag mismatch");
     }
     // Normalize to a detached ArrayBuffer: a Uint8Array view aliases its pool
-    // buffer, and TS's generics treat the view as a distinct type. R9-10: a
+    // buffer, and TS's generics treat the view as a distinct type. R10-10: a
     // stream is consumed eagerly so the stored body mirrors R2's stored size.
     const body =
       value instanceof ReadableStream
@@ -77,7 +77,7 @@ class FakeR2 {
   }
 
   async head(key: string) {
-    // R9-10: the intake caps measure stored sizes via head — mirror R2.
+    // R10-10: the intake caps measure stored sizes via head — mirror R2.
     return this.store.has(key) ? { key, size: this.store.get(key)!.body.byteLength } : null;
   }
 
@@ -128,7 +128,7 @@ class FakePipeline {
 }
 
 async function envFor(media: FakeR2, pipeline?: FakePipeline) {
-  // R9-01: register the test install so every authenticated request resolves.
+  // R10-01: register the test install so every authenticated request resolves.
   await seedDevice(media, KEY);
   return {
     ECHO_APP_TOKEN: "retired",
@@ -174,7 +174,7 @@ function validManifest() {
   };
 }
 
-// R9-10: the max-size job's manifest references exactly the two staged
+// R10-10: the max-size job's manifest references exactly the two staged
 // blobs, so completeness passes and nothing else is required.
 function bigManifest() {
   return {
@@ -231,7 +231,7 @@ function putBlob(env: never, uploadId: string, name: string, data: number[] | Ui
   );
 }
 
-// R9-11 (F10.2): manifest-only v1.1 creates are 400, so tests that create
+// R10-11 (F10.2): manifest-only v1.1 creates are 400, so tests that create
 // jobs stage the manifest's three media files in one session first.
 async function stageFullUpload(env: never): Promise<string> {
   const files = [
@@ -244,7 +244,7 @@ async function stageFullUpload(env: never): Promise<string> {
   return uploadId;
 }
 
-// R9-10: a random blob plus the hex sha256 the create request must declare.
+// R10-10: a random blob plus the hex sha256 the create request must declare.
 async function randomBlobWithSha(size: number): Promise<{ data: Uint8Array; sha256: string }> {
   const data = new Uint8Array(size);
   crypto.getRandomValues(data.subarray(0, 65536));
@@ -284,7 +284,7 @@ describe("W11-09 ready-on-arrival uploads", () => {
     expect(ghost.status).toBe(204);
   });
 
-  it("does not sweep other sessions on create (R9-09: cron owns cleanup)", async () => {
+  it("does not sweep other sessions on create (R10-09: cron owns cleanup)", async () => {
     const media = new FakeR2();
     const env = await envFor(media, new FakePipeline());
     // The state the old opportunistic sweep removed on every create: an
@@ -377,7 +377,7 @@ describe("W11-09 ready-on-arrival uploads", () => {
     const pipeline = new FakePipeline();
     const env = await envFor(media, pipeline);
     // Two 40 MiB blobs total exactly MAX_UPLOAD_BYTES: the move must stream
-    // each R2→R2 without holding the whole job in memory (R9-10). The
+    // each R2→R2 without holding the whole job in memory (R10-10). The
     // manifest references exactly these names, so completeness passes.
     const half = MAX_UPLOAD_BYTES / 2;
     const [a, b] = await Promise.all([randomBlobWithSha(half), randomBlobWithSha(half)]);
@@ -655,7 +655,7 @@ describe("idempotent create and job cleanup", () => {
         !k.startsWith("jobs/staging/") &&
         !k.startsWith("jobs/idem/") &&
         !k.startsWith("devices/") &&
-        // R9-05: the day's ledger reservation stands — a reserve with a
+        // R10-05: the day's ledger reservation stands — a reserve with a
         // failed job spends toward the cap, never under it.
         !k.startsWith("spend/"),
     );
@@ -681,7 +681,7 @@ describe("idempotent create and job cleanup", () => {
   });
 });
 
-describe("daily spend cap on v1.1 creates (R9-05)", () => {
+describe("daily spend cap on v1.1 creates (R10-05)", () => {
   const day = () => `spend/daily/${new Date().toISOString().slice(0, 10)}.json`;
 
   it("reserves the declared budget, not the ceiling", async () => {
@@ -851,7 +851,7 @@ describe("upload PUT and id hardening", () => {
   });
 });
 
-describe("per-install isolation (R9-01)", () => {
+describe("per-install isolation (R10-01)", () => {
   it("keeps one install's staged session unreadable, unwritable, and undeletable by another", async () => {
     const media = new FakeR2();
     const env = await envFor(media, new FakePipeline());

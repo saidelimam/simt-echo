@@ -1,4 +1,4 @@
-# Review 0009 — Worker / backend full code review (bugs, over-spending, API, performance, security)
+# Review 0010 — Worker / backend full code review (bugs, over-spending, API, performance, security)
 
 Status: **complete** · created 2026-11-02 · Verdict: **BLOCK**
 
@@ -32,20 +32,20 @@ BLOCK. Tracker rows below are the fix slices; all start `Queued`.
 
 | id | state | slice | tier | lane | depends on | evidence |
 |---|---|---|---|---|---|---|
-| R9-01 | Complete | F1 shared-token authorization model: design note + tests proving one install cannot read/delete another's job, upload, or relay code | High | auth | — | df3f1b8a4fc2b409193e471631fe5061482d6de3 · test: npm test |
-| R9-02 | Complete | F2 indefinite retention of jobs and relay objects: lifecycle rules + cron sweep; test a terminal job's prefix and an expired relay object are gone without a GET | High | storage | — | 27a8919f1e229673cab66800221de85f34e47150 · test: npm test |
-| R9-03 | Complete | F3 unbounded manifest fan-out: schema caps (checkpoints, keyframes, approach, strings) + rejection tests at the caps | High | schema | — | 83ca02a3b2ae61ab91cd6cd56eb7f844065c55dd · test: npm test |
-| R9-04 | Complete | F3 scout is one Workflow step, so retries/fallbacks re-bill every checkpoint: per-checkpoint steps or persisted per-checkpoint results; test a failure at checkpoint n does not re-call 1..n-1 | High | pipeline | R9-03 | 48e55a6be96feae4b00ddafbf3a666170166a863 · test: npm test |
-| R9-05 | Complete | F4 spend governance is per-job and estimate-based only: account-level daily cap/kill-switch; samFramesBilled reconciled against vendor usage; alert/runbook note | High | spend | R9-03 | f5b63f333c2272d2a5a62aab25a2081700b9f042 · test: npm test |
-| R9-06 | Queued | F5 scout ignores face/quality frame flags; clips reach SAM unflagged: scout drops flagged frames like the lens; clip flag contract or recorded acceptance | Medium | scout | R9-03 |  |
-| R9-07 | Complete | F6 relay allocation race, pre-cap buffering, low-entropy reusable code: conditional put or equivalent; capped streaming read; code entropy/one-shot decision + tests | Medium | relay | — | b3a530f70d3fdf8974a7c290ba48c254a1aa6b4c · test: npm test |
-| R9-08 | Complete | F7 SSE event ids are not a reliable sort key: sortable, isolate-independent event ids; same-millisecond multi-isolate ordering test | Medium | events | — | 5f65868390e9b90dc9f6cb3fceaf1446f0b95a52 · test: npm test |
-| R9-09 | Complete | F8 every upload-create scans all staging + all idempotency records: sweep removed from the create path (cron only) or sharded; op-count note in the slice | Medium | uploads | — | fe94dc1c84d9ac1612f7bdf875ecc820fec73e3e · test: npm test |
-| R9-10 | Complete | F9 whole-job media held in memory twice (intake move + lens planning): streamed/lazy media handling; max-size job (80 MB) completes in a local Workers runtime test | Medium | memory | — | 334beabce396e56cc1452d39c53eb6c464016e12 · test: npm test |
-| R9-11 | Complete | F10 idempotency not bound to payload; manifest-only creates; duplicate ids accepted: payload-hash conflict (409), required upload reference, uniqueness refinements + tests | Medium | uploads | — | 33dc6d75ad0a216d0037a2eaed744d9c4f4ac1a0 · test: npm test |
-| R9-12 | Queued | F11 inconsistent error envelope; vendor error text reaches clients: app.onError JSON envelope, sanitized job errors, Retry-After, request ids; contract tests | Medium | api | — | |
-| R9-13 | Queued | F12 duplicate in-flight SAM calls; image phase can starve video; legacy ground path: in-flight dedupe by cache key, video-first reservation, legacy removal or explicit keep-decision | Low | lens | — | |
-| R9-14 | Queued | F13 config hygiene (ENV=dev in prod, workers_dev on, health disclosure, SAM box bounds): config diff + a bounds test in samParse | Low | config | — | |
+| R10-01 | Complete | F1 shared-token authorization model: design note + tests proving one install cannot read/delete another's job, upload, or relay code | High | auth | — | df3f1b8a4fc2b409193e471631fe5061482d6de3 · test: npm test |
+| R10-02 | Complete | F2 indefinite retention of jobs and relay objects: lifecycle rules + cron sweep; test a terminal job's prefix and an expired relay object are gone without a GET | High | storage | — | 27a8919f1e229673cab66800221de85f34e47150 · test: npm test |
+| R10-03 | Complete | F3 unbounded manifest fan-out: schema caps (checkpoints, keyframes, approach, strings) + rejection tests at the caps | High | schema | — | 83ca02a3b2ae61ab91cd6cd56eb7f844065c55dd · test: npm test |
+| R10-04 | Complete | F3 scout is one Workflow step, so retries/fallbacks re-bill every checkpoint: per-checkpoint steps or persisted per-checkpoint results; test a failure at checkpoint n does not re-call 1..n-1 | High | pipeline | R10-03 | 48e55a6be96feae4b00ddafbf3a666170166a863 · test: npm test |
+| R10-05 | Complete | F4 spend governance is per-job and estimate-based only: account-level daily cap/kill-switch; samFramesBilled reconciled against vendor usage; alert/runbook note | High | spend | R10-03 | f5b63f333c2272d2a5a62aab25a2081700b9f042 · test: npm test |
+| R10-06 | Queued | F5 scout ignores face/quality frame flags; clips reach SAM unflagged: scout drops flagged frames like the lens; clip flag contract or recorded acceptance | Medium | scout | R10-03 |  |
+| R10-07 | Complete | F6 relay allocation race, pre-cap buffering, low-entropy reusable code: conditional put or equivalent; capped streaming read; code entropy/one-shot decision + tests | Medium | relay | — | b3a530f70d3fdf8974a7c290ba48c254a1aa6b4c · test: npm test |
+| R10-08 | Complete | F7 SSE event ids are not a reliable sort key: sortable, isolate-independent event ids; same-millisecond multi-isolate ordering test | Medium | events | — | 5f65868390e9b90dc9f6cb3fceaf1446f0b95a52 · test: npm test |
+| R10-09 | Complete | F8 every upload-create scans all staging + all idempotency records: sweep removed from the create path (cron only) or sharded; op-count note in the slice | Medium | uploads | — | fe94dc1c84d9ac1612f7bdf875ecc820fec73e3e · test: npm test |
+| R10-10 | Complete | F9 whole-job media held in memory twice (intake move + lens planning): streamed/lazy media handling; max-size job (80 MB) completes in a local Workers runtime test | Medium | memory | — | 334beabce396e56cc1452d39c53eb6c464016e12 · test: npm test |
+| R10-11 | Complete | F10 idempotency not bound to payload; manifest-only creates; duplicate ids accepted: payload-hash conflict (409), required upload reference, uniqueness refinements + tests | Medium | uploads | — | 33dc6d75ad0a216d0037a2eaed744d9c4f4ac1a0 · test: npm test |
+| R10-12 | In progress | F11 inconsistent error envelope; vendor error text reaches clients: app.onError JSON envelope, sanitized job errors, Retry-After, request ids; contract tests | Medium | api | — |  |
+| R10-13 | Queued | F12 duplicate in-flight SAM calls; image phase can starve video; legacy ground path: in-flight dedupe by cache key, video-first reservation, legacy removal or explicit keep-decision | Low | lens | — | |
+| R10-14 | Queued | F13 config hygiene (ENV=dev in prod, workers_dev on, health disclosure, SAM box bounds): config diff + a bounds test in samParse | Low | config | — | |
 
 ## Live Cloudflare state (verified 2026-11-02 via MCP)
 
@@ -152,7 +152,7 @@ all reachable by any token holder:
   (`scout.ts:524-548`: "the loser keeps running in the background"),
   so a timed-out Llama call can still be billed before Gemma runs.
 
-Fix is R9-03 (caps first — one schema change) then R9-04
+Fix is R10-03 (caps first — one schema change) then R10-04
 (per-checkpoint steps with persisted results, mirroring the lens).
 
 ### F4 — Spend governance stops at the per-job SAM estimate (High)
@@ -389,13 +389,13 @@ sends staged clip bytes to Meta with no per-frame flag contract
 - No live AI call was made: Workers AI and SAM behaviour, real
   per-call billing, and Meta's `video_frames_processed` reporting
   are taken from code and prior reviews, not measured here.
-  R9-05's accounting fix needs one metered live job to close.
+  R10-05's accounting fix needs one metered live job to close.
 - No load or memory test was run; F9's termination risk is inferred
   from the 80 MB caps and the Workers 128 MB limit, not reproduced.
 - Cloudflare account-level settings outside this worker (WAF, API
   Shield, gateway caching/logging on the `echo` AI Gateway, billing
   alerts) were not inspected; F4's kill-switch may partly exist
-  there — verify before slicing R9-05.
+  there — verify before slicing R10-05.
 - App-side handling of results (how long the phone keeps job data,
   whether it ever calls `DELETE /v1/jobs/:id`) was out of scope
   except for token distribution; F2's fix should be checked against
@@ -418,6 +418,6 @@ sends staged clip bytes to Meta with no per-frame flag contract
   read), `console.` in `worker/src` (none outside tests).
 
 Verdict: **BLOCK** — F1, F2, F3, and F4 are High and owed as
-R9-01…R9-05 before this backend is signed off. The Medium and Low
+R10-01…R10-05 before this backend is signed off. The Medium and Low
 rows do not block individually but should be sliced in the order
 listed. No code was changed by this review.

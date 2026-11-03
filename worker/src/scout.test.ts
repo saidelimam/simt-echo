@@ -381,7 +381,7 @@ describe("runScout typed failures", () => {
       (e) => e,
     );
     expect(err).toBeInstanceOf(ScoutError);
-    // R9-04: the checkpoint step wraps the deterministic all_models_failed
+    // R10-04: the checkpoint step wraps the deterministic all_models_failed
     // in a NonRetryableError, so the chain's final error is a no_provider
     // ScoutError carrying the all_models_failed message. Raw model text
     // still never leaks.
@@ -415,7 +415,7 @@ describe("runScout typed failures", () => {
   });
 });
 
-// R9-04 test delta (review 0009, F3): per-checkpoint steps with persisted
+// R10-04 test delta (review 0010, F3): per-checkpoint steps with persisted
 // results. A PersistentStep stands in for the Workflow's durable step
 // state: a step that completed once returns its recorded output on every
 // later call; a failed step is re-run — the Workflow persists only
@@ -477,7 +477,7 @@ function seedThree(media: FakeR2, jobId: string) {
   }
 }
 
-describe("runScout per-checkpoint steps (R9-04)", () => {
+describe("runScout per-checkpoint steps (R10-04)", () => {
   it("re-bills only the failed checkpoint on replay; completed ones come from recorded output", async () => {
     const media = new FakeR2();
     const jobId = "job-1";
@@ -499,7 +499,7 @@ describe("runScout per-checkpoint steps (R9-04)", () => {
       (e) => e,
     );
     expect(err).toBeInstanceOf(ScoutError);
-    // R9-04: the step's NonRetryableError is swallowed by the chain into a
+    // R10-04: the step's NonRetryableError is swallowed by the chain into a
     // no_provider ScoutError carrying the all_models_failed message.
     expect((err as ScoutError).code).toBe("no_provider");
     expect((err as ScoutError).message).toContain("all_models_failed");

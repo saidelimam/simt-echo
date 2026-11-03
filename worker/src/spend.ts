@@ -1,4 +1,4 @@
-// R9-05 (review 0009, F4): the account-level daily spend cap. The lens
+// R10-05 (review 0010, F4): the account-level daily spend cap. The lens
 // governor (samLens.ts) caps ONE job at budget.maxSamFrames; nothing
 // bounded the sum of jobs, and the per-token rate limit is the only
 // throttle (F1 shared the token across installs).
