@@ -94,6 +94,86 @@ class VisualFlowTest {
     }
 
     @Test
+    fun acceptedRotationDomainCancelsToTheResidualBound() {
+        for (angle in listOf(-0.15, -0.10, -0.05, 0.05, 0.10, 0.15)) {
+            assertPair(to = START.copy(yawRad = angle), rotationOnly = true)
+            assertPair(to = START.copy(pitchRad = angle), rotationOnly = true)
+        }
+        assertPair(to = START.copy(yawRad = 0.10, pitchRad = -0.08), rotationOnly = true)
+        assertPair(to = START.copy(yawRad = -0.12, pitchRad = 0.06), rotationOnly = true)
+    }
+
+    @Test
+    fun wrongFocalLengthClearsOrKeepsPureRotationInsideTheBound() {
+        val scene = world()
+        for (scale in listOf(0.85, 1.15)) {
+            for (yaw in listOf(-0.10, 0.10)) {
+                val camera = intrinsics(scene.phone, scale)
+                val to = START.copy(yawRad = yaw)
+                val tracker = VisualFlow(width = SimWorld.LUMA_WIDTH, height = SimWorld.LUMA_HEIGHT)
+                assertFalse(tracker.onFrame(scene.render(START, START_NS).luma, START_NS, camera))
+                val produced = tracker.onFrame(
+                    scene.render(to, START_NS + INTERVAL_NS).luma,
+                    START_NS + INTERVAL_NS,
+                    camera,
+                    deltaYawRad = yaw,
+                )
+                if (!produced) {
+                    assertEquals(0, tracker.flow.count)
+                } else {
+                    // A 15% focal error at 0.10 rad moves the rotational prediction by about
+                    // 1–2 px. Matched intrinsics stay at 0.15 px RMS; this only bounds the miss.
+                    assertMatchesOracle(
+                        tracker.flow, scene, START, to, START_NS, START_NS + INTERVAL_NS, camera,
+                        rotationOnly = true, minBlocks = 1, maxErrorPx = 2.5, maxRmsPx = 2.0,
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
+    fun recordAndNavigateSpeedsKeepCorrectBlocksOnNearAndFarWalls() {
+        val scene = world()
+        val camera = intrinsics(scene.phone)
+        val cases = listOf(
+            54.0 to (0.125 to 0.1125),
+            54.0 to (0.125 to 0.1375),
+            58.0 to (0.125 to 0.1125),
+            58.0 to (0.125 to 0.1375),
+            54.0 to (0.5 to 0.45),
+            54.0 to (0.5 to 0.55),
+            57.0 to (0.5 to 0.45),
+            57.0 to (0.5 to 0.50),
+            57.0 to (0.5 to 0.55),
+        )
+        val failures = mutableListOf<String>()
+        for ((y, motion) in cases) {
+            val (intervalSeconds, distance) = motion
+            val from = START.copy(y = y)
+            val to = from.copy(y = y + distance, yawRad = 0.02)
+            val intervalNs = (intervalSeconds * 1_000_000_000.0).toLong()
+            val tracker = VisualFlow(width = SimWorld.LUMA_WIDTH, height = SimWorld.LUMA_HEIGHT)
+            assertFalse(tracker.onFrame(scene.render(from, START_NS).luma, START_NS, camera))
+            val produced = tracker.onFrame(
+                scene.render(to, START_NS + intervalNs).luma,
+                START_NS + intervalNs,
+                camera,
+                deltaYawRad = 0.02,
+            )
+            val label = "y=$y distance=$distance dt=${intervalSeconds}s (count=${tracker.flow.count})"
+            if (!produced) {
+                failures += "$label: produced no blocks"
+                continue
+            }
+            for (issue in oracleFailures(tracker.flow, scene, from, to, START_NS, START_NS + intervalNs, camera)) {
+                failures += "$label: $issue"
+            }
+        }
+        assertTrue(failures.isEmpty(), failures.joinToString("\n"))
+    }
+
+    @Test
     fun approximateFocalLengthsStillTrackTranslationDuringSmallYaw() {
         val world = world()
         for (scale in listOf(0.85, 1.15)) {
@@ -203,8 +283,31 @@ class VisualFlowTest {
         toNs: Long,
         intrinsics: CameraIntrinsics,
         rotationOnly: Boolean = false,
+        minBlocks: Int = MIN_BLOCKS,
+        maxErrorPx: Double = FLOW_ERROR_BASE_PX,
+        maxRmsPx: Double = ROTATION_RMS_BASE_PX,
     ) {
-        assertTrue(flow.count in MIN_BLOCKS..BLOCK_CAPACITY, "need at least $MIN_BLOCKS valid blocks, got ${flow.count}")
+        val issues = oracleFailures(flow, world, from, to, fromNs, toNs, intrinsics, rotationOnly, minBlocks, maxErrorPx, maxRmsPx)
+        assertTrue(issues.isEmpty(), issues.joinToString("\n"))
+    }
+
+    private fun oracleFailures(
+        flow: BlockFlow,
+        world: SimWorld,
+        from: SimPose,
+        to: SimPose,
+        fromNs: Long,
+        toNs: Long,
+        intrinsics: CameraIntrinsics,
+        rotationOnly: Boolean = false,
+        minBlocks: Int = MIN_BLOCKS,
+        maxErrorPx: Double = FLOW_ERROR_BASE_PX,
+        maxRmsPx: Double = ROTATION_RMS_BASE_PX,
+    ): List<String> {
+        val issues = mutableListOf<String>()
+        if (flow.count !in minBlocks..BLOCK_CAPACITY) {
+            issues += "need at least $minBlocks valid blocks, got ${flow.count}"
+        }
         for (array in listOf(flow.x, flow.y, flow.dx, flow.dy, flow.texture, flow.quality)) {
             assertEquals(BLOCK_CAPACITY, array.size)
         }
@@ -233,15 +336,22 @@ class VisualFlowTest {
             val errorX = (flow.dx[i] - expectedDx) * fBase
             val errorY = (flow.dy[i] - expectedDy) * fBase
             val errorPx = sqrt(errorX * errorX + errorY * errorY)
-            assertTrue(errorPx <= FLOW_ERROR_BASE_PX, "block $i error $errorPx base px at $pixel; actual=(${flow.dx[i] * fBase},${flow.dy[i] * fBase}), expected=(${expectedDx * fBase},${expectedDy * fBase})")
+            if (errorPx > maxErrorPx) {
+                issues += "block $i error $errorPx base px at $pixel; actual=(${flow.dx[i] * fBase},${flow.dy[i] * fBase}), expected=(${expectedDx * fBase},${expectedDy * fBase})"
+            }
             residualSquared += (flow.dx[i] * flow.dx[i] + flow.dy[i] * flow.dy[i]) * fBase * fBase
             signalSquared += (total.x * total.x + total.y * total.y) / 4.0
         }
-        assertTrue(sqrt(signalSquared / flow.count) >= 0.3, "fixture motion must be measurably nonzero")
-        if (rotationOnly) {
-            val rms = sqrt(residualSquared / flow.count)
-            assertTrue(rms <= ROTATION_RMS_BASE_PX, "pure rotation residual RMS $rms base px")
+        if (flow.count > 0 && sqrt(signalSquared / flow.count) < 0.3) {
+            issues += "fixture motion must be measurably nonzero"
         }
+        if (rotationOnly && flow.count > 0) {
+            val rms = sqrt(residualSquared / flow.count)
+            if (rms > maxRmsPx) {
+                issues += "pure rotation residual RMS $rms base px"
+            }
+        }
+        return issues
     }
 
     private fun assertSameStaticPoint(before: SimPoint3, after: SimPoint3, block: Int) {

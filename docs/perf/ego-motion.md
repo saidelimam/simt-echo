@@ -3,10 +3,17 @@
 Evidence: **sim and host unit/allocation only**, not device accuracy or timing.
 
 The fixed-storage fit estimates radial expansion and the focus of expansion
-in focal-normalised coordinates. A resolved residual-yaw component can join
-the fit; an unresolved nuisance must not amplify travel-angle noise. Three
-Huber reweighting passes follow the initial weighted least-squares solve.
-Texture scoring is shared with `VisualUsability`, not copied.
+in focal-normalised coordinates. Before least-squares runs,
+`TranslationConsensus` intersects pairwise translation-flow lines to locate a
+depth-free focus of expansion and identify the supporting block set. When the
+supporting per-block expansion scales agree (`sharedDepth`), consensus masks
+outlier blocks before the initial weighted solve and three Huber IRLS passes.
+When depth varies across an oblique or mixed-depth scene, the intersection
+focus and median expansion are published directly without allowing the
+single-depth yaw nuisance term to shift `foeX` or `travelOffsetRad`. Tied rival
+direction clusters supported by distinct block sets mark the fit ambiguous,
+keep `hasFoe = false` and cap `confidence01` at `0.49`. Texture scoring is
+shared with `VisualUsability`, not copied.
 
 `VisualEgo` is reused. Callers must copy primitive fields before retaining
 them; absent focus coordinates and travel angle are primitive NaNs, with
@@ -19,32 +26,31 @@ is retained with uncertainty, never substituted by a trusted zero.
 ## Executed gate
 
 ```
-./gradlew :shared:testAndroidHostTest --tests app.simt.echo.capture.visual.EgoMotionFitTest --tests app.simt.echo.capture.visual.EgoMotionFitAllocationTest --tests app.simt.echo.capture.visual.VisualUsabilityTest :shared:compileKotlinIosArm64 :shared:compileKotlinIosSimulatorArm64
+./gradlew --no-configuration-cache :shared:testAndroidHostTest --tests app.simt.echo.capture.visual.EgoMotionFitTest --tests app.simt.echo.capture.visual.EgoMotionFitAllocationTest --tests app.simt.echo.capture.visual.VisualUsabilityTest
 ```
 
-The three classes pass 20 tests with no failures or skips. Rendered forward
-expansion meets the 8% bound; ±10° travel offsets meet the 2° bound. Replacing
-four of twelve measured vectors by coherent camera-relative moving-billboard
-vectors preserves the 15% expansion bound, at least six static inliers and
-confidence above 0.5. Blank/flat, insufficient support, standing, sideways,
-singular and malformed inputs have explicit coverage.
+The three classes pass 24 tests (`EgoMotionFitTest` 16,
+`EgoMotionFitAllocationTest` 4, `VisualUsabilityTest` 4) with no failures or
+skips. Rendered forward expansion meets the 8% bound at both 8 Hz Record and
+2 Hz Navigate spacings; ±10° travel offsets meet the 2° bound both for
+uniform-depth diagonal travel and for actual rotated `SimPose` camera holds on
+mixed-depth corridor walls (plus pitched hold recovery). All 495 four-of-twelve
+coherent-outlier placements across three velocities never produce >15%
+expansion error with `confidence01 >= 0.5`, and blocks `2,3,10,11`, all six
+contiguous 2×2 billboard placements, and rendered moving-billboard vectors
+retain the 15% expansion bound with `confidence01 > 0.5`. Contradictory split
+directions stay absent and below 0.5 confidence. Blank/flat, insufficient
+support, standing, sideways, singular and malformed inputs have explicit
+coverage.
 
 Four warmed allocation probes cover joint, robust, standing and sideways
 fits, including result consumption. All measure zero bytes. The travel-angle
 getter is exercised before measurement, avoiding a cold `atan` initialization
 inside an otherwise warmed fit probe; no allocation threshold was relaxed.
-Both iOS target compiles pass.
+iOS target compiles were out of scope for the Review 0009 repair.
 
-Limits: rendered hold-offset cases use diagonal travel with a wall-normal
-camera, so their depth is uniform. They do not prove the radial model for
-arbitrary slanted walls or mixed-depth scenes. Billboard replacements are
-explicit vector-level adversarial fixtures, not a rendered crowd result.
-Heading fusion and Android registration belong to subsequent slices.
-
-An oblique plane can exactly mimic yaw: translation rates
-`rx = d*x + g*x*x`, `ry = d*y + g*x*y` fit the joint model with
-`yaw = -g` and `foeX = g/d`, even though true yaw and FOE are zero.
-Small residuals and statistical significance cannot distinguish those
-explanations. W16-03 must impose an independent physical-validity policy
-before using this witness for heading; neither `confidence01` nor
-`yawResolved` alone is that policy.
+Limits: billboard and 495-placement sweeps are deterministic rendered/vector
+fixtures, not a field crowd result. When an oblique wall produces mixed depths,
+`TranslationConsensus` recovers the travel direction while leaving
+`yawResolved = false`; W16-03 still owns heading-fusion policy and ten-minute
+drift validation.
