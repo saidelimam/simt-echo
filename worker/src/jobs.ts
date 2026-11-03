@@ -1,10 +1,12 @@
 import { Hono } from "hono";
 import type { AppEnv, Env } from "./index";
 import { deletePrefix, handleCreateJobV11, idemKey, readJobOwner, writeJobOwner } from "./uploads";
+import { reserveDailySpend, spendDisabled } from "./spend";
 import {
   JobEventSchema,
   JobResultSchema,
   ManifestSchema,
+  MAX_SAM_FRAMES,
   type JobEvent,
   type JobStage,
   type Manifest,
@@ -179,6 +181,11 @@ export function registerJobsRoutes(app: Hono<AppEnv>): void {
     if ((c.req.header("content-type") ?? "").includes("application/json")) {
       return handleCreateJobV11(c);
     }
+    // R9-05 (F4): the daily cap precedes storage — a halted deployment
+    // creates nothing, and the ledger is untouched.
+    if (spendDisabled(c.env)) {
+      return c.json({ ok: false, error: "spend_disabled" }, 503);
+    }
     let manifest: Manifest;
     let allowed: Set<string>;
     let files: Array<{ name: string; file: File }>;
@@ -211,6 +218,16 @@ export function registerJobsRoutes(app: Hono<AppEnv>): void {
     }
     if (totalBytes > MAX_TOTAL_BYTES) {
       return c.json({ ok: false, error: "payload_too_large" }, 413);
+    }
+    // R9-05 (F4): reserve the job's worst case before any file lands —
+    // v1 carries no budget, so the hard ceiling is what a job can spend.
+    // Over the cap is 503; a contention storm is the handler's 500 —
+    // nothing was written.
+    const reserve = await reserveDailySpend(c.env, MAX_SAM_FRAMES);
+    if (!reserve.ok) {
+      return reserve.reason === "over_cap"
+        ? c.json({ ok: false, error: "daily_budget_exceeded" }, 503)
+        : c.json({ ok: false, error: "job_create_failed" }, 500);
     }
     // Storage/creation failures are 500s: the manifest above was valid,
     // so reporting invalid_manifest here would mask an outage.

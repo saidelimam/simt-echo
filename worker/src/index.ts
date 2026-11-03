@@ -34,6 +34,13 @@ export interface Env {
   /** W11-06: reserved for the W11-07 multi-phrase probe outcome (default
    * off; probe TBD in docs/measurements.md, so single-phrase-per-call). */
   MULTI_PHRASE?: string;
+  /** R9-05 (review 0009, F4): daily SAM-frame cap the create paths
+   * reserve against (spend.ts). Unset → 1200, five jobs at the 240
+   * ceiling. Ops: docs/operations/spend.md. */
+  DAILY_MAX_SAM_FRAMES?: string;
+  /** R9-05: exactly `on` rejects every job create with 503
+   * spend_disabled without touching the ledger. */
+  SPEND_KILL_SWITCH?: string;
 }
 
 // Kept module-private: workerd treats every named export as a potential

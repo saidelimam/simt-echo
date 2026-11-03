@@ -19,10 +19,12 @@
       // (see `triggers`) does not reach in time — terminal job prefixes
       // (inputs, events, SAM evidence, results) and relay ciphertext.
       // Relay objects normally die at their 30 min TTL; jobs at 24 h past
-      // a terminal stage.
+      // a terminal stage. R9-05: the spend ledger is audit residue, kept
+      // two days for inspection, then swept.
       "lifecycle_rules": [
         { "id": "expire-jobs", "prefix": "jobs/", "expiration": { "days": 1 } },
-        { "id": "expire-relay", "prefix": "relay/", "expiration": { "days": 1 } }
+        { "id": "expire-relay", "prefix": "relay/", "expiration": { "days": 1 } },
+        { "id": "expire-spend", "prefix": "spend/", "expiration": { "days": 2 } }
       ]
     }
   ],
@@ -51,6 +53,10 @@
     "GROUND_ORDER": "sam31,none",
     "AI_GATEWAY_ID": "echo",
     "WORKERS_AI_MODELS": "@cf/meta/llama-4-scout-17b-16e-instruct,@cf/google/gemma-4-26b-a4b-it",
+    // R9-05 (review 0009, F4): daily SAM-frame cap, five jobs at the 240
+    // ceiling. SPEND_KILL_SWITCH is intentionally unset — set it to "on"
+    // (dashboard var) to halt job creation; see docs/operations/spend.md.
+    "DAILY_MAX_SAM_FRAMES": "1200",
     "ENV": "dev"
   },
   // Hourly expiry sweep (R9-02): staged uploads past their 1 h TTL, orphaned

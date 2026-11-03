@@ -32,13 +32,20 @@ const OTHER = "dk_test_install_two";
 
 // In-memory R2 stand-in: only the surface jobs.ts touches.
 class FakeR2 {
-  store = new Map<string, { body: ArrayBuffer; contentType?: string }>();
+  store = new Map<string, { body: ArrayBuffer; contentType?: string; etag: string }>();
+  private seq = 0;
 
   async put(
     key: string,
     value: ArrayBuffer | Uint8Array | string,
-    opts?: { httpMetadata?: { contentType?: string } },
+    opts?: { httpMetadata?: { contentType?: string }; onlyIf?: { etagMatches?: string } },
   ): Promise<null> {
+    // R9-05: honor R2's etag semantics — a conditional put fails when the
+    // etag moved or the object does not exist.
+    if (opts?.onlyIf?.etagMatches !== undefined) {
+      const entry = this.store.get(key);
+      if (!entry || entry.etag !== opts.onlyIf.etagMatches) throw new Error("etag mismatch");
+    }
     // Normalize to a detached ArrayBuffer: a Uint8Array view aliases its pool
     // buffer, and TS's generics treat the view as a distinct type.
     const body =
@@ -47,7 +54,8 @@ class FakeR2 {
         : value instanceof Uint8Array
           ? (value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength) as ArrayBuffer)
           : value;
-    this.store.set(key, { body, contentType: opts?.httpMetadata?.contentType });
+    this.seq++;
+    this.store.set(key, { body, contentType: opts?.httpMetadata?.contentType, etag: `e${this.seq}` });
     return null;
   }
 
@@ -55,6 +63,7 @@ class FakeR2 {
     const entry = this.store.get(key);
     if (!entry) return null;
     return {
+      httpEtag: entry.etag,
       text: async () => new TextDecoder().decode(entry.body),
       arrayBuffer: async () => entry.body.slice(0),
       json: async <T,>() => JSON.parse(new TextDecoder().decode(entry.body)) as T,
@@ -332,6 +341,75 @@ describe("POST /v1/jobs", () => {
     expect(await res.json()).toEqual({ ok: false, error: "payload_too_large" });
   });
 
+  // R9-05 (F4): the daily spend cap on the v1 create path. v1 carries no
+  // budget, so the hard 240-frame ceiling is what a job reserves.
+  it("reserves the daily ledger before storing (240, the v1 ceiling)", async () => {
+    const media = new FakeR2();
+    const res = await postJob(await envFor(media, new FakePipeline()), validManifest());
+    expect(res.status).toBe(202);
+
+    const ledger = media.store.get(`spend/daily/${new Date().toISOString().slice(0, 10)}.json`);
+    expect(ledger).toBeDefined();
+    expect(JSON.parse(new TextDecoder().decode(ledger!.body))).toEqual({ reserved: 240 });
+  });
+
+  it("rejects creates past the daily cap (503, nothing stored)", async () => {
+    const media = new FakeR2();
+    const env = await envFor(media, new FakePipeline());
+    const day = `spend/daily/${new Date().toISOString().slice(0, 10)}.json`;
+    await media.put(day, JSON.stringify({ reserved: 1200 })); // default cap: 1200
+
+    const res = await postJob(env, validManifest());
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ ok: false, error: "daily_budget_exceeded" });
+    // The ledger stands; no job files, no workflow instance.
+    expect(JSON.parse(new TextDecoder().decode(media.store.get(day)!.body))).toEqual({ reserved: 1200 });
+    expect([...media.store.keys()].filter((k) => k.startsWith("jobs/"))).toEqual([]);
+  });
+
+  it("halts every create on the kill switch (503, ledger untouched)", async () => {
+    const media = new FakeR2();
+    const base = (await envFor(media, new FakePipeline())) as Record<string, unknown>;
+    const env = { ...base, SPEND_KILL_SWITCH: "on" } as never;
+
+    const res = await postJob(env, validManifest());
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ ok: false, error: "spend_disabled" });
+    // Nothing job-related stored and the ledger never even read (the
+    // device registration predates the create).
+    expect([...media.store.keys()].filter((k) => k.startsWith("spend/"))).toEqual([]);
+  });
+
+  it("fails closed on a ledger contention storm (500, nothing stored)", async () => {
+    const media = new FakeR2();
+    const pipeline = new FakePipeline();
+    const env = await envFor(media, pipeline);
+    const day = `spend/daily/${new Date().toISOString().slice(0, 10)}.json`;
+    const originalPut = media.put.bind(media);
+    // A rival writer lands on the etag before every one of our puts. It
+    // stays under the cap (101 < 1200), so the retries keep racing
+    // instead of tripping over_cap.
+    media.put = async (
+      key: string,
+      value: ArrayBuffer | Uint8Array | string,
+      opts?: { onlyIf?: { etagMatches?: string } },
+    ) => {
+      if (opts?.onlyIf?.etagMatches !== undefined && key === day) {
+        await originalPut(key, JSON.stringify({ reserved: 101 })); // fresh etag
+      }
+      return originalPut(key, value, opts);
+    };
+    await media.put(day, JSON.stringify({ reserved: 100 }));
+
+    const res = await postJob(env, validManifest());
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ ok: false, error: "job_create_failed" });
+    expect(pipeline.instances.size).toBe(0);
+  });
+
   it("fails closed without a workflow binding, storing nothing (500)", async () => {
     const media = new FakeR2();
     const res = await postJob(await envFor(media), validManifest());
@@ -477,8 +555,12 @@ describe("DELETE /v1/jobs/:id", () => {
     const res = await app.request(`/v1/jobs/${jobId}`, { method: "DELETE", headers: auth }, env);
     expect(res.status).toBe(204);
     expect(instance.terminated).toBe(false);
-    // Nothing job-related was stored (the seeded device record is not a job artifact).
-    expect([...media.store.keys()].filter((k) => !k.startsWith("devices/"))).toEqual([]);
+    // Nothing job-related was stored. The seeded device record is not a job
+    // artifact, and the day's spend reservation (R9-05) stands — deleting a
+    // job does not claw its reservation back from the cap.
+    expect(
+      [...media.store.keys()].filter((k) => !k.startsWith("devices/") && !k.startsWith("spend/")),
+    ).toEqual([]);
   });
 
   it("is idempotent for an unknown job (204)", async () => {

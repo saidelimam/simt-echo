@@ -13,9 +13,11 @@
 //      TURN/DESTINATION, or when image confidence is in [0.5, 0.85)
 //      (step `ground:<nodeId>:<k>:<phraseHash>:video`).
 // The budget governor reserves every estimate before any call is sent and
-// never exceeds `budget.maxSamFrames`; `usage.samFramesBilled` sums only
-// vendor-reported `response.completed` frames and `budgetExhausted` records
-// a refusal. W10-06 checkpoint + usage events are emitted per checkpoint.
+// never exceeds `budget.maxSamFrames`; `usage.samFramesBilled` sums
+// vendor-reported `response.completed` frames, falling back to the sent
+// frames when the vendor omits usage (R9-05), and `budgetExhausted`
+// records a refusal. W10-06 checkpoint + usage events are emitted per
+// checkpoint.
 //
 // Single-phrase-per-call: the W11-07 multi-phrase probe
 // (docs/measurements.md "SAM live probe" row 1) is TBD — no META_API_KEY
@@ -732,11 +734,12 @@ async function imageCall(
 ): Promise<{ candidate: Candidate; reason?: string } & CallSpend> {
   try {
     const call = await samCall(env, jobId, media, key, (b64) => imageBody(sc.samPhrase, b64), resumeOf, mustHit, lensOpts);
-    // Single hero frame sent; vendor image billing is unmeasured until
-    // the W11-07 probe (row 3), so sent frames stand in.
+    // Single hero frame sent; when the vendor omits usage the sent frame
+    // stands in for billed (R9-05) — a call that went out must never
+    // report zero cost. Vendor-reported usage wins when present.
     const spend: CallSpend = call.cached
       ? NO_SPEND
-      : { sentFrames: call.reported ?? 1, billedFrames: call.reported ?? 0, ms: call.samMs };
+      : { sentFrames: call.reported ?? 1, billedFrames: call.reported ?? 1, ms: call.samMs };
     if (call.text.trim() === "") return { candidate: fallback, reason: "empty_response", ...spend };
     await env.MEDIA.put(evidenceKey, call.text);
     const obs = parseSam(call.text);
@@ -774,9 +777,12 @@ async function videoCall(
 ): Promise<{ candidate: Candidate | null; reason?: string } & CallSpend> {
   try {
     const call = await samCall(env, jobId, media, key, (b64) => videoBody(phrase, b64), resumeOf, mustHit, lensOpts);
+    // Vendor-reported usage wins; when it is omitted the clip estimate
+    // stands in for billed (R9-05) — the same basis as sentFrames, never
+    // zero for a call that went out.
     const spend: CallSpend = call.cached
       ? NO_SPEND
-      : { sentFrames: call.reported ?? (cp.clip ? clipFrameEstimate(cp.clip) : 0), billedFrames: call.reported ?? 0, ms: call.samMs };
+      : { sentFrames: call.reported ?? (cp.clip ? clipFrameEstimate(cp.clip) : 0), billedFrames: call.reported ?? (cp.clip ? clipFrameEstimate(cp.clip) : 0), ms: call.samMs };
     if (call.text.trim() === "") return { candidate: null, reason: "empty_response", ...spend };
     await env.MEDIA.put(evidenceKey, call.text);
     const obs = parseSam(call.text);

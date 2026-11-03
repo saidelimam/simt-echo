@@ -1,8 +1,10 @@
 import { Hono, type Context } from "hono";
 import type { AppEnv, Env } from "./index";
+import { reserveDailySpend, spendDisabled } from "./spend";
 import {
   CreateJobV11RequestSchema,
   CreateUploadRequestSchema,
+  MAX_SAM_FRAMES,
   MAX_UPLOAD_BYTES,
   UploadPutParamsSchema,
   UuidSchema,
@@ -310,6 +312,11 @@ export async function sweepExpiredRelayObjects(env: Env, now: number = Date.now(
 
 /** POST /v1/jobs with a JSON v1.1 body (jobs.ts dispatches here). */
 export async function handleCreateJobV11(c: Context<AppEnv>): Promise<Response> {
+  // R9-05 (F4): the kill switch precedes everything, including idempotent
+  // replays — a halted deployment creates nothing, ledger untouched.
+  if (spendDisabled(c.env)) {
+    return c.json({ ok: false, error: "spend_disabled" }, 503);
+  }
   if (!c.env.PIPELINE) {
     return c.json({ ok: false, error: "server_misconfigured" }, 500);
   }
@@ -415,6 +422,17 @@ export async function handleCreateJobV11(c: Context<AppEnv>): Promise<Response> 
     if (totalBytes > MAX_UPLOAD_BYTES) {
       return c.json({ ok: false, error: "payload_too_large" }, 413);
     }
+  }
+
+  // R9-05 (F4): reserve the declared budget (or the hard ceiling) before
+  // the move consumes staging. A later failure leaves the reservation
+  // standing — over-reserving toward the cap, never under. Over the cap
+  // is 503; a contention storm is 500 — nothing was written.
+  const reserve = await reserveDailySpend(c.env, budget?.maxSamFrames ?? MAX_SAM_FRAMES);
+  if (!reserve.ok) {
+    return reserve.reason === "over_cap"
+      ? c.json({ ok: false, error: "daily_budget_exceeded" }, 503)
+      : c.json({ ok: false, error: "job_create_failed" }, 500);
   }
 
   // Set once the Workflow instance exists: from then on the job owns its

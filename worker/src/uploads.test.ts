@@ -13,13 +13,20 @@ const KEY = "dk_test_install_one";
 const OTHER = "dk_test_install_two";
 
 class FakeR2 {
-  store = new Map<string, { body: ArrayBuffer; contentType?: string }>();
+  store = new Map<string, { body: ArrayBuffer; contentType?: string; etag: string }>();
+  private seq = 0;
 
   async put(
     key: string,
     value: ArrayBuffer | Uint8Array | string,
-    opts?: { httpMetadata?: { contentType?: string } },
+    opts?: { httpMetadata?: { contentType?: string }; onlyIf?: { etagMatches?: string } },
   ): Promise<null> {
+    // R9-05: honor R2's etag semantics — a conditional put fails when the
+    // etag moved or the object does not exist.
+    if (opts?.onlyIf?.etagMatches !== undefined) {
+      const entry = this.store.get(key);
+      if (!entry || entry.etag !== opts.onlyIf.etagMatches) throw new Error("etag mismatch");
+    }
     // Normalize to a detached ArrayBuffer: a Uint8Array view aliases its pool
     // buffer, and TS's generics treat the view as a distinct type.
     const body =
@@ -28,7 +35,8 @@ class FakeR2 {
         : value instanceof Uint8Array
           ? (value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength) as ArrayBuffer)
           : value;
-    this.store.set(key, { body, contentType: opts?.httpMetadata?.contentType });
+    this.seq++;
+    this.store.set(key, { body, contentType: opts?.httpMetadata?.contentType, etag: `e${this.seq}` });
     return null;
   }
 
@@ -36,6 +44,7 @@ class FakeR2 {
     const entry = this.store.get(key);
     if (!entry) return null;
     return {
+      httpEtag: entry.etag,
       text: async () => new TextDecoder().decode(entry.body),
       arrayBuffer: async () => entry.body.slice(0),
       json: async <T,>() => JSON.parse(new TextDecoder().decode(entry.body)) as T,
@@ -354,7 +363,10 @@ describe("idempotent create and job cleanup", () => {
       (k) =>
         !k.startsWith("jobs/staging/") &&
         !k.startsWith("jobs/idem/") &&
-        !k.startsWith("devices/"),
+        !k.startsWith("devices/") &&
+        // R9-05: the day's ledger reservation stands — a reserve with a
+        // failed job spends toward the cap, never under it.
+        !k.startsWith("spend/"),
     );
     expect(leftover).toEqual([]);
     // Staging survives, so the client can simply retry the create.
@@ -375,6 +387,51 @@ describe("idempotent create and job cleanup", () => {
       expect(res.status).toBe(400);
     }
     expect(media.store.size).toBe(before);
+  });
+});
+
+describe("daily spend cap on v1.1 creates (R9-05)", () => {
+  const day = () => `spend/daily/${new Date().toISOString().slice(0, 10)}.json`;
+
+  it("reserves the declared budget, not the ceiling", async () => {
+    const media = new FakeR2();
+    const env = await envFor(media, new FakePipeline());
+    const res = await postJobJson(env, { manifest: validManifest(), budget: { maxSamFrames: 100 } });
+    expect(res.status).toBe(202);
+    expect(JSON.parse(new TextDecoder().decode(media.store.get(day())!.body))).toEqual({ reserved: 100 });
+  });
+
+  it("reserves the 240-frame ceiling when no budget is declared", async () => {
+    const media = new FakeR2();
+    const env = await envFor(media, new FakePipeline());
+    const res = await postJobJson(env, { manifest: validManifest() });
+    expect(res.status).toBe(202);
+    expect(JSON.parse(new TextDecoder().decode(media.store.get(day())!.body))).toEqual({ reserved: 240 });
+  });
+
+  it("rejects a create past the daily cap (503, nothing stored)", async () => {
+    const media = new FakeR2();
+    const env = await envFor(media, new FakePipeline());
+    await media.put(day(), JSON.stringify({ reserved: 1150 }));
+    // 1150 + 240 exceeds the default 1200 cap.
+    const res = await postJobJson(env, { manifest: validManifest() });
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ ok: false, error: "daily_budget_exceeded" });
+    // The ledger stands; no job files, no staging consumed.
+    expect(JSON.parse(new TextDecoder().decode(media.store.get(day())!.body))).toEqual({ reserved: 1150 });
+    expect([...media.store.keys()].filter((k) => k.startsWith("jobs/"))).toEqual([]);
+  });
+
+  it("halts creates on the kill switch, idempotent replays included", async () => {
+    const media = new FakeR2();
+    const env = await envFor(media, new FakePipeline());
+    const created = await postJobJson(env, { manifest: validManifest(), idempotencyKey: "k-one" });
+    expect(created.status).toBe(202);
+
+    const halted = { ...((env as never) as Record<string, unknown>), SPEND_KILL_SWITCH: "on" } as never;
+    const res = await postJobJson(halted, { manifest: validManifest(), idempotencyKey: "k-one" });
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ ok: false, error: "spend_disabled" });
   });
 });
 

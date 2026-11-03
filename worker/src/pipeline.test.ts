@@ -349,7 +349,9 @@ describe("EchoPipeline lens phase (W11-06)", () => {
     expect(out.models).toEqual({ scout: expect.any(String), ground: "sam-3.1" });
     expect(out.checkpoints[0].candidates[0].source).toBe("AI_GROUNDED");
     expect(out.usage.samFrames).toBe(1);
-    expect(out.usage.samFramesBilled).toBe(0);
+    // R9-05: the vendor omitted usage, so the one sent frame stands in
+    // for billed — a call that went out never reports zero.
+    expect(out.usage.samFramesBilled).toBe(1);
     expect(out.usage.budgetExhausted).toBe(false);
 
     const events = await readJobEvents(env, "job1");
