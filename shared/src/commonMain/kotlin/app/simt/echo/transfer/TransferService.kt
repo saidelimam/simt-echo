@@ -1,6 +1,8 @@
 package app.simt.echo.transfer
 
 import app.simt.echo.bundle.BundleCodec
+import app.simt.echo.bundle.BundleCodecException
+import app.simt.echo.bundle.BundleError
 import app.simt.echo.data.FileStore
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.data.isSafeStorageId
@@ -172,8 +174,10 @@ class TransferService(
         val invitation = PairingInvitation.parseOrThrow(qrUri)
         val sealed = fetchSealed(invitation.payload)
         val body = BundleCodec.open(sealed, invitation.payload.key, nowMs()).getOrThrow()
-        check(BundleCodec.sha8Hex(body) == invitation.payload.sha8Hex) {
-            "bundle fingerprint mismatch"
+        // Integrity, not connectivity: typed so the screen says "couldn't
+        // verify" instead of blaming the network (plan 0005 §2).
+        if (BundleCodec.sha8Hex(body) != invitation.payload.sha8Hex) {
+            throw BundleCodecException(BundleError.HASH_MISMATCH, "bundle fingerprint mismatch")
         }
         return body
     }

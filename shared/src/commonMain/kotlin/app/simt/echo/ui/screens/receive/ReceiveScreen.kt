@@ -234,7 +234,7 @@ fun ReceiveScreen(
 @Composable
 private fun MethodIndicator(method: PairingMethod) {
     Text(
-        text = if (method == PairingMethod.NFC) "NFC · Tap phones" else "QR · Scan code",
+        text = if (method == PairingMethod.NFC) PairingCopy.NFC_LABEL else PairingCopy.QR_SCAN_LABEL,
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.semantics { heading() },

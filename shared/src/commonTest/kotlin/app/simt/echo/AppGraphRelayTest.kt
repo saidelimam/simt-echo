@@ -19,14 +19,19 @@ class AppGraphRelayTest {
     }
 
     @Test
-    fun configuredGraphExposesRelayOnTransferService() {
+    fun aConfiguredRelayIsNotAPeerDeliveryFallback() {
         val graph = AppGraph(
             platform = FakePlatform(),
             apiBaseUrl = "https://echo.test",
             appToken = "tok",
         )
         assertTrue(graph.cloudAiConfigured)
-        assertTrue(graph.transferService.relayAvailable)
+        // Plan 0005 §1: the Worker refuses a code minted by another install
+        // (R10-01), so a configured relay stays unusable for peer delivery
+        // until a producer contract and a two-install test enable it. The
+        // upload action must stay hidden even though the client exists.
+        assertTrue(graph.transferService.relayConfigured, "the graph still supplies the client")
+        assertFalse(graph.transferService.relayAvailable, "configured is not qualified")
     }
 
     @Test

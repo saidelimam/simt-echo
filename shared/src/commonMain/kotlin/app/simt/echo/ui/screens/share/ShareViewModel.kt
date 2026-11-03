@@ -186,13 +186,9 @@ class ShareViewModel(
         if (closed) return
         val current = _ui.value
         if (current.method == method) return
-        if (!PairingPolicy.selectable(role, method, pairing.capabilities.value) &&
-            method == PairingMethod.NFC
-        ) {
-            // Unsupported stays selectable so the screen can explain it;
-            // this guard exists only to keep QR reachable in one action.
-            return
-        }
+        // An unsupported choice is still selectable: the tap panel is where
+        // the reason and the one-action way back to QR live (plan 0005 §2).
+        // Nothing is published for it either way.
         _ui.update {
             it.copy(
                 method = method,
@@ -382,7 +378,18 @@ class ShareViewModel(
         if (_ui.value.relayOffered) return
         clearProgress()
         detachNfc()
-        _ui.update { it.copy(qrUri = null, sent = false, error = null, progress = null, bytesPerSecond = 0.0, offerGeneration = 0L) }
+        _ui.update {
+            it.copy(
+                qrUri = null,
+                sent = false,
+                tapRead = false,
+                tapFailure = null,
+                error = null,
+                progress = null,
+                bytesPerSecond = 0.0,
+                offerGeneration = 0L,
+            )
+        }
         launchProducer(errorCopy = { shareUpdateErrorCopy() }) {
             val offer = service.offer(routeId, useRelay = true, selection = _ui.value.selection)
             _ui.update {

@@ -1,6 +1,8 @@
 package app.simt.echo.transfer
 
 import app.simt.echo.Fixtures
+import app.simt.echo.bundle.BundleCodecException
+import app.simt.echo.bundle.BundleError
 import app.simt.echo.data.FileStore
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.platform.Endpoint
@@ -149,8 +151,10 @@ class TransferServiceTest {
         val offer = service.offer(Fixtures.L_ROUTE.routeId)
         val payload = QrPayload.parse(offer.qrUri).getOrThrow()
         val forged = payload.copy(sha8Hex = "ffffffffffffffff").build()
-        // Same transport and key; only the QR fingerprint is wrong.
-        assertFailsWith<IllegalStateException> { service.receive(forged) }
+        // Same transport and key; only the QR fingerprint is wrong, and the
+        // failure names integrity so Receive can say "couldn't verify".
+        val tampered = assertFailsWith<BundleCodecException> { service.receive(forged) }
+        assertEquals(BundleError.HASH_MISMATCH, tampered.error)
     }
 
     @Test

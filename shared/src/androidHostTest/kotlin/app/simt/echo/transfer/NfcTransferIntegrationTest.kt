@@ -64,6 +64,23 @@ class NfcTransferIntegrationTest {
         override fun close() = Unit
     }
 
+    /** A radio that never answers until its connection is closed. */
+    private class BlockingTransceiver : NfcTransceiver {
+        private val released = CompletableDeferred<Unit>()
+        var closed = false
+            private set
+
+        override suspend fun transceive(command: ByteArray): ByteArray {
+            released.await()
+            return ByteArray(2)
+        }
+
+        override fun close() {
+            closed = true
+            released.complete(Unit)
+        }
+    }
+
     /** In-memory LAN: the "network" between the two services. */
     private class LoopbackTransport : PeerTransport {
         var servedPayload: ByteArray? = null
@@ -349,6 +366,26 @@ class NfcTransferIntegrationTest {
         advanceUntilIdle()
         assertNull(lockedReading.invitation())
         assertEquals(PairingFailure.OfferExpired, lockedReading.failure())
+    }
+
+    @Test
+    fun armingANewAttemptInterruptsTheBlockedExchange() = runTest {
+        val reading = Reading(this)
+        val blocked = BlockingTransceiver()
+        reading.reader.arm(1)
+        reading.reader.start(1) { blocked }
+        // A reader connection reports `Reading` before any byte arrives, and
+        // nothing beyond that has happened while the exchange is blocked.
+        assertEquals(listOf(true), reading.events.map { it is NfcEvent.Reading })
+
+        // Switching methods arms a new attempt. Cancelling the job cannot
+        // unblock a transceive inside the tag API: only closing does.
+        reading.reader.arm(2)
+        advanceUntilIdle()
+
+        assertTrue(blocked.closed, "arming must close the replaced connection")
+        assertTrue(reading.events.none { it is NfcEvent.Invitation })
+        assertNull(reading.failure(), "a replaced attempt reports no failure")
     }
 
     @Test
