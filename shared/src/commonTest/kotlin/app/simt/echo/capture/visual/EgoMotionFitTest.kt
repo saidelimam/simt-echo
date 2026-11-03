@@ -220,6 +220,98 @@ class EgoMotionFitTest {
     }
 
     @Test
+    fun rotatedHoldRecoversTravelDirectionOnAMixedDepthWall() {
+        val world = SimWorld(SimEnvironment.CORRIDOR, seed = TEST_SEED)
+        for (holdDegrees in listOf(-10.0, 10.0)) {
+            val hold = holdDegrees * PI / 180.0
+            val from = START.copy(yawRad = hold)
+            val to = from.copy(y = from.y + 0.08)
+            val result = EgoMotionFit().fit(measuredFlow(world, from, to), usability01 = 1.0)
+            assertTrue(result.hasFoe, "hold $holdDegrees° must publish a direction")
+            assertEquals(-hold, result.travelOffsetRad, 2.0 * PI / 180.0)
+            assertTrue(result.inliers >= MIN_BLOCKS)
+            assertTrue(result.confidence01 > 0.5)
+            assertFalse(result.yawResolved, "depth variation must not become a trusted yaw")
+        }
+        val pitch = 8.0 * PI / 180.0
+        val pitchedFrom = START.copy(pitchRad = pitch)
+        val pitched = EgoMotionFit().fit(
+            measuredFlow(world, pitchedFrom, pitchedFrom.copy(y = pitchedFrom.y + 0.08)),
+            usability01 = 1.0,
+        )
+        assertTrue(pitched.hasFoe)
+        assertEquals(0.0, pitched.travelOffsetRad, 2.0 * PI / 180.0)
+        assertEquals(pitch, atan(pitched.foeY), 2.0 * PI / 180.0)
+        assertTrue(pitched.confidence01 > 0.5)
+    }
+
+    @Test
+    fun contradictoryDirectionsStayAbsentAndBelowTheConfidenceGate() {
+        val flow = egoMotionTestFlow(expansionPerSec = 0.16, foeX = -0.2)
+        for (i in 6 until flow.count) {
+            val otherFocus = 0.25
+            flow.dx[i] = 0.16 * (flow.x[i] - otherFocus) * flow.deltaSeconds
+            flow.dy[i] = 0.16 * flow.y[i] * flow.deltaSeconds
+        }
+        val result = EgoMotionFit().fit(flow, usability01 = 1.0)
+        assertAbsentFocus(result)
+        assertTrue(result.confidence01 < 0.5, "a tied rival direction must not look usable: ${result.confidence01}")
+    }
+
+    @Test
+    fun coherentOutlierPlacementsCannotBeBothWrongAndConfident() {
+        val velocities = listOf(0.024 to -0.012, -0.03 to 0.015, 0.01 to 0.02)
+        for ((dx, dy) in velocities) {
+            forEachFourBlocks { blocks ->
+                val flow = egoMotionTestFlow(expansionPerSec = 0.16)
+                for (index in blocks) {
+                    flow.dx[index] = dx
+                    flow.dy[index] = dy
+                }
+                val result = EgoMotionFit().fit(flow, usability01 = 1.0)
+                val relativeError = abs(result.expansionPerSec - 0.16) / 0.16
+                if (relativeError > 0.15) {
+                    assertTrue(result.confidence01 < 0.5, "blocks ${blocks.toList()} error $relativeError confidence ${result.confidence01}")
+                }
+            }
+        }
+        val spotlight = egoMotionTestFlow(expansionPerSec = 0.16)
+        for (index in intArrayOf(2, 3, 10, 11)) {
+            spotlight.dx[index] = 0.024
+            spotlight.dy[index] = -0.012
+        }
+        val spotlightResult = EgoMotionFit().fit(spotlight, usability01 = 1.0)
+        assertRelativeExpansion(0.16, spotlightResult.expansionPerSec, 0.15)
+        assertTrue(spotlightResult.confidence01 > 0.5)
+        for (row in 0..1) {
+            for (column in 0..2) {
+                val flow = egoMotionTestFlow(expansionPerSec = 0.16)
+                val blocks = intArrayOf(row * 4 + column, row * 4 + column + 1, (row + 1) * 4 + column, (row + 1) * 4 + column + 1)
+                for (index in blocks) {
+                    flow.dx[index] = 0.024
+                    flow.dy[index] = -0.012
+                }
+                val result = EgoMotionFit().fit(flow, usability01 = 1.0)
+                assertRelativeExpansion(0.16, result.expansionPerSec, 0.15)
+            }
+        }
+    }
+
+    @Test
+    fun navigateFrameSpacingOnTheEndWallStaysAUsableFit() {
+        val world = SimWorld(SimEnvironment.CORRIDOR, seed = TEST_SEED)
+        val from = START
+        val to = from.copy(y = from.y + 0.5)
+        val flow = measuredFlow(world, from, to, intervalNs = 500_000_000L)
+        val result = EgoMotionFit().fit(flow, usability01 = 1.0)
+        val expected = (to.y - from.y) / (END_WALL_Y_M - to.y) / 0.5
+        assertTrue(result.hasFoe)
+        assertTrue(result.inliers >= MIN_BLOCKS)
+        assertTrue(result.confidence01 > 0.5 && result.confidence01 <= 1.0)
+        assertRelativeExpansion(expected, result.expansionPerSec, 0.15)
+    }
+
+    @Test
     fun fourMovingBillboardVectorsDoNotBiasRenderedExpansionBeyondFifteenPercent() {
         val world = SimWorld(SimEnvironment.CORRIDOR, seed = TEST_SEED)
         val to = START.copy(y = START.y + 0.08)
@@ -241,7 +333,7 @@ class EgoMotionFitTest {
         assertTrue(result.hasFoe)
     }
 
-    private fun measuredFlow(world: SimWorld, from: SimPose, to: SimPose): BlockFlow {
+    private fun measuredFlow(world: SimWorld, from: SimPose, to: SimPose, intervalNs: Long = INTERVAL_NS): BlockFlow {
         val intrinsics = CameraIntrinsics(
             fPx = world.phone.focalLengthPx,
             cx = SimWorld.LUMA_WIDTH / 2.0,
@@ -250,10 +342,28 @@ class EgoMotionFitTest {
         )
         val tracker = VisualFlow()
         assertFalse(tracker.onFrame(world.render(from, START_NS).luma, START_NS, intrinsics))
-        assertTrue(tracker.onFrame(world.render(to, START_NS + INTERVAL_NS).luma, START_NS + INTERVAL_NS, intrinsics))
+        assertTrue(
+            tracker.onFrame(
+                world.render(to, START_NS + intervalNs).luma,
+                START_NS + intervalNs,
+                intrinsics,
+                deltaYawRad = to.yawRad - from.yawRad,
+                deltaPitchRad = to.pitchRad - from.pitchRad,
+            ),
+        )
         assertTrue(tracker.flow.count in MIN_BLOCKS..BLOCK_CAPACITY, "need at least six measured blocks, got ${tracker.flow.count}")
-        assertEquals(INTERVAL_SECONDS, tracker.flow.deltaSeconds, EXACT_TOLERANCE)
+        assertEquals(intervalNs / 1_000_000_000.0, tracker.flow.deltaSeconds, EXACT_TOLERANCE)
         return tracker.flow
+    }
+
+    private fun forEachFourBlocks(check: (IntArray) -> Unit) {
+        for (a in 0..8) {
+            for (b in a + 1..9) {
+                for (c in b + 1..10) {
+                    for (d in c + 1..11) check(intArrayOf(a, b, c, d))
+                }
+            }
+        }
     }
 
     private fun assertRelativeExpansion(expected: Double, actual: Double, tolerance: Double) {
