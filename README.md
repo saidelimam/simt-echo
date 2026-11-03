@@ -7,16 +7,7 @@ GPS. The creator records a route (video + inertial sensors), AI grounds
 landmarks onto the captured geometry, and the resulting **EchoRoute bundle**
 navigates a friend along it — turn cues, landmark AR overlays, QR checkpoints.
 
-Status: **in development — feature code throughout, not yet production-true.**
-Plan `docs/plans/0001-agentic-flow.md` stands at 34/36 Complete (W5-03
-Accepted/postponed, W4-06 Queued); the active plan is
-`docs/plans/0002-mvp-cosmos-design.md` (W7-01, W7-02 Complete), whose
-review verdict on the app as it stands is **BLOCK**: the core loop dead-ends
-from the UI, the worker has never been deployed, and device proofs are open.
-W6-02's draw-box extraction landed (`1c51afa`, recorded Complete in
-`docs/reviews/0006-residual-risks.md`). Measured cost/latency evidence lives
-in `docs/measurements.md` — the deployed 60 m envelope is still unmeasured
-and unclaimed.
+Developed for the **Meta AI Hackathon 2026** by Said Elimam.
 
 ## Legal
 
@@ -32,6 +23,8 @@ and unclaimed.
 │                      — Android + iOS (device + Apple Silicon simulator)
 ├── androidApp/        Android entry point (MainActivity, EchoApplication);
 │                      hosts the shared Compose UI via AppGraph
+├── wear/              Wear OS companion (paired-watch haptics, W9-08)
+├── benchmark/         Macrobenchmarks + baseline profile generator
 ├── worker/            Cloudflare Worker (echo-api): Hono + zod, R2 bucket
 │                      echo-media, Workers AI / Meta Model API pipeline
 └── gradle/            Version catalog (Kotlin 2.4.21, AGP 9.5.0, CMP 1.12.0)
@@ -47,7 +40,7 @@ Where new code goes (owning slice in `docs/plans/0001-agentic-flow.md`):
 | `shared/.../capture`, `nav` | W1-01 motion, W2-05 navigator |
 | `shared/.../bundle`, `transfer` | W2-02 codec, W2-03 peer transport |
 | `shared/.../ai`, `ui` | W3-02 API client, W0-03 nav shell + screens |
-| `worker/src` | W3-03 jobs API (contract implemented + vitest-green, never deployed — production deploy is W9-01) |
+| `worker/src` | W3-03 jobs API (deployed at `api.echo.simt.app`; production deploy was W9-01) |
 
 ## Setup
 
@@ -85,8 +78,9 @@ npm install
 npm run typecheck && npm test
 npm run dev        # local wrangler dev
 npm run deploy
-curl https://echo-api.<acct>.workers.dev/v1/health
-# → {"ok":true,"version":"0.1.0","metaKeyConfigured":<bool>}
+curl https://api.echo.simt.app/v1/health
+# → {"ok":true,"version":"0.1.0","metaKeyConfigured":<bool>,
+#    "providers":{"workersAi":<bool>,"metaKey":<bool>}}
 ```
 
 One-time setup: `npm exec -- wrangler r2 bucket create echo-media`,
