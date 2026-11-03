@@ -15,6 +15,7 @@ import {
   sparkContext,
   type ScoutCheckpoint,
 } from "./scout";
+import type { Manifest } from "./types";
 
 // W3-04 test delta: the Workers AI scout chain. Fakes mirror the repo's
 // per-file precedent (jobs.test.ts): in-memory R2 plus a scripted AI binding.
@@ -380,7 +381,13 @@ describe("runScout typed failures", () => {
       (e) => e,
     );
     expect(err).toBeInstanceOf(ScoutError);
-    expect((err as ScoutError).code).toBe("all_models_failed");
+    // R9-04: the checkpoint step wraps the deterministic all_models_failed
+    // in a NonRetryableError, so the chain's final error is a no_provider
+    // ScoutError carrying the all_models_failed message. Raw model text
+    // still never leaks.
+    expect((err as ScoutError).code).toBe("no_provider");
+    expect((err as ScoutError).message).toContain("all_models_failed");
+    expect((err as ScoutError).message).not.toContain("landmarks I noticed");
     expect(media.store.has(`jobs/${jobId}/scout.json`)).toBe(false);
   });
 
@@ -405,6 +412,148 @@ describe("runScout typed failures", () => {
 
     const result = await runScout(env, jobId, structuredClone(validManifest()) as never);
     expect(result.model).toBe(LLAMA);
+  });
+});
+
+// R9-04 test delta (review 0009, F3): per-checkpoint steps with persisted
+// results. A PersistentStep stands in for the Workflow's durable step
+// state: a step that completed once returns its recorded output on every
+// later call; a failed step is re-run — the Workflow persists only
+// successful step outputs. Two sequential runScout calls on the same
+// instance therefore model a run and its replay.
+class PersistentStep {
+  names: string[] = [];
+  private readonly state = new Map<string, unknown>();
+
+  async do<T>(name: string, fn: () => Promise<T>): Promise<T> {
+    this.names.push(name);
+    const recorded = this.state.get(name);
+    if (recorded !== undefined) {
+      return recorded as T;
+    }
+    const result = await fn();
+    this.state.set(name, result);
+    return result;
+  }
+}
+
+/** The checkpoint a scripted model call was made for, from its prompt's
+ * images line (`Images: kf_n2_0 (...), ...`): one call, one checkpoint. */
+function promptNodeId(call: RunCall): string {
+  const content = (call.input as { messages: Array<{ content: Array<{ text?: string }> }> }).messages[
+    1
+  ].content as Array<{ text?: string }>;
+  const text = content.find((c) => c.text?.includes("Images:"))?.text ?? "";
+  return text.match(/kf_(n\d+)/)?.[1] ?? "";
+}
+
+function checkpointResultFor(nodeId: string, imageId: string) {
+  return checkpointResult(nodeId, [candidate({ imageId })]);
+}
+
+function threeCheckpointManifest(): Manifest {
+  const m = structuredClone(validManifest()) as never as Manifest;
+  for (const [i, node] of ["n3", "n4"].entries()) {
+    const cp = structuredClone(m.checkpoints[0]);
+    cp.nodeId = node;
+    cp.heroKeyframeId = `kf_${node}_1`;
+    cp.keyframes = [
+      { id: `kf_${node}_0`, tMs: 41250 + i * 20000 },
+      { id: `kf_${node}_1`, tMs: 42750 + i * 20000 },
+    ];
+    m.checkpoints.push(cp);
+  }
+  return m;
+}
+
+function seedThree(media: FakeR2, jobId: string) {
+  for (const node of ["n2", "n3", "n4"]) {
+    for (const k of [0, 1]) {
+      void media.put(
+        `jobs/${jobId}/in/kf_${node}_${k}`,
+        new Uint8Array([1, 2, 3]).buffer as ArrayBuffer,
+      );
+    }
+  }
+}
+
+describe("runScout per-checkpoint steps (R9-04)", () => {
+  it("re-bills only the failed checkpoint on replay; completed ones come from recorded output", async () => {
+    const media = new FakeR2();
+    const jobId = "job-1";
+    seedThree(media, jobId);
+    const step = new PersistentStep();
+    const ai = new FakeAI({
+      [LLAMA]: (call) => {
+        const nodeId = promptNodeId(call);
+        // n4's every model fails: a deterministic all_models_failed the
+        // step wraps non-retryable, so the step itself is not retried.
+        if (nodeId === "n4") throw new Error("boom");
+        return { response: checkpointResultFor(nodeId, `kf_${nodeId}_1`) };
+      },
+    });
+    const env = envFor(media, ai, { SCOUT_ORDER: "workers-ai" });
+
+    // Run: n2 and n3 succeed; n4 fails and the scout fails with it.
+    const err = await runScout(env, jobId, threeCheckpointManifest(), step.do.bind(step)).catch(
+      (e) => e,
+    );
+    expect(err).toBeInstanceOf(ScoutError);
+    // R9-04: the step's NonRetryableError is swallowed by the chain into a
+    // no_provider ScoutError carrying the all_models_failed message.
+    expect((err as ScoutError).code).toBe("no_provider");
+    expect((err as ScoutError).message).toContain("all_models_failed");
+
+    // Replay: n2/n3 return their recorded outputs (no model calls), n4
+    // re-runs its step and fails again.
+    const err2 = await runScout(env, jobId, threeCheckpointManifest(), step.do.bind(step)).catch(
+      (e) => e,
+    );
+    expect(err2).toBeInstanceOf(ScoutError);
+    expect((err2 as ScoutError).code).toBe("no_provider");
+
+    // n4's step ran twice; n2/n3 exactly once each — their paid calls were
+    // not re-billed on the replay.
+    expect(step.names.filter((n) => n === "scout:workers-ai:n4")).toHaveLength(2);
+    const byNode = new Map<string, number>([["n2", 0], ["n3", 0], ["n4", 0]]);
+    for (const c of ai.calls.filter((c) => c.model === LLAMA)) {
+      const n = promptNodeId(c);
+      byNode.set(n, (byNode.get(n) ?? 0) + 1);
+    }
+    expect(byNode.get("n2")).toBe(1);
+    expect(byNode.get("n3")).toBe(1);
+    expect(byNode.get("n4")).toBe(2);
+  });
+
+  it("replays a successful run with zero model calls and the same result", async () => {
+    const media = new FakeR2();
+    const jobId = "job-1";
+    seedThree(media, jobId);
+    const step = new PersistentStep();
+    const ai = new FakeAI({
+      [LLAMA]: (call) => {
+        const nodeId = promptNodeId(call);
+        return { response: checkpointResultFor(nodeId, `kf_${nodeId}_1`) };
+      },
+    });
+    const env = envFor(media, ai, { SCOUT_ORDER: "workers-ai" });
+
+    const first = await runScout(env, jobId, threeCheckpointManifest(), step.do.bind(step));
+    const second = await runScout(env, jobId, threeCheckpointManifest(), step.do.bind(step));
+
+    // The replay re-runs no paid call and returns the same result. The
+    // same three step names are entered again (replay) — each returning its
+    // recorded output.
+    expect(ai.calls).toHaveLength(3);
+    expect(second).toEqual(first);
+    expect(step.names).toEqual([
+      "scout:workers-ai:n2",
+      "scout:workers-ai:n3",
+      "scout:workers-ai:n4",
+      "scout:workers-ai:n2",
+      "scout:workers-ai:n3",
+      "scout:workers-ai:n4",
+    ]);
   });
 });
 

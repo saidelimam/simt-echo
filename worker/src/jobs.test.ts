@@ -1077,9 +1077,10 @@ describe("EchoPipeline skeleton", () => {  it("runs load → scout → ground �
     // ground phase still runs (box-only seal below); per-call steps appear
     // only when SAM calls are actually sent (pipeline.test.ts proves it).
     // Event emits and the ground.json seal are their own replay-safe steps.
+    // R9-04: the scout is one step per checkpoint (scout:<provider>:<nodeId>).
     expect(seen).toEqual([
       "load",
-      "scout",
+      "scout:workers-ai:n2",
       "emit:stage:grounding",
       "emit:checkpoint:n2",
       "ground:seal",

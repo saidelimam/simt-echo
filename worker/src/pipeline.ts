@@ -25,7 +25,11 @@ const STEP_OPTS = {
  * W11-06: the ground phase runs the SAM lens by default — one Workflow
  * step `ground:<nodeId>:<k>:<phraseHash>` per SAM call, so a retry re-bills one
  * call, never all. `GROUND_MODE=legacy` keeps the single W3-05 `ground`
- * step until W11-10. */
+ * step until W11-10.
+ * R9-04: the scout phase is per-checkpoint steps too — one
+ * `scout:<provider>:<nodeId>` per checkpoint (one `scout:<provider>` for
+ * whole-job providers) — so a replay re-bills the failed checkpoint,
+ * never 1..n-1. */
 export class EchoPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
   override async run(
     event: Readonly<WorkflowEvent<PipelineParams>>,
@@ -40,7 +44,7 @@ export class EchoPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
       // around the steps so the numbers are real even though the Workflow
       // scheduler owns the gaps between them.
       const t0 = Date.now();
-      const scout = await step.do("scout", STEP_OPTS, () => runScoutStep(this.env, jobId, manifest));
+      const scout = await runScoutPhase(this.env, jobId, manifest, runner);
       const scoutMs = Date.now() - t0;
       const ground = lensMode
         ? await runGroundLensPhase(this.env, jobId, manifest, scout, runner)
@@ -82,10 +86,17 @@ async function loadManifest(env: Env, jobId: string): Promise<Manifest> {
   return manifest;
 }
 
-async function runScoutStep(env: Env, jobId: string, manifest: Manifest): Promise<ScoutResult> {
+async function runScoutPhase(
+  env: Env,
+  jobId: string,
+  manifest: Manifest,
+  runner: StepRunner,
+): Promise<ScoutResult> {
   await putProgress(env, jobId, "scouting");
   try {
-    return await runScout(env, jobId, manifest);
+    // R9-04: per-checkpoint steps — a replay re-bills the failed
+    // checkpoint, never 1..n-1.
+    return await runScout(env, jobId, manifest, runner);
   } catch (e) {
     // Scout failures are deterministic (no provider, missing media, every
     // model already fell back and failed): retrying re-bills the same calls.

@@ -331,11 +331,12 @@ describe("EchoPipeline lens phase (W11-06)", () => {
     const pipeline = new EchoPipeline({} as never, env);
     const out = (await pipeline.run({ payload: { jobId: "job1" } } as never, step as never)) as JobResult;
 
-    // One step per SAM call — a retry re-bills one call, never all.
+    // One step per SAM call — a retry re-bills one call, never all. R9-04:
+    // the scout is one step per checkpoint too.
     expect(names.filter((n) => /^ground:n2:\d+:[0-9a-f]{12}/.test(n))).toHaveLength(1);
     expect(names).toEqual([
       "load",
-      "scout",
+      "scout:workers-ai:n2",
       "emit:stage:grounding",
       "ground:plan:image",
       expect.stringMatching(/^ground:n2:0:[0-9a-f]{12}$/),
