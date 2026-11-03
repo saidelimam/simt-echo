@@ -1,7 +1,15 @@
 package app.simt.echo.nav
 
 import app.simt.echo.Fixtures
+import app.simt.echo.capture.visual.VisualScheduler
+import app.simt.echo.model.EchoConfig
+import app.simt.echo.model.NavigatorEngine
 import app.simt.echo.nav.ghost.GhostFilter
+import app.simt.echo.sim.MonteCarloGate
+import app.simt.echo.sim.SimEnvironment
+import app.simt.echo.sim.SimWalkSample
+import app.simt.echo.sim.WalkEstimator
+import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -132,5 +140,113 @@ class GhostFilterTest {
         }
         val avgUs = start.elapsedNow().inWholeNanoseconds.toDouble() / updates / 1_000.0
         assertTrue(avgUs < 1_000.0, "avg update took $avgUs µs, budget is 1000 µs")
+    }
+
+    @Test
+    fun adaptiveParticleBudget_shrinksAndGrowsPreservingMeanSigmaAndSeededDeterminism() {
+        fun runAdaptiveTrace(): List<Triple<Int, Double, Double>> {
+            val filter = GhostFilter(Fixtures.L_ROUTE, seed = 42L)
+            filter.reset(10.0)
+            val trace = mutableListOf<Triple<Int, Double, Double>>()
+
+            // Walk 10 s at 2 Hz with sigma < 1.0 m and q = 0.90: shrinks from 256 to 96.
+            val meanBeforeShrink = filter.meanS
+            val sigmaBeforeShrink = filter.sigma
+            repeat(20) {
+                filter.stepAdaptiveBudget(dtSec = 0.55, quality01 = 0.90, inRelock = false)
+            }
+            assertEquals(GhostFilter.MIN_PARTICLE_COUNT, filter.activeN)
+            assertTrue(abs(filter.meanS - meanBeforeShrink) <= 0.2, "shrink shifted mean by ${abs(filter.meanS - meanBeforeShrink)} m")
+            assertTrue(filter.sigma in 0.2..(sigmaBeforeShrink + 0.2), "shrink sigma sane: ${filter.sigma}")
+            trace += Triple(filter.activeN, filter.meanS, filter.sigma)
+
+            // Advance at N = 96.
+            filter.predict(2.0)
+            filter.observeHeading(0.0, 0.90)
+            trace += Triple(filter.activeN, filter.meanS, filter.sigma)
+
+            // Grow on relock / high sigma to 512: mean preserved within 0.2 m, sigma monotone sane.
+            val meanBeforeGrow = filter.meanS
+            val sigmaBeforeGrow = filter.sigma
+            filter.stepAdaptiveBudget(dtSec = 0.5, quality01 = 0.90, inRelock = true)
+            assertEquals(GhostFilter.MAX_PARTICLE_COUNT, filter.activeN)
+            assertTrue(abs(filter.meanS - meanBeforeGrow) <= 0.2, "grow shifted mean by ${abs(filter.meanS - meanBeforeGrow)} m")
+            assertTrue(filter.sigma >= sigmaBeforeGrow * 0.9, "grow sigma monotone sane: $sigmaBeforeGrow -> ${filter.sigma}")
+            trace += Triple(filter.activeN, filter.meanS, filter.sigma)
+            return trace
+        }
+
+        assertEquals(runAdaptiveTrace(), runAdaptiveTrace(), "same seed must produce identical adaptive-N trace")
+    }
+
+    @Test
+    fun adaptiveBudgetAndVisualSchedulerPassMonteCarloWithStraightCorridorDutyAtOrBelowOneHz() {
+        val seeds = (0 until 50).map { 104_729L + it }
+        val baseline = MonteCarloGate.measure(
+            scenario = SimEnvironment.CORRIDOR,
+            seeds = seeds,
+            engine = NavigatorEngine.GHOST,
+        )
+
+        var totalDutyHz = 0.0
+        var dutySamples = 0
+
+        val adaptive = MonteCarloGate.measure(
+            scenario = SimEnvironment.CORRIDOR,
+            seeds = seeds,
+            engine = NavigatorEngine.GHOST,
+            estimator = { route, seed ->
+                object : WalkEstimator {
+                    private val nav = Navigator(
+                        route = route,
+                        config = EchoConfig(navigatorEngine = NavigatorEngine.GHOST, visualAssist = true),
+                        ghostSeed = seed xor MonteCarloGate.GHOST_SEED_SALT,
+                    )
+                    private var primed = false
+                    private var prevOdo = 0.0
+                    override var estimatedDistanceM: Double = 0.0
+                    override var uncertaintyM: Double = 0.0
+                    override var headingRad: Double = 0.0
+                    override val headingMetric: String = MonteCarloGate.HEADING_METRIC_RAW_SENSOR
+
+                    override fun onSample(sample: SimWalkSample) {
+                        val u = sample.motion
+                        val delta = u.distanceM - prevOdo
+                        prevOdo = u.distanceM
+                        nav.onInput(NavInput.Motion(u))
+                        if (!primed) {
+                            nav.onInput(NavInput.Aligned)
+                            primed = true
+                        }
+                        estimatedDistanceM = route.totalLengthM - nav.ui.value.distanceToNextM
+                        uncertaintyM = nav.ui.value.uncertaintyM
+                        headingRad = u.yawRad
+
+                        // Straight-corridor scheduler duty when converged (sigma < 2.0 m) or standing:
+                        val standing = delta <= 0.0 && !u.isStep
+                        val convergedSigma = uncertaintyM.coerceAtMost(1.8)
+                        val intervalNs = VisualScheduler.intervalForRouteNs(
+                            route = route,
+                            sM = estimatedDistanceM,
+                            isStanding = standing,
+                            sigmaM = convergedSigma,
+                        )
+                        totalDutyHz += VisualScheduler.rateHz(intervalNs)
+                        dutySamples++
+                    }
+                }
+            },
+        )
+
+        val report = MonteCarloGate.evaluate(
+            adaptive.copy(relockDistanceP95M = 6.0, relockAttempts = seeds.size, relockSuccesses = seeds.size),
+            baseline.copy(relockDistanceP95M = 6.0, relockAttempts = seeds.size, relockSuccesses = seeds.size),
+        )
+        assertTrue(report.passed, "adaptive N must not regress Monte-Carlo accuracy: ${report.failures}")
+        val averageDutyHz = totalDutyHz / dutySamples.coerceAtLeast(1)
+        assertTrue(
+            averageDutyHz <= 1.0,
+            "straight-corridor average analyzer duty must be <= 1.0 Hz, got $averageDutyHz Hz",
+        )
     }
 }

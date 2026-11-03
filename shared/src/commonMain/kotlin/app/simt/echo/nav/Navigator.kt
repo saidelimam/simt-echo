@@ -335,6 +335,9 @@ class Navigator(
                 val alignedYaw = if (config.visualAssist) yaw + yawOffset + travelOffsetRad else yaw + yawOffset
                 it.observe(Observation.Heading(alignedYaw, update.headingQuality))
             }
+            if (config.visualAssist) {
+                it.stepAdaptiveBudget(0.05, update.headingQuality, inRelock = phase == NavPhase.RELOCKING)
+            }
         }
         if (foundAtS.isFinite() && absoluteS - foundAtS >= FOUND_COPY_EXPIRE_M) {
             foundNearLabel = null

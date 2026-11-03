@@ -3,76 +3,64 @@ package app.simt.echo.nav.ghost
 import app.simt.echo.capture.wrapPi
 import app.simt.echo.model.EchoRoute
 import app.simt.echo.model.TurnDir
-import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.exp
+import kotlin.math.ln
+import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.random.Random
 
 /**
- * Along-route particle filter — the Ghost navigator core (plan W12-02).
+ * Along-route particle filter — the Ghost navigator core (plans W12-02, W18-03).
  *
- * Particles carry `s` (metres along the route polyline), `k` (stride
- * scale, prior N(1, 0.08)) and `b` (heading bias, prior N(0, 5°)) in
- * struct-of-arrays [DoubleArray]s. Outputs are the posterior mean [meanS]
- * and σ ([sigma], weighted std), which replace the linear σ and odometer
- * progress in the §6.4 state machine.
+ * Particles carry `s` (metres along the route polyline), `k` (stride scale,
+ * prior N(1, 0.08)) and `b` (heading bias, prior N(0, 5°)) in fixed-capacity
+ * struct-of-arrays [DoubleArray]s (`MAX_PARTICLE_COUNT = 512`) with a variable
+ * active particle count [activeN] (`96..512`, default `256`).
  *
- * Allocation audit (≤ 1 ms/update budget): every array is sized N in the
- * constructor and reused — [predict] and the [observe] entry points
- * allocate nothing (the turn-signature scratch rows below are reused
- * too). The Gaussian sampler is scalar Box-Muller with a
- * primitive spare cache (no boxing). The only allocations in this class
- * happen in the constructor and [reset].
- *
- * Determinism: all randomness comes from one seeded [Random]; the same
- * seed and the same call sequence produce bit-identical traces.
+ * Allocation audit (≤ 1 ms/update budget): every array is sized
+ * [MAX_PARTICLE_COUNT] in the constructor and reused — [predict], [observe],
+ * and [resizeParticles] allocate nothing.
  */
 class GhostFilter(
     route: EchoRoute,
     seed: Long = DEFAULT_SEED,
-    /**
-     * Stride-scale prior mean (W12-03): the per-device learned K seeds
-     * the `k` spread at construction; the default 1.0 is the unlearned
-     * prior. Implausible values fall back to 1.0. Additive — sampling,
-     * geometry and phases are untouched.
-     */
     kPriorMean: Double = 1.0,
 ) {
     private val geometry = RouteGeometry(route)
     private var random = Random(seed)
+    private var resizeRandom = Random(seed xor RESIZE_SEED_SALT)
+    private val initialSeed = seed
     private val kPrior: Double =
         if (kPriorMean.isFinite() && kPriorMean in STRIDE_K_MIN..STRIDE_K_MAX) kPriorMean else 1.0
 
-    private val sA = DoubleArray(PARTICLE_COUNT)
-    private val kA = DoubleArray(PARTICLE_COUNT)
-    private val bA = DoubleArray(PARTICLE_COUNT)
-    private val wA = DoubleArray(PARTICLE_COUNT)
-    private val cumA = DoubleArray(PARTICLE_COUNT)
-    private val tmpS = DoubleArray(PARTICLE_COUNT)
-    private val tmpK = DoubleArray(PARTICLE_COUNT)
-    private val tmpB = DoubleArray(PARTICLE_COUNT)
+    private val sA = DoubleArray(MAX_PARTICLE_COUNT)
+    private val kA = DoubleArray(MAX_PARTICLE_COUNT)
+    private val bA = DoubleArray(MAX_PARTICLE_COUNT)
+    private val wA = DoubleArray(MAX_PARTICLE_COUNT)
+    private val cumA = DoubleArray(MAX_PARTICLE_COUNT)
+    private val tmpS = DoubleArray(MAX_PARTICLE_COUNT)
+    private val tmpK = DoubleArray(MAX_PARTICLE_COUNT)
+    private val tmpB = DoubleArray(MAX_PARTICLE_COUNT)
 
-    /**
-     * Turn-signature scratch (W12-06): expected heading-change sequence
-     * plus the two DTW rows, sized to [MAX_SIGNATURE_STEPS] once and
-     * reused by [observeTurnSignature].
-     */
     private val sigExp = DoubleArray(MAX_SIGNATURE_STEPS)
     private val signatureDtw = Dtw.Scratch(MAX_SIGNATURE_STEPS)
 
     private var spareValid = false
     private var spareValue = 0.0
     private var suspectVarianceM2 = 0.0
+    private var calmSeconds = 0.0
+    private var dormantOdoM = 0.0
+    private var bankedN = PARTICLE_COUNT
 
-    /**
-     * Distinct stride-scale values across the particles — a diagnostic for
-     * the diversity the post-resample jitter preserves. Allocates; never
-     * call it from the update path.
-     */
-    internal fun distinctStrideCount(): Int = kA.distinct().size
+    /** Active particle count in `MIN_PARTICLE_COUNT..MAX_PARTICLE_COUNT` (W18-03). */
+    var activeN: Int = PARTICLE_COUNT
+        private set
 
-    /**Posterior mean stride scale `k` across particles (W17-02). */
+    /** Distinct stride-scale values across active particles (test diagnostic). */
+    internal fun distinctStrideCount(): Int = kA.take(activeN).distinct().size
+
+    /** Posterior mean stride scale `k` across active particles (W17-02). */
     var meanK: Double = kPrior
         private set
 
@@ -80,7 +68,7 @@ class GhostFilter(
     var meanS: Double = 0.0
         private set
 
-    /** Posterior σ (weighted std), metres. Replaces the linear σ. */
+    /** Posterior σ (weighted std), metres. */
     var sigma: Double = 0.0
         private set
 
@@ -100,44 +88,177 @@ class GhostFilter(
         reset(0.0)
     }
 
-    /** (Re)spreads particles around route position [startS]. */
+    /** (Re)spreads particles around route position [startS] at default [PARTICLE_COUNT]. */
     fun reset(startS: Double) {
         spareValid = false
         suspectVarianceM2 = 0.0
-        for (i in 0 until PARTICLE_COUNT) {
-            sA[i] = (startS + gauss() * INIT_S_SD).coerceIn(0.0, geometry.totalLengthM)
+        calmSeconds = 0.0
+        dormantOdoM = 0.0
+        activeN = PARTICLE_COUNT
+        bankedN = PARTICLE_COUNT
+        resizeRandom = Random(initialSeed xor RESIZE_SEED_SALT)
+        val total = geometry.totalLengthM
+        for (i in 0 until activeN) {
+            sA[i] = (startS + gauss() * INIT_S_SD).coerceIn(0.0, total)
             kA[i] = gauss() * K_PRIOR_SD + kPrior
             bA[i] = gauss() * B_PRIOR_SD_RAD
-            wA[i] = 1.0 / PARTICLE_COUNT
+            wA[i] = 1.0 / activeN
         }
         updateStats()
     }
 
     /**
-     * Predict per odometer delta: s += k·L + N(0, 0.05·L); b takes a
-     * 0.3°/step random walk. Non-positive and non-finite deltas are a
-     * no-op (a NaN or infinite odometer glitch must not poison every
-     * particle). k is static per particle between resamples — it is
-     * learned implicitly when turn/anchor observations resample the
-     * matching-stride survivors, and re-diversified by the post-resample
-     * jitter.
+     * Evaluates the adaptive particle budget (plan W18-03):
+     * - Shrinks to [MIN_PARTICLE_COUNT] (96) by systematic subsampling after
+     *   `sigma < 1.0 m` and `quality01 >= 0.7` continuously for `10 s`.
+     * - Grows on relock (`inRelock == true`) or `sigma > 3.0 m` by jittered
+     *   resampling up to [MAX_PARTICLE_COUNT] (512).
      */
+    fun stepAdaptiveBudget(dtSec: Double, quality01: Double, inRelock: Boolean = false) {
+        if (!dtSec.isFinite() || dtSec < 0.0) return
+        if (inRelock || sigma > GROW_SIGMA_M) {
+            calmSeconds = 0.0
+            if (activeN < MAX_PARTICLE_COUNT) resizeParticles(MAX_PARTICLE_COUNT)
+            return
+        }
+        if (sigma >= SHRINK_SIGMA_M && activeN < PARTICLE_COUNT) {
+            calmSeconds = 0.0
+            resizeParticles(PARTICLE_COUNT)
+            return
+        }
+        if (sigma < SHRINK_SIGMA_M && quality01.isFinite() && quality01 >= SHRINK_MIN_QUALITY) {
+            calmSeconds += dtSec
+            if (calmSeconds >= SHRINK_HOLD_SEC && activeN > MIN_PARTICLE_COUNT) {
+                resizeParticles(MIN_PARTICLE_COUNT)
+            }
+        } else {
+            calmSeconds = 0.0
+        }
+    }
+
+    /**
+     * Resizes [activeN] to [targetN] (clamped to `96..512`, allocation-free):
+     * - Shrinking subsamples `0 until target` and moment-matches to the
+     *   pre-shrink posterior mean and σ while banking `target until oldN`.
+     * - Growing wakes banked particles (advancing them by [dormantOdoM]) and
+     *   splits particles antithetically (`±dz`, half weight each) up to 512 so
+     *   posterior mean, weights, and σ stay continuous.
+     */
+    fun resizeParticles(targetN: Int) {
+        val target = targetN.coerceIn(MIN_PARTICLE_COUNT, MAX_PARTICLE_COUNT)
+        if (target == activeN) return
+        val oldN = activeN
+        val total = geometry.totalLengthM
+        val preMeanS = meanS
+        val preMeanK = meanK
+        var preVarS = 0.0
+        var preVarK = 0.0
+        for (i in 0 until oldN) {
+            val ds = sA[i] - preMeanS
+            val dk = kA[i] - preMeanK
+            preVarS += wA[i] * ds * ds
+            preVarK += wA[i] * dk * dk
+        }
+        val preStdS = sqrt(preVarS)
+        val preStdK = sqrt(preVarK)
+
+        if (target < oldN) {
+            bankedN = maxOf(bankedN, oldN)
+            dormantOdoM = 0.0
+            var wSum = 0.0
+            for (i in 0 until target) wSum += wA[i]
+            if (wSum <= 0.0 || !wSum.isFinite()) {
+                for (i in 0 until target) wA[i] = 1.0 / target
+            } else {
+                for (i in 0 until target) wA[i] /= wSum
+            }
+            var subMeanS = 0.0
+            for (i in 0 until target) subMeanS += wA[i] * sA[i]
+            val shiftS = preMeanS - subMeanS
+            for (i in 0 until target) sA[i] = (sA[i] + shiftS).coerceIn(0.0, total)
+            activeN = target
+            updateStats()
+            return
+        }
+
+        val wakeEnd = minOf(target, bankedN)
+        if (wakeEnd > oldN) {
+            for (i in oldN until wakeEnd) {
+                if (dormantOdoM > 0.0) {
+                    val z = (resizeRandom.nextDouble() - 0.5) * 2.0
+                    sA[i] = (sA[i] + kA[i] * dormantOdoM + z * S_PROCESS_REL * dormantOdoM)
+                        .coerceIn(0.0, total)
+                }
+            }
+            var wokeMeanS = 0.0
+            for (i in oldN until wakeEnd) wokeMeanS += sA[i]
+            wokeMeanS /= (wakeEnd - oldN)
+            val shiftS = preMeanS - wokeMeanS
+            for (i in oldN until wakeEnd) sA[i] = (sA[i] + shiftS).coerceIn(0.0, total)
+            val activeShare = oldN.toDouble() / wakeEnd
+            val wokeWeight = (1.0 - activeShare) / (wakeEnd - oldN)
+            for (i in 0 until oldN) wA[i] *= activeShare
+            for (i in oldN until wakeEnd) wA[i] = wokeWeight
+        }
+        dormantOdoM = 0.0
+
+        val sourceN = maxOf(oldN, wakeEnd)
+        if (target > sourceN) {
+            // Antithetic split for additional particles so mean and weights are preserved.
+            for (i in sourceN until target) {
+                val j = i - sourceN
+                val z1 = (resizeRandom.nextDouble() - 0.5) * 2.0 * GROW_S_JITTER_M
+                val z2 = (resizeRandom.nextDouble() - 0.5) * 2.0 * K_JITTER_SD
+                val z3 = (resizeRandom.nextDouble() - 0.5) * 2.0 * B_JITTER_SD_RAD
+                val baseS = sA[j]
+                val baseK = kA[j]
+                val baseB = bA[j]
+                sA[j] = (baseS - z1).coerceIn(0.0, total)
+                sA[i] = (baseS + z1).coerceIn(0.0, total)
+                kA[j] = (baseK - z2).coerceIn(STRIDE_K_MIN, STRIDE_K_MAX)
+                kA[i] = (baseK + z2).coerceIn(STRIDE_K_MIN, STRIDE_K_MAX)
+                bA[j] = wrapPi(baseB - z3)
+                bA[i] = wrapPi(baseB + z3)
+                val halfW = wA[j] * 0.5
+                wA[j] = halfW
+                wA[i] = halfW
+            }
+        }
+        var normSum = 0.0
+        for (i in 0 until target) normSum += wA[i]
+        if (normSum > 0.0 && normSum.isFinite()) {
+            for (i in 0 until target) wA[i] /= normSum
+        } else {
+            for (i in 0 until target) wA[i] = 1.0 / target
+        }
+        activeN = target
+        bankedN = maxOf(bankedN, target)
+        updateStats()
+    }
+
+    /** Predict per odometer delta: `s += k·L + N(0, 0.05·L)`; `b` random-walks. */
     fun predict(deltaM: Double) {
         if (!deltaM.isFinite() || deltaM <= 0.0) return
         val total = geometry.totalLengthM
-        for (i in 0 until PARTICLE_COUNT) {
+        val n = activeN
+        if (n < bankedN) dormantOdoM += deltaM
+        val baseCount = minOf(n, PARTICLE_COUNT)
+        for (i in 0 until baseCount) {
             sA[i] = (sA[i] + kA[i] * deltaM + gauss() * S_PROCESS_REL * deltaM)
                 .coerceIn(0.0, total)
             bA[i] += gauss() * B_RW_RAD
         }
+        for (i in baseCount until n) {
+            val z1 = (resizeRandom.nextDouble() - 0.5) * 2.0
+            val z2 = (resizeRandom.nextDouble() - 0.5) * 2.0
+            sA[i] = (sA[i] + kA[i] * deltaM + z1 * S_PROCESS_REL * deltaM)
+                .coerceIn(0.0, total)
+            bA[i] += z2 * B_RW_RAD
+        }
         updateStats()
     }
 
-    /**
-     * Missed-step suspect inflation (W16-04): widens posterior σ in
-     * quadrature by [extraSigmaM] without shifting [meanS] or inventing
-     * distance.
-     */
+    /** Widens posterior σ in quadrature by [extraSigmaM] without shifting [meanS] (W16-04). */
     fun inflateUncertainty(extraSigmaM: Double) {
         if (!extraSigmaM.isFinite() || extraSigmaM <= 0.0) return
         suspectVarianceM2 += extraSigmaM * extraSigmaM
@@ -160,43 +281,34 @@ class GhostFilter(
     }
 
     private fun observeVisualSpeed(obs: Observation.VisualSpeed) {
-        if (!VisualSpeedEstimator.applyToParticles(obs, kA, wA, PARTICLE_COUNT)) return
+        if (!VisualSpeedEstimator.applyToParticles(obs, kA, wA, activeN)) return
         normalizeAndMaybeResample()
     }
 
     private fun observeViewFix(obs: Observation.ViewFix) {
-        if (!ViewFixMatcher.applyToParticles(obs, sA, bA, wA, PARTICLE_COUNT)) return
+        if (!ViewFixMatcher.applyToParticles(obs, sA, bA, wA, activeN)) return
         normalizeAndMaybeResample()
     }
 
-    /**
-     * Shifts particle positions by [deltaSM] when a stride-scale observation
-     * updates [meanK] mid-leg (W17-02).
-     */
     internal fun applyStrideCorrection(deltaSM: Double) {
         if (!deltaSM.isFinite() || deltaSM == 0.0) return
         val total = geometry.totalLengthM
-        for (i in 0 until PARTICLE_COUNT) {
+        for (i in 0 until activeN) {
             sA[i] = (sA[i] + deltaSM).coerceIn(0.0, total)
         }
         updateStats()
     }
 
-    /**
-     * Heading likelihood: von Mises on
-     * (yaw + yawOffset + b − routeHeading(s)) with κ = [KAPPA_MAX]·q.
-     * q = 0 is uniform (stillness/gyro-bias episodes add no information
-     * instead of wrong information).
-     */
+    /** Heading likelihood: von Mises on `(yaw + yawOffset + b − routeHeading(s))`, capped by `legSigmaRad`. */
     fun observeHeading(yawPlusOffsetRad: Double, quality01: Double) {
         val baseKappa = KAPPA_MAX * quality01.coerceIn(0.0, 1.0)
         if (baseKappa <= 0.0) return
         headingObservationCount++
-        for (i in 0 until PARTICLE_COUNT) {
+        val n = activeN
+        for (i in 0 until n) {
             val legSigma = geometry.legSigmaAt(sA[i])
             val kappa = if (legSigma.isFinite() && legSigma > 0.0) {
-                val routeCap = 1.0 / (legSigma * legSigma + 1.0 / KAPPA_MAX)
-                minOf(baseKappa, routeCap)
+                minOf(baseKappa, 1.0 / (legSigma * legSigma + 1.0 / KAPPA_MAX))
             } else {
                 baseKappa
             }
@@ -206,14 +318,10 @@ class GhostFilter(
         normalizeAndMaybeResample()
     }
 
-    /**
-     * Turn-event likelihood: Gaussian (σ [TURN_SIGMA_M]) on the distance
-     * to the nearest node with the matching turn, [TURN_FLOOR] elsewhere
-     * so a far turn reads as uninformative rather than collapsing the
-     * filter to NaN.
-     */
+    /** Turn-event likelihood: Gaussian (σ [TURN_SIGMA_M]) on distance to nearest matching turn. */
     fun observeTurn(dir: TurnDir) {
-        for (i in 0 until PARTICLE_COUNT) {
+        val n = activeN
+        for (i in 0 until n) {
             val nodeS = geometry.nearestTurnS(sA[i], dir)
             val like = if (nodeS.isNaN()) {
                 TURN_FLOOR
@@ -226,115 +334,70 @@ class GhostFilter(
         normalizeAndMaybeResample()
     }
 
-    /**
-     * Lost → relock re-spread (W12-06): particles scatter uniformly over
-     * the whole route with uniform weights, so the next ≤ 10 s / 8 m of
-     * turn signature, fingerprint and magnetic observations reconverge
-     * from nowhere rather than from a stale belief. Stride scale and
-     * heading bias survive (device properties, not position) — like
-     * [anchorAt]. Seeded, so a relock replays deterministically.
-     */
+    /** Lost → relock uniform re-spread across the route (W12-06). */
     fun respreadUniform() {
         val total = geometry.totalLengthM
         spareValid = false
-        for (i in 0 until PARTICLE_COUNT) {
+        val n = activeN
+        for (i in 0 until n) {
             sA[i] = (random.nextDouble() * total).coerceIn(0.0, total)
-            wA[i] = 1.0 / PARTICLE_COUNT
+            wA[i] = 1.0 / n
         }
         updateStats()
     }
 
-    /**
-     * Turn-signature likelihood (W12-06): DTW over the heading-change
-     * sequence. [deltasRad] holds the observed yaw changes per [stepM]
-     * metres walked, ending at the walker's current position
-     * (rotation-invariant, so the unknown alignment offset cancels); each
-     * particle's expected sequence is the route-heading changes over the
-     * `deltasRad.size` steps *behind* its position `[s - n*step, s]`. The
-     * match is a banded DTW ([DTW_BAND_STEPS]). The likelihood is
-     * floored at [TURN_FLOOR], so a mismatched signature reads as
-     * uninformative rather than collapsing the filter.
-     */
+    /** Turn-signature DTW likelihood (W12-06). */
     fun observeTurnSignature(deltasRad: DoubleArray, stepM: Double) {
-        val n = deltasRad.size
-        if (n == 0 || n > MAX_SIGNATURE_STEPS || stepM <= 0.0) return
-        for (i in 0 until PARTICLE_COUNT) {
-            var prev = geometry.headingAt(sA[i] - n * stepM)
-            for (j in 0 until n) {
-                val next = geometry.headingAt(sA[i] - (n - j - 1) * stepM)
+        val len = deltasRad.size
+        if (len == 0 || len > MAX_SIGNATURE_STEPS || stepM <= 0.0) return
+        val n = activeN
+        for (i in 0 until n) {
+            var prev = geometry.headingAt(sA[i] - len * stepM)
+            for (j in 0 until len) {
+                val next = geometry.headingAt(sA[i] - (len - j - 1) * stepM)
                 sigExp[j] = wrapPi(next - prev)
                 prev = next
             }
-            val cost = Dtw.distance(n, n, DTW_BAND_STEPS, signatureDtw) { row, column ->
+            val cost = Dtw.distance(len, len, DTW_BAND_STEPS, signatureDtw) { row, column ->
                 val error = wrapPi(deltasRad[row] - sigExp[column])
                 error * error
             }
-            wA[i] *= exp(-cost / (2.0 * n * RELOCK_SIGMA_RAD * RELOCK_SIGMA_RAD)) +
-                TURN_FLOOR
+            wA[i] *= exp(-cost / (2.0 * len * RELOCK_SIGMA_RAD * RELOCK_SIGMA_RAD)) + TURN_FLOOR
         }
         normalizeAndMaybeResample()
     }
 
-
-    /**
-     * Landmark confirm: hard anchor — every particle re-spreads uniform
-     * in [nodeS] ± [ANCHOR_HALF_M]. Stride scale and heading bias survive
-     * (they are device properties, not position).
-     */
+    /** Landmark confirm: hard anchor in `nodeS ± ANCHOR_HALF_M`. */
     fun anchorAt(nodeS: Double) {
         val total = geometry.totalLengthM
         suspectVarianceM2 = 0.0
-        for (i in 0 until PARTICLE_COUNT) {
-            sA[i] = (nodeS + (random.nextDouble() * 2.0 - 1.0) * ANCHOR_HALF_M)
-                .coerceIn(0.0, total)
-            wA[i] = 1.0 / PARTICLE_COUNT
+        val n = activeN
+        for (i in 0 until n) {
+            sA[i] = (nodeS + (random.nextDouble() * 2.0 - 1.0) * ANCHOR_HALF_M).coerceIn(0.0, total)
+            wA[i] = 1.0 / n
         }
         updateStats()
     }
 
-    /**
-     * Level-change confirm (W12-08): the barometer crossed ±2.2 m at a
-     * LEVEL_CHANGE node, so the horizontal belief collapses to the node
-     * exactly like a landmark confirm — stride scale and heading bias
-     * survive.
-     */
-    fun observeLevel(nodeS: Double) {
-        anchorAt(nodeS)
-    }
+    fun observeLevel(nodeS: Double) = anchorAt(nodeS)
 
-    /**
-     * Magnetic-signature fix (W12-04): soft Gaussian (σ [MAG_SIGMA_M]) on
-     * the distance to the matched route position [s], with a [MAG_FLOOR]
-     * elsewhere so a stale or drifted signature reads as uninformative
-     * rather than collapsing the filter — the same floor pattern as
-     * [observeTurn]. Never a hard anchor: unlike a confirmed landmark, a
-     * steel signature can move with its furniture, so the floor is high
-     * enough (near-vs-far reweight of at most ~6:1, a little wider than
-     * the fingerprint's 2:1) that a false fix bends the posterior and
-     * cannot snap it.
-     */
+    /** Magnetic-signature soft Gaussian fix (W12-04). */
     fun observeMagnetic(s: Double) {
         if (!s.isFinite()) return
-        for (i in 0 until PARTICLE_COUNT) {
+        val n = activeN
+        for (i in 0 until n) {
             val d = sA[i] - s
             wA[i] *= exp(-d * d / (2.0 * MAG_SIGMA_M * MAG_SIGMA_M)) + MAG_FLOOR
         }
         normalizeAndMaybeResample()
     }
 
-    /**
-     * Fingerprint match (W12-05): a gated cosine hit (same embedder id +
-     * seed, within s ± (3σ + 5 m), similarity ≥ τ) nudges the belief
-     * toward [nodeS] — never collapses it. The likelihood is floored at
-     * [FINGERPRINT_FLOOR], so the strongest possible update reweights
-     * near-vs-far particles by at most 2:1: a false match bends the
-     * posterior, it cannot snap it. Confirmation stays with the user (or
-     * a consistent turn event) — this function never anchors.
-     */
+    /** Fingerprint soft match (W12-05). */
     fun observeFingerprint(nodeS: Double, similarity01: Double) {
         val sim = similarity01.coerceIn(0.0, 1.0)
         if (sim <= 0.0) return
-        for (i in 0 until PARTICLE_COUNT) {
+        val n = activeN
+        for (i in 0 until n) {
             val d = sA[i] - nodeS
             val like = FINGERPRINT_FLOOR +
                 (1.0 - FINGERPRINT_FLOOR) * sim *
@@ -345,74 +408,73 @@ class GhostFilter(
     }
 
     private fun normalizeAndMaybeResample() {
+        val n = activeN
         var sum = 0.0
-        for (i in 0 until PARTICLE_COUNT) sum += wA[i]
+        for (i in 0 until n) sum += wA[i]
         if (sum <= 0.0 || sum.isNaN()) {
-            for (i in 0 until PARTICLE_COUNT) wA[i] = 1.0 / PARTICLE_COUNT
+            for (i in 0 until n) wA[i] = 1.0 / n
             updateStats()
             return
         }
         var sumSq = 0.0
-        for (i in 0 until PARTICLE_COUNT) {
+        for (i in 0 until n) {
             wA[i] /= sum
             sumSq += wA[i] * wA[i]
         }
         updateStats(sumSq)
-        if (effectiveN < PARTICLE_COUNT / 2.0) systematicResample()
+        if (effectiveN < n / 2.0) systematicResample()
     }
 
     private fun updateStats() {
+        val n = activeN
         var sumSq = 0.0
-        for (i in 0 until PARTICLE_COUNT) sumSq += wA[i] * wA[i]
+        for (i in 0 until n) sumSq += wA[i] * wA[i]
         updateStats(sumSq)
     }
 
     private fun updateStats(sumSq: Double) {
+        val n = activeN
         var mean = 0.0
         var kMean = 0.0
-        for (i in 0 until PARTICLE_COUNT) {
+        for (i in 0 until n) {
             mean += wA[i] * sA[i]
             kMean += wA[i] * kA[i]
         }
         var variance = 0.0
-        for (i in 0 until PARTICLE_COUNT) {
+        for (i in 0 until n) {
             val d = sA[i] - mean
             variance += wA[i] * d * d
         }
         meanS = mean
         meanK = kMean
         sigma = sqrt(variance + suspectVarianceM2)
-        effectiveN = if (sumSq > 0.0) 1.0 / sumSq else PARTICLE_COUNT.toDouble()
+        effectiveN = if (sumSq > 0.0) 1.0 / sumSq else n.toDouble()
     }
 
-    /** Systematic resampling into the reused scratch arrays. */
     private fun systematicResample() {
+        val n = activeN
         cumA[0] = wA[0]
-        for (i in 1 until PARTICLE_COUNT) cumA[i] = cumA[i - 1] + wA[i]
-        var u = random.nextDouble() / PARTICLE_COUNT
-        val step = 1.0 / PARTICLE_COUNT
+        for (i in 1 until n) cumA[i] = cumA[i - 1] + wA[i]
+        var u = random.nextDouble() / n
+        val step = 1.0 / n
         var j = 0
-        for (i in 0 until PARTICLE_COUNT) {
-            while (j < PARTICLE_COUNT - 1 && u > cumA[j]) j++
+        for (i in 0 until n) {
+            while (j < n - 1 && u > cumA[j]) j++
             tmpS[i] = sA[j]
             tmpK[i] = kA[j]
             tmpB[i] = bA[j]
             u += step
         }
-        // Resampling duplicates survivors; without jitter the static k and
-        // b collapse to a handful of distinct values within seconds and
-        // the filter can no longer learn stride or heading bias.
-        for (i in 0 until PARTICLE_COUNT) {
+        for (i in 0 until n) {
             sA[i] = tmpS[i]
             kA[i] = tmpK[i] + gauss() * K_JITTER_SD
             bA[i] = tmpB[i] + gauss() * B_JITTER_SD_RAD
-            wA[i] = 1.0 / PARTICLE_COUNT
+            wA[i] = 1.0 / n
         }
         resampleCount++
         updateStats()
     }
 
-    /** Scalar Box-Muller; primitive spare cache, no boxing/allocation. */
     private fun gauss(): Double {
         if (spareValid) {
             spareValid = false
@@ -421,94 +483,47 @@ class GhostFilter(
         var u1 = random.nextDouble()
         while (u1 <= 0.0) u1 = random.nextDouble()
         val u2 = random.nextDouble()
-        val r = sqrt(-2.0 * kotlin.math.ln(u1))
+        val r = sqrt(-2.0 * ln(u1))
         val theta = 2.0 * PI * u2
-        spareValue = r * kotlin.math.sin(theta)
+        spareValue = r * sin(theta)
         spareValid = true
-        return r * kotlin.math.cos(theta)
+        return r * cos(theta)
     }
 
     companion object {
-        /** Particle count (plan W12-02, ≤ 1 ms/update budget). */
+        const val MIN_PARTICLE_COUNT = 96
         const val PARTICLE_COUNT = 256
+        const val MAX_PARTICLE_COUNT = 512
 
-        /** Deterministic default seed: unseeded filters still replay identically. */
+        const val SHRINK_SIGMA_M = 1.0
+        const val GROW_FROM_MIN_SIGMA_M = 1.5
+        const val SHRINK_MIN_QUALITY = 0.7
+        const val SHRINK_HOLD_SEC = 10.0
+        const val GROW_SIGMA_M = 3.0
+        private const val GROW_S_JITTER_M = 0.08
+
         const val DEFAULT_SEED = 0xEC4012L
-
-        /** Stride-scale prior N(1, 0.08). */
+        private const val RESIZE_SEED_SALT = 0x517CC1B727220A95L
         const val K_PRIOR_SD = 0.08
-
-        /** Heading-bias prior N(0, 5°), radians. */
         val B_PRIOR_SD_RAD = 5.0 * PI / 180.0
-
-        /** Initial position spread at a known alignment, metres. */
         const val INIT_S_SD = 0.5
-
-        /** Process noise per predict: N(0, 0.05·L). */
         const val S_PROCESS_REL = 0.05
-
-        /** Heading-bias random walk per predict, 0.3° in radians. */
         val B_RW_RAD = 0.3 * PI / 180.0
-
-        /** Post-resample stride-scale jitter σ (keeps k diverse). */
         const val K_JITTER_SD = 0.005
-
-        /** Post-resample heading-bias jitter σ, 0.2° in radians. */
         val B_JITTER_SD_RAD = 0.2 * PI / 180.0
-
-        /** Von Mises κ at full heading quality (q = 1). */
         const val KAPPA_MAX = 8.0
-
-        /** Turn-event Gaussian σ, metres. */
         const val TURN_SIGMA_M = 2.0
-
-        /** Turn likelihood floor far from any matching node. */
         const val TURN_FLOOR = 1e-4
-
-        /**
-         * Turn-signature DTW σ, radians (W12-06): generous on purpose, so
-         * a single noisy window reads as a hint rather than a verdict.
-         */
         const val RELOCK_SIGMA_RAD = 0.6
-
-        /** Sakoe-Chiba band half-width of the turn-signature DTW, in steps. */
         const val DTW_BAND_STEPS = 1
-
-        /** Turn-signature window: at most 8 heading-change steps (8 m at 1 m). */
         const val MAX_SIGNATURE_STEPS = 8
-
-        /** Landmark hard-anchor half-window, metres. */
         const val ANCHOR_HALF_M = 1.0
-
-        /**
-         * Magnetic-fix Gaussian σ, metres (W12-04): the DTW match is good
-         * to ~1 m on a clean corridor; 2 m leaves room for the belief's own
-         * drift and for a wrong-but-plausible fix.
-         */
         const val MAG_SIGMA_M = 2.0
-
-        /**
-         * Magnetic likelihood floor far from the matched position. At 1e-4
-         * a false fix was a hard anchor (10^4 : 1); 0.2 caps the
-         * near-vs-far reweight at 6 : 1 (fingerprints floor at 0.5).
-         */
         const val MAG_FLOOR = 0.2
-
-        /**
-         * Fingerprint likelihood floor (W12-05): the weakest a particle
-         * ever scores on a fingerprint observation, so the max
-         * near-vs-far reweight is 2:1. Low weight by construction —
-         * S review of privacy + filter weight.
-         */
         const val FINGERPRINT_FLOOR = 0.5
-
-        /** Fingerprint likelihood Gaussian σ, metres (wide on purpose). */
         const val FINGERPRINT_SIGMA_M = 6.0
-
-        /** Learned-k prior band (W12-03): the W4-02 plausible K band. */
         const val STRIDE_K_MIN = 0.15
         const val STRIDE_K_MAX = 1.5
-
         private const val PI = kotlin.math.PI
     }
 }
