@@ -72,4 +72,17 @@ sealed interface Observation {
         val visualMps: Double,
         val sigmaMps: Double,
     ) : Observation
+
+    /**
+     * A ViewFix strip-sequence observation (W17-03): correlates the live
+     * 96-byte view strip against stored strips at [nodeS], recovering
+     * geometric [dHeadingRad] and [dSM] softly with [confidence01].
+     * Never a hard anchor and never an auto-confirm.
+     */
+    data class ViewFix(
+        val nodeS: Double,
+        val dHeadingRad: Double,
+        val dSM: Double,
+        val confidence01: Double,
+    ) : Observation
 }

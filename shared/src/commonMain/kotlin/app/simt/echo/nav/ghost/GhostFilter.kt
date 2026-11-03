@@ -155,11 +155,17 @@ class GhostFilter(
             is Observation.Fingerprint -> observeFingerprint(obs.nodeS, obs.similarity01)
             is Observation.TurnSignature -> observeTurnSignature(obs.deltasRad, obs.stepM)
             is Observation.VisualSpeed -> observeVisualSpeed(obs)
+            is Observation.ViewFix -> observeViewFix(obs)
         }
     }
 
     private fun observeVisualSpeed(obs: Observation.VisualSpeed) {
         if (!VisualSpeedEstimator.applyToParticles(obs, kA, wA, PARTICLE_COUNT)) return
+        normalizeAndMaybeResample()
+    }
+
+    private fun observeViewFix(obs: Observation.ViewFix) {
+        if (!ViewFixMatcher.applyToParticles(obs, sA, bA, wA, PARTICLE_COUNT)) return
         normalizeAndMaybeResample()
     }
 

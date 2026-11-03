@@ -22,6 +22,7 @@ import app.simt.echo.nav.ghost.MagneticMatch
 import app.simt.echo.nav.ghost.Observation
 import app.simt.echo.nav.ghost.RouteGeometry
 import app.simt.echo.nav.ghost.StrideLearner
+import app.simt.echo.nav.ghost.ViewFixMatcher
 import app.simt.echo.nav.ghost.VisualSpeedEstimator
 import app.simt.echo.platform.HapticPattern
 import app.simt.echo.platform.MotionUpdate
@@ -76,6 +77,7 @@ class Navigator(
             null
         }
     private val visualSpeedEstimator = VisualSpeedEstimator(route.perception?.parallax)
+    private val viewFixMatcher = ViewFixMatcher(route.perception?.parallax)
 
     /** Posterior mean K learned from anchored legs (and weak visual speed) so far. */
     val learnedStrideK: Double get() = strideLearner.meanK
@@ -256,6 +258,7 @@ class Navigator(
         travelOffsetRad = 0.0
         missedStepSigmaBonusM = 0.0
         missedStepSuspectCount = 0
+        viewFixMatcher.reset()
         turnDetector.reset()
         yawTrail.clear()
         legYaws.clear()
@@ -505,6 +508,32 @@ class Navigator(
             strideLearner.observeVisualSpeed(obs.nominalMps, obs.visualMps, obs.sigmaMps)
         }
         refresh()
+    }
+
+    /**
+     * Live 96-byte view-strip feed (W17-03): matches against stored route
+     * strips around `absoluteS ± (3σ + 5 m)` and applies a soft
+     * [Observation.ViewFix] to both position and heading offset — never a hard
+     * anchor or auto-confirm.
+     */
+    fun onViewStrip(
+        liveStrip: ByteArray,
+        fovRad: Double = ViewFixMatcher.DEFAULT_FOV_RAD,
+    ): Observation.ViewFix? {
+        if (!config.visualAssist || config.baselineMode) return null
+        if (phase == NavPhase.ALIGN || phase == NavPhase.ARRIVED) return null
+        val fix = viewFixMatcher.matchObservation(
+            liveStrip = liveStrip,
+            odoM = dist,
+            meanS = absoluteS,
+            sigmaM = uncertainty,
+            fovRad = fovRad,
+        ) ?: return null
+        ghost?.observe(fix)
+        val alpha = (0.45 * fix.confidence01).coerceIn(0.05, 0.50)
+        yawOffset = wrapPi(yawOffset - alpha * fix.dHeadingRad)
+        refresh()
+        return fix
     }
 
     fun onFingerprintHit(hit: FingerprintHit) {
