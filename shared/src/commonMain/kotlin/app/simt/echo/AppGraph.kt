@@ -7,6 +7,7 @@ import app.simt.echo.capture.ScanningFaceDetector
 import app.simt.echo.data.ConfigRepository
 import app.simt.echo.data.DraftRepository
 import app.simt.echo.data.FileStore
+import app.simt.echo.data.RouteMemoryRepository
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.data.TrialRepository
 import app.simt.echo.media.MediaTools
@@ -81,6 +82,7 @@ class AppGraph(
     }
 
     val routeRepository: RouteRepository by lazy { RouteRepository(fileStore) }
+    val routeMemoryRepository: RouteMemoryRepository by lazy { RouteMemoryRepository(fileStore) }
     val draftRepository: DraftRepository by lazy { DraftRepository(fileStore) }
 
     /**
@@ -91,7 +93,10 @@ class AppGraph(
      * can render — share/export paths stay fail-closed regardless.
      * @return how many routes were purged.
      */
-    fun purgeExpiredRoutes(nowMs: Long): Int = routeRepository.purgeExpired(nowMs)
+    fun purgeExpiredRoutes(nowMs: Long): Int {
+        routeMemoryRepository.purgeExpired(nowMs)
+        return routeRepository.purgeExpired(nowMs)
+    }
 
     /**
      * Face pre-filter for one draft's ledger frames (W11-04), or null when

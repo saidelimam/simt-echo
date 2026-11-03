@@ -245,6 +245,55 @@ class ViewFixTest {
         assertTrue(fixesApplied >= 4, "expected at least 4 ViewFix matches along the walk, got $fixesApplied")
     }
 
+    @Test
+    fun overlayRecordedUnderChangedLightingImprovesDecoyLitMatchAndIgnoresCorruptedOverlayEntries() {
+        val world = SimWorld(SimEnvironment.CORRIDOR, seed = SEED, pixelSamplesPerAxis = 2)
+        val creatorStripAt20 = renderStrip(world, SimPose(0.0, 55.0, 1.5, 0.0))
+
+        //Under changed lighting/appearance (e.g. evening shadow shifting column contrast on half the scene),
+        // the live strip at 20 m only partially correlates with the original creator strip, tying with a decoy at 16 m.
+        val changedLightStripAt20 = ByteArray(ViewStrip.BYTES) { i ->
+            if (i < 32) (-creatorStripAt20[i]).toByte() else creatorStripAt20[i]
+        }
+        val decoyStripAt16 = changedLightStripAt20.copyOf().also { arr ->
+            for (i in 0 until 28) arr[i] = creatorStripAt20[i]
+        }
+
+        val profile = ParallaxProfile(
+            inverseDepth = Base64.encode(ByteArray(60) { ParallaxProfiler.quantiseRho(0.20) }),
+            trackability = Base64.encode(ByteArray(60) { 220.toByte() }),
+            viewStrips = listOf(
+                ViewStrip(atDistanceM = 16.0, dataB64 = Base64.encode(decoyStripAt16)),
+                ViewStrip(atDistanceM = 20.0, dataB64 = Base64.encode(creatorStripAt20)),
+            ),
+            estimatorId = ParallaxProfiler.DEFAULT_ESTIMATOR_ID,
+            intrinsicsClass = ParallaxProfiler.DEFAULT_INTRINSICS_CLASS,
+        )
+
+        val withoutOverlay = ViewFixMatcher(profile)
+        val matchedWithoutOverlay = withoutOverlay.match(changedLightStripAt20, odoM = 20.0, meanS = 18.0, sigmaM = 2.0)
+
+        // Now provide the follower's RouteMemory overlay at 20.0 m (recorded in this lighting) plus corrupted entries.
+        val corruptedEntries = listOf(
+            ViewStrip(atDistanceM = Double.NaN, dataB64 = Base64.encode(changedLightStripAt20)),
+            ViewStrip(atDistanceM = -4.0, dataB64 = Base64.encode(changedLightStripAt20)),
+            ViewStrip(atDistanceM = 20.0, dataB64 = "!!!not-base64!!!"),
+            ViewStrip(atDistanceM = 20.0, dataB64 = Base64.encode(ByteArray(12))),
+        )
+        val validOverlay = ViewStrip(atDistanceM = 20.0, dataB64 = Base64.encode(changedLightStripAt20))
+        val withOverlay = ViewFixMatcher(profile, extraStrips = corruptedEntries + validOverlay)
+
+        assertTrue(
+            withOverlay.match(changedLightStripAt20, odoM = 20.0, meanS = 18.0, sigmaM = 2.0),
+            "overlay recorded under changed lighting must enable a clean match at 20.0 m",
+        )
+        kotlin.test.assertEquals(20.0, withOverlay.lastNodeS, 1e-6)
+        assertTrue(
+            !matchedWithoutOverlay || withOverlay.lastConfidence01 > withoutOverlay.lastConfidence01,
+            "overlay must improve match confidence over the un-overlaid matcher",
+        )
+    }
+
     private companion object {
         const val SEED = 1_234_567L
     }

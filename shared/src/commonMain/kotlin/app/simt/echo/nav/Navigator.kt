@@ -54,6 +54,7 @@ class Navigator(
     private val route: EchoRoute,
     private val config: EchoConfig = EchoConfig(),
     ghostSeed: Long = GhostFilter.DEFAULT_SEED,
+    overlayStrips: List<app.simt.echo.model.ViewStrip> = emptyList(),
 ) {
     private val turnDetector = TurnDetector(config)
 
@@ -79,7 +80,7 @@ class Navigator(
             null
         }
     private val visualSpeedEstimator = VisualSpeedEstimator(route.perception?.parallax)
-    private val viewFixMatcher = ViewFixMatcher(route.perception?.parallax)
+    private val viewFixMatcher = ViewFixMatcher(route.perception?.parallax, overlayStrips)
 
     /** Posterior mean K learned from anchored legs (and weak visual speed) so far. */
     val learnedStrideK: Double get() = strideLearner.meanK
