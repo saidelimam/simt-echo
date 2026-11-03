@@ -1,5 +1,6 @@
 import type { Context } from "hono";
 import type { AppEnv } from "./index";
+import { readBodyCapped } from "./uploads";
 
 /**
  * Zero-knowledge relay (plan W4-05, §5.5).
@@ -7,13 +8,15 @@ import type { AppEnv } from "./index";
  * The relay stores one sealed bundle (`ECX1` ciphertext) per code for
  * 30 minutes. It never receives the bundle key — the key travels in the
  * QR (`k=`) and the relay code in `c=` — so the server can only ever
- * inspect ciphertext. Codes are 6 characters of Crockford-style base32
- * without ambiguous glyphs (no 0/O, 1/I/L).
+ * inspect ciphertext. Codes are 8 characters of Crockford-style base32
+ * without ambiguous glyphs (no 0/O, 1/I/L): ≈ 39.6 bits per code,
+ * carried in the QR and guessed only by the receiver's own install
+ * (R9-07, review 0009 F6).
  */
 
 export const RELAY_MAX_BYTES = 5 * 1024 * 1024;
 export const RELAY_TTL_MS = 30 * 60 * 1000;
-export const RELAY_CODE_LENGTH = 6;
+export const RELAY_CODE_LENGTH = 8;
 export const RELAY_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const CODE_PATTERN = new RegExp(
   `^[${RELAY_CODE_ALPHABET}]{${RELAY_CODE_LENGTH}}$`,
@@ -36,17 +39,25 @@ function cryptoByte(): number {
 }
 
 /**
- * Allocates a free code, retrying on collision. Returns null after
- * [MAX_CODE_ATTEMPTS] collisions so the caller can fail the upload
- * instead of overwriting someone else's bundle.
+ * Draws codes until one stores. `store` performs the allocation's
+ * conditional put and must throw when the code was taken between the
+ * draw and the put (R2 rejects `onlyIf: { etagDoesNotMatch: "" }`).
+ * Returns the stored code, or null after [MAX_CODE_ATTEMPTS] collisions
+ * so the caller can fail the upload instead of overwriting someone
+ * else's bundle.
  */
 export async function allocateRelayCode(
-  exists: (code: string) => Promise<boolean>,
+  store: (code: string) => Promise<void>,
   generate: () => string = () => generateRelayCode(cryptoByte),
 ): Promise<string | null> {
   for (let attempt = 0; attempt < MAX_CODE_ATTEMPTS; attempt++) {
     const code = generate();
-    if (!(await exists(code))) return code;
+    try {
+      await store(code);
+      return code;
+    } catch {
+      // Collision (or a storage failure): draw a fresh code.
+    }
   }
   return null;
 }
@@ -56,26 +67,39 @@ function relayKey(code: string): string {
 }
 
 export async function postRelay(c: Context<AppEnv>) {
-  const body = await c.req.arrayBuffer();
+  const bucket = c.env.MEDIA;
+  // R9-07 (review 0009 F6): cap the read, don't buffer past the cap — an
+  // oversized body is never fully read into the worker's memory.
+  const body = await readBodyCapped(c.req.raw.body, RELAY_MAX_BYTES);
+  if (body === null) {
+    return c.json({ ok: false, error: "too_large" }, 413);
+  }
   if (body.byteLength === 0) {
     return c.json({ ok: false, error: "empty_body" }, 400);
   }
-  if (body.byteLength > RELAY_MAX_BYTES) {
-    return c.json({ ok: false, error: "too_large" }, 413);
-  }
-  const bucket = c.env.MEDIA;
+  const expiresAt = Date.now() + RELAY_TTL_MS;
   const code = await allocateRelayCode(
-    async (candidate) => (await bucket.head(relayKey(candidate))) !== null,
+    // R9-07: the guard is on the put, not a preceding head — a rival POST
+    // landing between head and put loses its conditional put and retries
+    // with a fresh code, so a bundle is never overwritten.
+    async (candidate) => {
+      // R9-01: the minting install owns the code; a foreign GET is a 404.
+      await bucket.put(
+        relayKey(candidate),
+        body,
+        {
+          httpMetadata: { contentType: "application/octet-stream" },
+          customMetadata: { expiresAt: String(expiresAt), owner: c.get("deviceId") },
+          // Only create if absent: a code that appeared since the draw is a
+          // collision, not an overwrite.
+          onlyIf: { etagDoesNotMatch: "" },
+        },
+      );
+    },
   );
   if (code === null) {
     return c.json({ ok: false, error: "code_unavailable" }, 503);
   }
-  const expiresAt = Date.now() + RELAY_TTL_MS;
-  // R9-01: the minting install owns the code; a foreign GET is a 404.
-  await bucket.put(relayKey(code), body, {
-    httpMetadata: { contentType: "application/octet-stream" },
-    customMetadata: { expiresAt: String(expiresAt), owner: c.get("deviceId") },
-  });
   return c.json({ ok: true, code, expiresAt });
 }
 

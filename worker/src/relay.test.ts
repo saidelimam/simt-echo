@@ -27,11 +27,25 @@ class FakeBucket {
 
   async put(
     key: string,
-    value: ArrayBuffer | Uint8Array,
-    options?: { customMetadata?: Record<string, string> },
+    value: ArrayBuffer | Uint8Array | string | ReadableStream<Uint8Array>,
+    options?: {
+      customMetadata?: Record<string, string>;
+      onlyIf?: { etagDoesNotMatch?: string };
+    },
   ) {
+    // R9-07: honor R2's create-if-absent guard — the put fails when the
+    // object exists, which is what the allocation relies on.
+    if (options?.onlyIf?.etagDoesNotMatch !== undefined && this.objects.has(key)) {
+      throw new Error("R2ConditionalPutFailed");
+    }
     const body =
-      value instanceof Uint8Array ? value : new Uint8Array(value);
+      value instanceof Uint8Array
+        ? value
+        : value instanceof ReadableStream
+          ? new Uint8Array(0)
+          : value instanceof ArrayBuffer
+            ? new Uint8Array(value)
+            : new TextEncoder().encode(value);
     this.objects.set(key, { body, customMetadata: options?.customMetadata });
     return { key };
   }
@@ -75,25 +89,32 @@ async function upload(bucket: FakeBucket, body: Uint8Array, headers = bearer(KEY
 }
 
 describe("W4-05 relay codes", () => {
-  it("generates 6-char codes without ambiguous glyphs", () => {
+  it("generates 8-char codes without ambiguous glyphs (R9-07)", () => {
     let n = 0;
     const code = generateRelayCode(() => (n += 29));
-    expect(code).toHaveLength(6);
+    expect(code).toHaveLength(8);
     for (const ch of code) expect(RELAY_CODE_ALPHABET).toContain(ch);
     expect(code).not.toMatch(/[01IOL]/);
   });
 
-  it("retries allocation on collision and gives up after 5", async () => {
-    const taken = new Set(["AAAAAA", "BBBBBB"]);
-    const sequence = ["AAAAAA", "BBBBBB", "CCCCCC"];
+  it("retries allocation on a thrown collision and gives up after 5 (R9-07)", async () => {
+    const taken = new Set(["AAAAAAAA", "BBBBBBBB"]);
+    const sequence = ["AAAAAAAA", "BBBBBBBB", "CCCCCCCC"];
     let i = 0;
     const code = await allocateRelayCode(
-      async (candidate) => taken.has(candidate),
+      async (candidate) => {
+        if (taken.has(candidate)) throw new Error("collision");
+      },
       () => sequence[i++],
     );
-    expect(code).toBe("CCCCCC");
+    expect(code).toBe("CCCCCCCC");
 
-    const exhausted = await allocateRelayCode(async () => true, () => "AAAAAA");
+    const exhausted = await allocateRelayCode(
+      async () => {
+        throw new Error("collision");
+      },
+      () => "AAAAAAAA",
+    );
     expect(exhausted).toBeNull();
   });
 });
@@ -106,7 +127,7 @@ describe("W4-05 relay endpoints", () => {
     const res = await upload(bucket, sealed);
     expect(res.status).toBe(200);
     const json = (await res.json()) as { code: string; expiresAt: number };
-    expect(json.code).toMatch(/^[A-HJ-NP-Z2-9]{6}$/);
+    expect(json.code).toMatch(/^[A-HJ-NP-Z2-9]{8}$/);
     expect(json.expiresAt).toBeGreaterThanOrEqual(before + RELAY_TTL_MS - 1000);
     expect(json.expiresAt).toBeLessThanOrEqual(Date.now() + RELAY_TTL_MS + 1000);
 
@@ -152,16 +173,51 @@ describe("W4-05 relay endpoints", () => {
     );
     expect(malformed.status).toBe(404);
 
-    await bucket.put("relay/ABCDEF", ciphertext(), {
+    await bucket.put("relay/ABCDEFGH", ciphertext(), {
       customMetadata: { expiresAt: String(Date.now() - 1) },
     });
     const expired = await app.request(
-      "/v1/relay/ABCDEF",
+      "/v1/relay/ABCDEFGH",
       { headers: bearer(KEY) },
       testEnv,
     );
     expect(expired.status).toBe(404);
-    expect(bucket.objects.has("relay/ABCDEF")).toBe(false);
+    expect(bucket.objects.has("relay/ABCDEFGH")).toBe(false);
+  });
+
+  it("never overwrites a bundle when two POSTs race the same code (R9-07)", async () => {
+    const bucket = new FakeBucket();
+    const testEnv = await env(bucket);
+    const rival = new Uint8Array(64);
+    rival.set(new TextEncoder().encode("ECX1"), 0);
+    rival.fill(200, 4);
+    // A rival POST claims the code our allocation will draw first.
+    bucket.objects.set("relay/HHHHHHHH", {
+      body: rival,
+      customMetadata: { expiresAt: String(Date.now() + RELAY_TTL_MS), owner: "dev_rival" },
+    });
+    // Simulate the race window: the guard fires on the contested key, so
+    // the allocation must draw a fresh code instead of overwriting.
+    const originalPut = bucket.put.bind(bucket);
+    bucket.put = async (...args: Parameters<typeof originalPut>) => {
+      const [key] = args;
+      if (key === "relay/HHHHHHHH") throw new Error("R2ConditionalPutFailed");
+      return originalPut(...args);
+    };
+    const mine = new Uint8Array(64);
+    mine.set(new TextEncoder().encode("ECX1"), 0);
+    mine.fill(7, 4);
+    const res = await app.request(
+      "/v1/relay",
+      { method: "POST", headers: bearer(KEY), body: mine },
+      testEnv,
+    );
+    expect(res.status).toBe(200);
+    const { code } = (await res.json()) as { code: string };
+    expect(code).not.toBe("HHHHHHHH");
+    // The rival's bundle is intact; ours lives under its own code.
+    expect(bucket.objects.get("relay/HHHHHHHH")!.body).toEqual(rival);
+    expect(bucket.objects.get(`relay/${code}`)!.body).toEqual(mine);
   });
 
   it("rejects empty and oversized uploads", async () => {

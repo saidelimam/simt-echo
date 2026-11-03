@@ -104,8 +104,9 @@ async function jobIdForKey(idempotencyKey: string): Promise<string> {
 }
 
 /** Reads a request body, giving up (null) as soon as it exceeds `limit`
- * bytes so an oversized upload is never fully buffered. */
-async function readBodyCapped(
+ * bytes so an oversized upload is never fully buffered. Used by the
+ * upload PUTs and the relay POST (R9-07). */
+export async function readBodyCapped(
   body: ReadableStream<Uint8Array> | null,
   limit: number,
 ): Promise<Uint8Array | null> {
