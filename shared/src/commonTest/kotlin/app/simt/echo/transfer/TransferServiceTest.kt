@@ -210,6 +210,9 @@ class TransferServiceTest {
             randomBytes = { size -> ByteArray(size) { (it + 1).toByte() } },
             nowMs = { 1_762_000_000_000L },
             relay = relay,
+            // Relay delivery is only reachable when the backend is
+            // qualified for it (plan 0005 §1); this is that injection.
+            peerRelayQualified = true,
         )
         assertTrue(withRelay.relayAvailable)
         assertTrue(!seeded.service.relayAvailable)
@@ -243,6 +246,7 @@ class TransferServiceTest {
             randomBytes = { size -> ByteArray(size) { (it + 1).toByte() } },
             nowMs = { 1_762_000_000_000L },
             relay = relay,
+            peerRelayQualified = true,
         )
         val offer = senderWithRelay.offer(Fixtures.L_ROUTE.routeId, useRelay = true)
 
@@ -256,6 +260,9 @@ class TransferServiceTest {
             store = storeB,
             nowMs = { 1_762_000_000_000L },
             relay = relay,
+            // The receiver needs the same qualified capability as the
+            // sender before it may fall back (plan 0005 §1).
+            peerRelayQualified = true,
         )
         val body = serviceB.fetchPreview(offer.qrUri)
         assertEquals(Fixtures.L_ROUTE, body.route)
@@ -335,6 +342,7 @@ class TransferServiceTest {
             randomBytes = { size -> ByteArray(size) { (it + 1).toByte() } },
             nowMs = { 1_762_000_000_000L },
             relay = relay,
+            peerRelayQualified = true,
         )
         val offer = senderWithRelay.offer(Fixtures.L_ROUTE.routeId, useRelay = true)
 
@@ -348,6 +356,9 @@ class TransferServiceTest {
             store = storeB,
             nowMs = { 1_762_000_000_000L },
             relay = relay,
+            // The receiver needs the same qualified capability as the
+            // sender before it may fall back (plan 0005 §1).
+            peerRelayQualified = true,
         )
         val seen = mutableListOf<TransferProgress>()
         val collector = backgroundScope.launch { serviceB.progress.collect { seen += it } }

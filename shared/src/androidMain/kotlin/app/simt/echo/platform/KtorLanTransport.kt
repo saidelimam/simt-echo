@@ -31,16 +31,33 @@ import java.net.NetworkInterface
  * plain HTTP on the local network — confidentiality comes from the
  * AES-GCM seal and the QR-carried key/token, not from TLS. The server
  * stops 3 s after the first successful download, or after 10 minutes.
+ *
+ * Every stop is bound to the server instance it was scheduled for (plan
+ * 0005 §4.5). A re-offer replaces the server, and the old instance's
+ * shutdown timer — or a stale generation-scoped stop — cannot take the
+ * new one down with it. That is the hazard the plan calls out: unscoped
+ * delayed stops used to kill whichever offer happened to be newest.
  */
-class KtorLanTransport : PeerTransport {
+class KtorLanTransport(
+    private val afterDownloadStopMs: Long = AFTER_DOWNLOAD_STOP_MS,
+    private val offerLifetimeMs: Long = OFFER_LIFETIME_MS,
+    private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO),
+    private val clientFactory: () -> HttpClient = ::defaultClient,
+) : PeerTransport {
 
     private var server: EmbeddedServer<*, *>? = null
-    private val scope = CoroutineScope(Dispatchers.IO)
+    private var serverGeneration: Long = 0L
     private val downloads = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    private val downloadGenerations = MutableSharedFlow<Long>(extraBufferCapacity = 4)
     private val progressFlow = newProgressFlow()
+    private val offerProgressFlow = MutableSharedFlow<OfferProgress>(extraBufferCapacity = 64)
+    private val client: HttpClient by lazy(clientFactory)
 
     /** Emits once per successful peer download (W2-04 Share "Sent ✓"). */
     override val served: Flow<Unit> get() = downloads
+
+    /** Downloads tagged with the offer generation that was serving. */
+    override val servedOffers: Flow<Long> get() = downloadGenerations
 
     /**
      * Measured byte progress (W13-14): the server streams the payload in
@@ -48,16 +65,19 @@ class KtorLanTransport : PeerTransport {
      * reports `onDownload` so the fetching phone observes bytes received.
      */
     override val progress: Flow<TransferProgress> get() = progressFlow
-    private val client = HttpClient(OkHttp) {
-        install(HttpTimeout) {
-            connectTimeoutMillis = 4_000
-            requestTimeoutMillis = 20_000
-        }
-    }
 
-    override suspend fun offer(payload: ByteArray, token: String): Endpoint {
+    /** The same samples, tagged with the offering generation. */
+    override val offerProgress: Flow<OfferProgress> get() = offerProgressFlow
+
+    override suspend fun offer(payload: ByteArray, token: String): Endpoint =
+        offer(payload, token, generation = 0L)
+
+    override suspend fun offer(payload: ByteArray, token: String, generation: Long): Endpoint {
         stopOffer()
         val total = payload.size.toLong()
+        // The handler has to name the server it belongs to, which only
+        // exists after start(): this holder keeps that binding explicit.
+        val handle = ServerHandle()
         val started = embeddedServer(CIO, port = 0, host = "0.0.0.0") {
             routing {
                 get("/echo/{t}") {
@@ -75,25 +95,42 @@ class KtorLanTransport : PeerTransport {
                             write(payload, sent, n)
                             flush()
                             sent += n
-                            progressFlow.tryEmit(TransferProgress(sent.toLong(), total))
+                            val sample = TransferProgress(sent.toLong(), total)
+                            progressFlow.tryEmit(sample)
+                            offerProgressFlow.tryEmit(OfferProgress(generation, sample))
                         }
                     }
                     downloads.tryEmit(Unit)
+                    downloadGenerations.tryEmit(generation)
                     scope.launch {
-                        delay(3_000)
-                        stopOffer()
+                        delay(afterDownloadStopMs)
+                        handle.server?.let(::stopIfCurrent)
                     }
                 }
             }
         }.start(wait = false)
-        server = started
-        scope.launch {
-            delay(600_000)
-            stopOffer()
+        handle.server = started
+        synchronized(this) {
+            server = started
+            serverGeneration = generation
         }
-        val port = started.engine.resolvedConnectors().first().port
+        scope.launch {
+            delay(offerLifetimeMs)
+            stopIfCurrent(started)
+        }
+        // A failed offer must close the server it already started: a host
+        // lookup that finds no Wi-Fi is a failed offer, not a stray server.
+        val port = try {
+            started.engine.resolvedConnectors().first().port
+        } catch (failure: Exception) {
+            stopIfCurrent(started)
+            throw failure
+        }
         val host = localIpv4()
-            ?: error("Connect to Wi-Fi or turn on hotspot")
+        if (host == null) {
+            stopIfCurrent(started)
+            error("Connect to Wi-Fi or turn on hotspot")
+        }
         return Endpoint(host, port)
     }
 
@@ -102,13 +139,52 @@ class KtorLanTransport : PeerTransport {
             .readWithProgress { progressFlow.tryEmit(it) }
 
     override fun stopOffer() {
-        server?.stop(500, 1_000)
-        server = null
+        synchronized(this) {
+            server?.stop(500, 1_000)
+            server = null
+        }
+    }
+
+    /** Ignores a stop aimed at an offer that has already been replaced. */
+    override fun stopOffer(generation: Long) {
+        synchronized(this) {
+            if (server != null && serverGeneration == generation) {
+                server?.stop(500, 1_000)
+                server = null
+            }
+        }
+    }
+
+    /** Binds a routing handler to the server instance created for it. */
+    private class ServerHandle {
+        var server: EmbeddedServer<*, *>? = null
+    }
+
+    /** Stops [target] only while it is still the current server. */
+    private fun stopIfCurrent(target: EmbeddedServer<*, *>) {
+        synchronized(this) {
+            if (server === target) {
+                server = null
+                target.stop(500, 1_000)
+            }
+        }
     }
 
     private companion object {
         /** Server stream quantum: one progress emit per chunk served. */
         const val SERVE_CHUNK_BYTES = 64 * 1024
+
+        const val AFTER_DOWNLOAD_STOP_MS = 3_000L
+        const val OFFER_LIFETIME_MS = 600_000L
+
+        /** Redirects off (plan 0005 §4.2): the LAN fetch follows no Location. */
+        fun defaultClient(): HttpClient = HttpClient(OkHttp) {
+            followRedirects = false
+            install(HttpTimeout) {
+                connectTimeoutMillis = 4_000
+                requestTimeoutMillis = 20_000
+            }
+        }
     }
 
     private fun localIpv4(): String? {

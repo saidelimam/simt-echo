@@ -6,12 +6,18 @@ import app.simt.echo.data.RouteRepository
 import app.simt.echo.data.isSafeStorageId
 import app.simt.echo.model.Asset
 import app.simt.echo.model.BundleBody
+import app.simt.echo.model.EchoRoute
 import app.simt.echo.platform.Endpoint
+import app.simt.echo.platform.OfferProgress
 import app.simt.echo.platform.PeerTransport
 import app.simt.echo.platform.TransferProgress
+import app.simt.echo.platform.platformIoDispatcher
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.withContext
 import okio.Path
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
@@ -30,6 +36,11 @@ data class OfferInfo(
  * The transport moves sealed bytes only; identity comes from the QR.
  * File fallback (W2-07): [exportFile] writes the plain container,
  * [importFile] opens it back.
+ *
+ * One invitation, two representations (plan 0005 §4.5): the exact v1 URI
+ * this returns is what both the QR and the NFC offer carry, and it is
+ * owned by an [OfferSession] generation so a replaced offer can never
+ * publish, report progress or claim completion again.
  */
 @OptIn(ExperimentalEncodingApi::class)
 class TransferService(
@@ -40,18 +51,51 @@ class TransferService(
     private val nowMs: () -> Long = { 0L },
     /** Internet relay (W4-05); null until W3-02 supplies Worker config. */
     private val relay: RelayClient? = null,
+    /**
+     * Whether the configured relay is qualified for peer delivery (plan
+     * 0005 §1). False for the current backend: `worker/src/relay.ts`
+     * `getRelay` refuses a code minted by another install (R10-01), so a
+     * cross-phone fallback is not verified. Configuring a relay therefore
+     * does not make it usable — nothing uploads or falls back until a
+     * producer contract and a two-install integration test enable it.
+     */
+    private val peerRelayQualified: Boolean = false,
 ) {
 
-    /** True when Share may offer the internet relay for this offer. */
-    val relayAvailable: Boolean get() = relay != null
+    private val session = OfferSession(
+        nowMs = nowMs,
+        stopServing = { transport.stopOffer() },
+    )
+
+    /** A relay is configured on this build (it may still be unusable). */
+    val relayConfigured: Boolean get() = relay != null
+
+    /**
+     * True when Share may offer peer relay delivery for this offer. Stays
+     * false on the current backend even with a relay configured, so the
+     * upload action hides instead of promising a fallback that a foreign
+     * install's code would be refused (plan 0005 §1).
+     */
+    val relayAvailable: Boolean get() = relay != null && peerRelayQualified
+
+    /** The offer currently being served, or null while preparing or stopped. */
+    val currentOffer: ActiveOffer? get() = session.current
+
+    /** Offer generation that owns the session right now (monotonic). */
+    val offerGeneration: Long get() = session.currentGeneration
 
     /**
      * Starts a LAN offer; with [useRelay] the sealed bytes are also uploaded
-     * to the relay and the QR gains `c=` so a receiver whose LAN attempt
-     * fails can fall back to it. The bundle key stays in the QR either way.
+     * to a qualified relay and the QR gains `c=`. The bundle key stays in
+     * the QR either way.
      *
      * With [selection] (W3-08 preview sheet) the bundle holds the filtered
      * route copy only — toggled-off crops are absent, never just hidden.
+     *
+     * The previous offer stops the instant this call is made, and the new
+     * one is published only if it is still the newest: a late completion
+     * from a replaced call throws [OfferSupersededException] instead of
+     * publishing a QR nothing is serving.
      */
     suspend fun offer(
         routeId: String,
@@ -61,30 +105,48 @@ class TransferService(
         val route = routes.get(routeId)
             ?: error("offer: no route $routeId")
         checkNotExpired(route)
-        val exportRoute = selection?.let { applySelection(route, it, nowMs()) } ?: route
-        val assets = collectAssets(routeId, exportRoute)
-        val container = BundleCodec.encode(exportRoute, assets)
-        val body = BundleBody(route = exportRoute, assets = assets.sortedBy { it.id })
-        val (sealed, key) = BundleCodec.seal(container)
-        val tokenBytes = randomBytes(QrPayload.TOKEN_BYTES)
-        val endpoint = transport.offer(sealed, base64Url(tokenBytes))
-        val relayCode = if (useRelay) {
-            val client = relay ?: error("offer: internet relay is not configured")
-            client.upload(sealed)
-        } else {
-            null
+        if (useRelay && !relayAvailable) {
+            error("offer: peer relay is not available for this backend")
         }
-        val payload = QrPayload(
-            host = endpoint.host,
-            port = endpoint.port,
-            token = tokenBytes,
-            key = key,
-            sha8Hex = BundleCodec.sha8Hex(body),
-            name = route.name,
-            relayCode = relayCode,
-        )
-        return OfferInfo(qrUri = payload.build(), host = endpoint.host, port = endpoint.port)
+        val published = session.replace { generation ->
+            // Heavy bundle preparation off Main (plan 0005 §4.5).
+            val prepared = withContext(platformIoDispatcher) {
+                prepareBundle(routeId, route, selection)
+            }
+            if (!session.isCurrent(generation)) return@replace null
+            val endpoint = transport.offer(
+                prepared.sealed,
+                base64Url(prepared.token),
+                generation,
+            )
+            val relayCode = if (useRelay) {
+                val client = relay ?: error("offer: internet relay is not configured")
+                client.upload(prepared.sealed)
+            } else {
+                null
+            }
+            if (!session.isCurrent(generation)) return@replace null
+            val payload = QrPayload(
+                host = endpoint.host,
+                port = endpoint.port,
+                token = prepared.token,
+                key = prepared.key,
+                sha8Hex = BundleCodec.sha8Hex(prepared.body),
+                name = route.name,
+                relayCode = relayCode,
+            )
+            session.stamp(generation, payload.build(), endpoint.host, endpoint.port)
+        } ?: throw OfferSupersededException()
+        return OfferInfo(qrUri = published.qrUri, host = published.host, port = published.port)
     }
+
+    /** Downloads attributed to the offer still being served. */
+    val offerServed: Flow<Long> get() =
+        transport.servedOffers.filter { generation -> session.isCurrent(generation) }
+
+    /** Byte progress attributed to the offer still being served. */
+    val offerProgress: Flow<OfferProgress> get() =
+        transport.offerProgress.filter { sample -> session.isCurrent(sample.generation) }
 
     suspend fun receive(qrUri: String): BundleBody {
         val body = fetchPreview(qrUri)
@@ -96,13 +158,16 @@ class TransferService(
      * Fetches, opens and verifies the bundle behind [qrUri] without saving
      * (W2-04 Receive import sheet). The caller shows the returned body and
      * persists it with [saveImported] only after the user confirms Save.
+     *
+     * The URI passes the shared bounded validation first, so no caller can
+     * reach the network with a URI that [PairingInvitation] would reject.
      */
     suspend fun fetchPreview(qrUri: String): BundleBody {
-        val payload = QrPayload.parse(qrUri).getOrThrow()
-        val sealed = fetchSealed(payload)
-        val body = BundleCodec.open(sealed, payload.key, nowMs()).getOrThrow()
-        check(BundleCodec.sha8Hex(body) == payload.sha8Hex) {
-            "bundle fingerprint mismatch: QR promised ${payload.sha8Hex}"
+        val invitation = PairingInvitation.parseOrThrow(qrUri)
+        val sealed = fetchSealed(invitation.payload)
+        val body = BundleCodec.open(sealed, invitation.payload.key, nowMs()).getOrThrow()
+        check(BundleCodec.sha8Hex(body) == invitation.payload.sha8Hex) {
+            "bundle fingerprint mismatch"
         }
         return body
     }
@@ -111,6 +176,11 @@ class TransferService(
      * LAN first, relay second (W4-05): only a transport failure falls back —
      * a bundle that arrives but fails to open or verify is never masked by
      * fetching a second copy.
+     *
+     * Cancellation is not a transport failure (plan 0005 §4.5): it is
+     * rethrown before any fallback is considered, so leaving the screen can
+     * never start a relay download. The fallback also requires a qualified
+     * peer relay, which the current backend is not.
      */
     private suspend fun fetchSealed(payload: QrPayload): ByteArray {
         try {
@@ -118,8 +188,11 @@ class TransferService(
                 Endpoint(payload.host, payload.port),
                 base64Url(payload.token),
             )
+        } catch (cancellation: CancellationException) {
+            throw cancellation
         } catch (lanFailure: Exception) {
             val code = payload.relayCode ?: throw lanFailure
+            if (!relayAvailable) throw lanFailure
             val client = relay ?: throw lanFailure
             return client.download(code)
         }
@@ -170,7 +243,7 @@ class TransferService(
         return exportSummary(route, selection, nowMs())
     }
 
-    private fun checkNotExpired(route: app.simt.echo.model.EchoRoute) {
+    private fun checkNotExpired(route: EchoRoute) {
         val expiry = route.privacy.expiresAtEpochMs
         if (expiry != null && expiry <= nowMs()) throw RouteExpiredException(expiry)
     }
@@ -199,17 +272,19 @@ class TransferService(
         val route = routes.get(routeId)
             ?: error("exportFile: no route $routeId")
         checkNotExpired(route)
-        val filtered = selection?.let { applySelection(route, it, nowMs()) } ?: route
-        val exportRoute = if (includePerception) filtered else filtered.withoutPerception()
-        val assets = collectAssets(routeId, exportRoute)
-        val container = BundleCodec.encode(exportRoute, assets)
-        // Route id in the filename: two same-named routes must not
-        // overwrite each other's pending plaintext export.
-        val name = echoFileName(route.name).removeSuffix(".echo") +
-            "-${route.routeId}.echo"
-        val relative = "${FileStore.EXPORTS_DIR}/$name"
-        store.writeBytes(relative, container)
-        return store.resolvePath(relative)
+        return withContext(platformIoDispatcher) {
+            val filtered = selection?.let { applySelection(route, it, nowMs()) } ?: route
+            val exportRoute = if (includePerception) filtered else filtered.withoutPerception()
+            val assets = collectAssets(routeId, exportRoute)
+            val container = BundleCodec.encode(exportRoute, assets)
+            // Route id in the filename: two same-named routes must not
+            // overwrite each other's pending plaintext export.
+            val name = echoFileName(route.name).removeSuffix(".echo") +
+                "-${route.routeId}.echo"
+            val relative = "${FileStore.EXPORTS_DIR}/$name"
+            store.writeBytes(relative, container)
+            store.resolvePath(relative)
+        }
     }
 
     /** Deletes every pending plaintext export (bounded lifetime, R1). */
@@ -251,7 +326,21 @@ class TransferService(
         val PATH_HOSTILE = setOf('/', '\\', ':', '*', '?', '"', '<', '>', '|', ' ')
     }
 
-    fun stopOffer() = transport.stopOffer()
+    /** Stops serving, whatever generation owns it. Safe to repeat. */
+    fun stopOffer() {
+        session.invalidate()
+    }
+
+    /** Stops serving only while [generation] still owns the session. */
+    fun unpublishOffer(generation: Long) {
+        if (session.isCurrent(generation)) session.invalidate()
+    }
+
+    /**
+     * Drops an offer that outlived its ten-minute window.
+     * @return the expired generation, or null when nothing expired.
+     */
+    fun expireOffer(): Long? = session.expireIfNeeded()
 
     /** Re-emits the transport's per-download signal (W2-04 Share "Sent ✓"). */
     val served: Flow<Unit> get() = transport.served
@@ -266,9 +355,36 @@ class TransferService(
         relay?.progress ?: emptyFlow(),
     )
 
+    /** Everything the bundle must carry, prepared once per offer. */
+    private class PreparedBundle(
+        val sealed: ByteArray,
+        val key: ByteArray,
+        val token: ByteArray,
+        val body: BundleBody,
+    )
+
+    /** Seals the filtered route; runs off Main and touches only this offer. */
+    private suspend fun prepareBundle(
+        routeId: String,
+        route: EchoRoute,
+        selection: ExportSelection?,
+    ): PreparedBundle {
+        val exportRoute = selection?.let { applySelection(route, it, nowMs()) } ?: route
+        val assets = collectAssets(routeId, exportRoute)
+        val container = BundleCodec.encode(exportRoute, assets)
+        val body = BundleBody(route = exportRoute, assets = assets.sortedBy { it.id })
+        val (sealed, key) = BundleCodec.seal(container)
+        return PreparedBundle(
+            sealed = sealed,
+            key = key,
+            token = randomBytes(QrPayload.TOKEN_BYTES),
+            body = body,
+        )
+    }
+
     private fun collectAssets(
         routeId: String,
-        route: app.simt.echo.model.EchoRoute,
+        route: EchoRoute,
     ): List<Asset> {
         val ids = buildList {
             route.start.photoAssetId?.let { add(it) }
