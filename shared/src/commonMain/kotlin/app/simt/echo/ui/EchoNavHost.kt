@@ -119,7 +119,7 @@ fun EchoNavHost(
             val mediaTools = rememberMediaTools()
             RecordScreen(
                 drafts = graph.draftRepository,
-                onSaved = { draftId -> navController.navigateTo(reviewAfterRecord(draftId)) },
+                onSaved = { draftId -> navController.navigateOffRecord(reviewAfterRecord(draftId)) },
                 config = graph.configRepository.get(),
                 resumeDraftId = route.resumeDraftId,
                 walkStagers = { draftId, liveLog, liveLedger -> graph.walkStager(draftId, mediaTools, liveLog, liveLedger) },
@@ -150,6 +150,10 @@ fun EchoNavHost(
                     )
                 },
                 onBack = { navController.popBackStack() },
+                // Save draft: leave the walk on this phone and go Home. The
+                // draft is already persisted per edit, so only the stack
+                // moves — Home lists it under Drafts again.
+                onSaveDraft = { navController.popBackStack(EchoRoute.Home, false) },
                 onFindLandmarks = { navController.navigateTo(EchoRoute.Processing(route.draftId)) },
             )
         }
@@ -332,6 +336,16 @@ private inline fun <reified T : Any> NavGraphBuilder.echoDestination(
 }
 
 private fun NavHostController.navigateTo(route: EchoRoute) = navigate(route)
+
+/**
+ * Record → Review handoff once a session is finished (W7-05): Review
+ * *replaces* Record on the back stack instead of stacking on top of it.
+ * The recording screen is done with its draft the moment the finish sheet
+ * saves, so Back from Review must reach Home — never a Record entry whose
+ * live session has already ended and whose Back has nothing left to pop.
+ */
+internal fun NavHostController.navigateOffRecord(route: EchoRoute) =
+    navigate(route) { popUpTo<EchoRoute.Record> { inclusive = true } }
 
 /**
  * Home draft label (W7-03): the route name the user typed, else the

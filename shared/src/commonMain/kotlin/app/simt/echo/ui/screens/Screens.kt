@@ -1,17 +1,28 @@
 package app.simt.echo.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -45,7 +56,15 @@ private val TALL_HOME_MIN_HEIGHT = 560.dp
  * landmark count, an Own/Received/Draft badge (shape + text, never
  * hue-only) and the offline-ready mark — stacked in stable tracks (line
  * dividers, never nested cards) that reveal one after another on entry.
- * Interrupted drafts recover first when present (W4-03). First run is
+ * Interrupted drafts recover first when present (W4-03) and are not
+ * repeated in Drafts: the two sections partition one set of drafts.
+ *
+ * Each section is one band on a soft vertical wash that fades into the
+ * void — the wash is the division, so no outlines and no nested cards: an
+ * accented eyebrow + a lifted-to-transparent gradient reads the grouping
+ * at a glance without a border anywhere.
+ *
+ * First run is
  * Ignition: the Echo Step mark breathing its idle echo above one centred
  * task and one primary command.
  *
@@ -71,7 +90,13 @@ fun HomeScreen(
      */
     onPractice: () -> Unit = { onOpen(EchoRoute.Practice) },
 ) {
-    if (savedRoutes.isEmpty() && draftIds.isEmpty() && recoverableDrafts.isEmpty()) {
+    // A kill mid-capture leaves both a draft directory and a capture, so an
+    // interrupted draft arrives here twice: as recoverable and as a plain
+    // draft. The recovery section leads with it, so it must not repeat below
+    // — one row, one tap target (W4-03).
+    val interruptedIds = recoverableDrafts.mapTo(mutableSetOf()) { it.draftId }
+    val remainingDraftIds = draftIds.filterNot { it in interruptedIds }
+    if (savedRoutes.isEmpty() && remainingDraftIds.isEmpty() && recoverableDrafts.isEmpty()) {
         // First-run Ignition: one centred task, one primary command, with
         // camera permission priming (W9-11) in the body. Presentation only:
         // nothing requests permission from here; the Record/Receive gates
@@ -111,13 +136,17 @@ fun HomeScreen(
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
         if (recoverableDrafts.isNotEmpty()) {
             // Interrupted work first: a kill mid-record or mid-upload
             // must greet the user on relaunch, not hide.
-            SectionHeading("Interrupted drafts", Modifier.revealOnEnter(index++))
-            CosmosRecordRows(
+            HomeSection(
+                title = "Interrupted drafts",
+                headingModifier = Modifier.revealOnEnter(index++),
+                // The one section the user is expected to act on first:
+                // a faint ember wash, meaning carried by its heading text.
+                emphasis = true,
                 rows = recoverableDrafts.map { draft ->
                     val at = index++
                     {
@@ -137,8 +166,9 @@ fun HomeScreen(
             )
         }
         if (savedRoutes.isNotEmpty()) {
-            SectionHeading("Saved walks", Modifier.revealOnEnter(index++))
-            CosmosRecordRows(
+            HomeSection(
+                title = "Saved walks",
+                headingModifier = Modifier.revealOnEnter(index++),
                 rows = savedRoutes.map { route ->
                     val at = index++
                     {
@@ -167,10 +197,11 @@ fun HomeScreen(
                 },
             )
         }
-        if (draftIds.isNotEmpty()) {
-            SectionHeading("Drafts", Modifier.revealOnEnter(index++))
-            CosmosRecordRows(
-                rows = draftIds.map { draftId ->
+        if (remainingDraftIds.isNotEmpty()) {
+            HomeSection(
+                title = "Drafts",
+                headingModifier = Modifier.revealOnEnter(index++),
+                rows = remainingDraftIds.map { draftId ->
                     val at = index++
                     {
                         CosmosRecordRow(
@@ -187,14 +218,73 @@ fun HomeScreen(
     }
 }
 
+/**
+ * One Home section: its records on a soft vertical wash that fades into the
+ * void. The wash *is* the division — no outline, no nested card — so bands
+ * separate by light and air rather than by a border. [emphasis] tints the
+ * band the user should act on first with the primary channel at low alpha;
+ * the heading text carries the meaning, the hue only reinforces it.
+ */
 @Composable
-private fun SectionHeading(text: String, modifier: Modifier = Modifier) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.titleMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = modifier.padding(start = 8.dp, top = 8.dp).semantics { heading() },
-    )
+private fun HomeSection(
+    title: String,
+    rows: List<@Composable () -> Unit>,
+    headingModifier: Modifier = Modifier,
+    emphasis: Boolean = false,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val wash = if (emphasis) {
+        scheme.primary.copy(alpha = 0.12f)
+    } else {
+        scheme.surfaceContainer.copy(alpha = 0.55f)
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.large)
+            // Fade to the wash's own transparent, never to plain
+            // Color.Transparent: interpolating toward transparent black
+            // would smear grey through the band.
+            .background(Brush.verticalGradient(listOf(wash, wash.copy(alpha = 0f))))
+            .padding(top = 12.dp, bottom = 6.dp),
+    ) {
+        SectionHeading(title, headingModifier, emphasis)
+        CosmosRecordRows(rows = rows)
+    }
+}
+
+@Composable
+private fun SectionHeading(text: String, modifier: Modifier = Modifier, emphasis: Boolean = false) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+    ) {
+        // Decorative eyebrow: the heading text is what gets announced.
+        Box(
+            modifier = Modifier
+                .size(width = 3.dp, height = 14.dp)
+                .clip(CircleShape)
+                .background(
+                    if (emphasis) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+                    },
+                )
+                .clearAndSetSemantics {},
+        )
+        Text(
+            text = text,
+            style = MaterialTheme.typography.titleMedium,
+            color = if (emphasis) {
+                MaterialTheme.colorScheme.onSurface
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            modifier = Modifier.semantics { heading() },
+        )
+    }
 }
 
 /** Draft display name: the route/draft name when one exists, never a raw id. */

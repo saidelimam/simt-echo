@@ -38,12 +38,18 @@ import kotlin.math.roundToInt
  *
  * W8-05: the shell owns the Review heading and the Back chrome — the
  * missing-draft recovery action below is a body action, not a top bar.
+ *
+ * Two exits, and only one of them publishes: "Save ECHO" exports the walk
+ * to `routes/` and deletes the draft; "Save draft" leaves the draft on this
+ * phone and returns Home — every edit is already persisted per change
+ * ([ReviewViewModel.mutate]), so it never re-exports anything.
  */
 @Composable
 fun ReviewScreen(
     viewModel: ReviewViewModel,
     onSaved: (String) -> Unit,
     onBack: () -> Unit,
+    onSaveDraft: () -> Unit,
     onFindLandmarks: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
@@ -253,6 +259,15 @@ fun ReviewScreen(
             modifier = Modifier.fillMaxWidth(),
             enabled = !ui.saving && ui.savedRouteId == null,
             loading = ui.saving,
+        )
+        // Secondary on purpose: keeping the walk as a draft is a real exit,
+        // never a competing primary. Nothing is written here — the draft
+        // already holds every edit — so a save in flight just disables it.
+        CosmosSecondaryButton(
+            label = "Save draft",
+            onClick = onSaveDraft,
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !ui.saving && ui.savedRouteId == null,
         )
     }
 }

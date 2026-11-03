@@ -31,6 +31,8 @@ import app.simt.echo.platform.Platform
 import app.simt.echo.transfer.TransferService
 import app.simt.echo.ui.EchoNavHost
 import app.simt.echo.ui.EchoRoute
+import app.simt.echo.ui.navigateOffRecord
+import app.simt.echo.ui.reviewAfterRecord
 import app.simt.echo.ui.screens.receive.ReceiveViewModel
 import app.simt.echo.ui.screens.share.ShareViewModel
 import kotlinx.coroutines.runBlocking
@@ -45,6 +47,7 @@ import org.robolectric.annotation.Config
 import java.nio.file.Files
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -173,6 +176,41 @@ class HostCoreLoopJourneyTest {
     }
 
     @Test
+    fun finishedRecordSession_replacedByReview_neverLeftBelowIt() {
+        val graph = testGraph()
+        // The draft a just-finished recording saves, so Review has a real
+        // walk to reopen after the handoff.
+        graph.draftRepository.saveDraftRoute(
+            Fixtures.L_ROUTE.copy(routeId = "draft-finished", name = "Finished walk"),
+        )
+        lateinit var nav: NavHostController
+        compose.setContent {
+            nav = rememberNavController()
+            EchoNavHost(graph = graph, navController = nav)
+        }
+
+        compose.onNodeWithText("Record").performClick()
+        compose.runOnIdle {
+            assertEquals(EchoRoute.Record(), current<EchoRoute.Record>(nav))
+        }
+
+        // The finish sheet's save runs exactly this handoff (EchoNavHost's
+        // onSaved). Review replaces Record: a completed session leaves no
+        // recording screen behind for Back to land on.
+        compose.runOnIdle { nav.navigateOffRecord(reviewAfterRecord("draft-finished")) }
+        compose.runOnIdle {
+            assertEquals(EchoRoute.Review("draft-finished"), current<EchoRoute.Review>(nav))
+        }
+        // Back leaves Review for Home and stops there: the finished Record
+        // entry was replaced, not stacked underneath it. A second pop has
+        // nothing to reach — with Record still stacked it would succeed.
+        compose.runOnIdle { nav.popBackStack() }
+        compose.runOnIdle {
+            assertFalse(nav.popBackStack(), "Back from Review reaches Home and stops there")
+        }
+    }
+
+    @Test
     fun shortHop_replaysHomeToArrived() {
         val graph = testGraph()
         graph.routeRepository.save(shortHopRoute())
@@ -251,6 +289,44 @@ class HostCoreLoopJourneyTest {
         compose.onNodeWithText("Share").assertExists()
         compose.runOnIdle {
             assertEquals("draft-journey-1", current<EchoRoute.RouteDetail>(nav).routeId)
+        }
+    }
+
+    @Test
+    fun draftReview_saveDraft_returnsHomeAndKeepsTheDraft() {
+        val graph = testGraph()
+        graph.draftRepository.saveDraftRoute(
+            Fixtures.L_ROUTE.copy(routeId = "draft-kept-1", name = "Kept draft walk"),
+        )
+        lateinit var nav: NavHostController
+        compose.setContent {
+            nav = rememberNavController()
+            EchoNavHost(graph = graph, navController = nav)
+        }
+
+        compose.onNodeWithTag("CosmosRecord:Untitled draft").performClick()
+        compose.waitUntil(timeoutMillis = 10_000) {
+            compose.onAllNodesWithText("Kept draft walk").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.runOnIdle {
+            assertEquals(EchoRoute.Review("draft-kept-1"), current<EchoRoute.Review>(nav))
+        }
+
+        // Save draft keeps the walk on this phone: no ECHO lands in routes/,
+        // the draft survives with its edits, and Home is the screen the user
+        // gets back to.
+        compose.onNodeWithText("Save draft").performScrollTo().performClick()
+        compose.waitUntil(timeoutMillis = 5_000) {
+            compose.onAllNodesWithText("Drafts").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithText("Save ECHO").assertDoesNotExist()
+        compose.runOnIdle {
+            assertEquals(listOf("draft-kept-1"), graph.draftRepository.listDraftIds())
+            assertEquals(
+                "Kept draft walk",
+                graph.draftRepository.loadDraftRoute("draft-kept-1")?.name,
+            )
+            assertTrue(graph.routeRepository.list().isEmpty(), "Save draft must not save an ECHO")
         }
     }
 

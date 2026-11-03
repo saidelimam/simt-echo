@@ -152,6 +152,7 @@ class DrawOverlayUiTest {
                     viewModel = vm,
                     onSaved = {},
                     onBack = {},
+                    onSaveDraft = {},
                 )
             }
         }

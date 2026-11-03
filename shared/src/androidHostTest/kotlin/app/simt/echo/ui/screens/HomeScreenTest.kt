@@ -134,6 +134,39 @@ class HomeScreenTest {
     }
 
     @Test
+    fun interruptedDraft_isNotRepeatedUnderDrafts() {
+        // A kill mid-capture leaves a draft directory *and* a capture, so
+        // the same id reaches Home twice: once as recoverable, once as a
+        // plain draft. It must render once — in the leading recovery
+        // section — not again under Drafts.
+        compose.setContent {
+            HomeScreen(
+                onOpen = {},
+                draftIds = listOf("draft-uuid-3", "draft-uuid-4"),
+                draftNames = mapOf(
+                    "draft-uuid-3" to "Park loop",
+                    "draft-uuid-4" to "Evening stroll",
+                ),
+                recoverableDrafts = listOf(
+                    RecoverableDraft(
+                        draftId = "draft-uuid-3",
+                        sampleCount = 42,
+                        markCount = 1,
+                        hasRouteDraft = false,
+                        jobStatus = null,
+                    ),
+                ),
+            )
+        }
+        compose.onNodeWithText("Interrupted drafts").assertIsDisplayed()
+        compose.onAllNodesWithText("Park loop", substring = true).assertCountEquals(1)
+        // One Draft badge each for the interrupted row and the plain draft.
+        compose.onAllNodesWithText("Draft").assertCountEquals(2)
+        compose.onNodeWithText("Evening stroll", substring = true).performScrollTo()
+        compose.onNodeWithText("Drafts").assertIsDisplayed()
+    }
+
+    @Test
     fun recoverySection_leadsAndResumesInterruptedDraft() {
         var resumed: RecoverableDraft? = null
         compose.setContent {
