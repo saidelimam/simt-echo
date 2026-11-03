@@ -58,6 +58,13 @@ export function parseSam(text: string): SamObs[] {
       if (w <= 0 || h <= 0 || box[2] <= box[0] || box[3] <= box[1]) {
         continue;
       }
+      // R10-14 (review 0010, F13): the box is in the frame's pixel space, so a
+      // negative coord or one past w/h is out of frame — malformed, not a
+      // shifted box. Drop it like every other violating record; the missing
+      // observation falls back to box-only downstream, never clamped into a lie.
+      if (box.some((v) => v < 0) || box[0] > w || box[1] > h || box[2] > w || box[3] > h) {
+        continue;
+      }
       const obs: SamObs = { frame, id: Number(r[1]), box, w, h, line };
       if (kv.c !== undefined && kv.c !== "") {
         const c = Number(kv.c);

@@ -21,7 +21,6 @@ export interface Env {
   AI_GATEWAY_ID: string;
   WORKERS_AI_MODELS?: string;
   SCOUT_MODEL_TIMEOUT_MS?: string;
-  ENV?: string;
   META_API_KEY?: string;
   /** Retired as the bearer (R10-01): the per-install device key is now the
    * credential. Kept deployed only as a public client identifier during the

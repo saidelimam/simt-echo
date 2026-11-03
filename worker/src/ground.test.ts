@@ -55,6 +55,22 @@ describe("parseSam", () => {
     expect(obs[0].id).toBe(5);
     expect(obs[0].c).toBeUndefined();
   });
+
+  it("drops out-of-frame boxes (R10-14): negative coords and coords past w/h", () => {
+    const junk =
+      `<0f>1<|box;x1=-10;y1=20;x2=60;y2=80;w=720;h=1280|>\n` + // negative x1
+      `<0f>2<|box;x1=10;y1=20;x2=60;y2=-5;w=720;h=1280|>\n` + // negative y2
+      `<0f>3<|box;x1=10;y1=20;x2=900;y2=80;w=720;h=1280|>\n` + // x2 past w
+      `<0f>4<|box;x1=10;y1=20;x2=60;y2=1500;w=720;h=1280|>\n` + // y2 past h
+      `<0f>5<|box;x1=0;y1=0;x2=720;y2=1280;w=720;h=1280|>\n`; // touches the edge: kept
+    const obs = parseSam(junk);
+    // The four out-of-frame records are dropped; only the edge-touching one
+    // survives. Edge-touching (x2==w, y2==h) is in frame, so the bound is
+    // strict > not >=.
+    expect(obs).toHaveLength(1);
+    expect(obs[0].id).toBe(5);
+    expect(obs[0].box).toEqual([0, 0, 720, 1280]);
+  });
 });
 
 describe("geometry generics", () => {

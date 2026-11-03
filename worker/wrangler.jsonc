@@ -6,8 +6,10 @@
   "compatibility_flags": ["nodejs_compat"],
   // Custom domain (W9-01): api.echo.simt.app is declared here, not in
   // the dashboard — redeploy re-attaches it and provisions the cert.
-  // workers.dev stays enabled as a fallback route for the same worker.
-  "workers_dev": true,
+  // R10-14 (review 0010, F13): workers_dev is off — the custom domain is the
+  // sole live route, so a WAF/Access rule written for api.echo.simt.app covers
+  // every hostname the worker serves.
+  "workers_dev": false,
   "routes": [
     { "pattern": "api.echo.simt.app", "custom_domain": true }
   ],
@@ -56,8 +58,7 @@
     // R10-05 (review 0010, F4): daily SAM-frame cap, five jobs at the 240
     // ceiling. SPEND_KILL_SWITCH is intentionally unset — set it to "on"
     // (dashboard var) to halt job creation; see docs/operations/spend.md.
-    "DAILY_MAX_SAM_FRAMES": "1200",
-    "ENV": "dev"
+    "DAILY_MAX_SAM_FRAMES": "1200"
   },
   // Hourly expiry sweep (R10-02): staged uploads past their 1 h TTL, orphaned
   // idempotency records, terminal jobs past the 24 h retention window, and
