@@ -18,6 +18,16 @@ class VisualMotionConsumer(
     private val width: Int = 240,
     private val height: Int = 180,
     val ring: VisualEgoRing = VisualEgoRing(),
+    /**
+     * Handed every accepted ego on the analysis thread, at frame time.
+     *
+     * The step gate judges a candidate on the IMU thread at that instant, so it
+     * must already hold a frame from inside its ±0.4 s window. Draining only
+     * after a step was emitted (the old path) left the window one step stale,
+     * which is why every phantom step passed. Navigation readers still take
+     * their copy from [ring] through [drain].
+     */
+    private val onEgo: ((VisualEgo, Long) -> Unit)? = null,
 ) : FrameConsumer {
     init { require(intervalNs > 0L) }
 
@@ -111,6 +121,7 @@ class VisualMotionConsumer(
         val ego = if (measured) fit.fit(flow.flow, usable) else unavailable
         if (ego.confidence01 >= 0.5) hasUsableFrame = true
         ring.publish(sample.tNs, ego, usable, usability.reason)
+        onEgo?.invoke(ego, sample.tNs)
     }
 
     private fun reject(tNs: Long, reason: VisualReason, usable: Double = 0.0) {

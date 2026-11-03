@@ -5,7 +5,9 @@ import app.simt.echo.capture.FrameConsumer
 import app.simt.echo.capture.FrameSample
 import app.simt.echo.capture.FrameTap
 import app.simt.echo.capture.FrameTapMux
+import app.simt.echo.capture.ImuSample
 import app.simt.echo.capture.IntrinsicsSource
+import app.simt.echo.capture.PdrEngine
 import app.simt.echo.sim.SimEnvironment
 import app.simt.echo.sim.SimPose
 import app.simt.echo.sim.SimWorld
@@ -286,6 +288,89 @@ class VisualMotionConsumerTest {
         assertNotNull(consumer.drain(latestNs + 2_000_000_000L))
         assertNull(consumer.drain(latestNs + 2_000_000_001L))
         assertEquals(0L, ring.dropped)
+    }
+
+    /**
+     * Regression (W16-04 ordering): the step gate must already hold this
+     * instant's frame when it judges a candidate. Frames reach the engine at
+     * frame time here — exactly the wiring `BuiltInPdrMotionSource` performs
+     * through `onEgo` — and nothing drains to feed it. Feeding the gate only
+     * after a step (the old path) left its ±0.4 s window one step stale, so a
+     * phone bobbed up and down with a still camera counted every bounce.
+     */
+    @Test
+    fun frameTimeEgoFeedsTheGateSoStaticBobbingIsRejected() {
+        val engine = PdrEngine(visualAssist = true)
+        val consumer = VisualMotionConsumer(
+            TestTap(),
+            TestInput(),
+            intervalNs = INTERVAL_NS,
+            onEgo = { ego, tNs -> engine.onVisualEgo(ego, tNs) },
+        )
+        assertTrue(consumer.start())
+        engine.start()
+        bobForTwelveSeconds(engine, consumer)
+
+        val candidates = engine.stepGate.acceptedStepCount + engine.stepGate.rejectedPhantomCount
+        assertTrue(candidates >= 10, "bobbing fixture must produce step candidates, got $candidates")
+        val rejectionRate = engine.stepGate.rejectedPhantomCount.toDouble() / candidates
+        assertTrue(
+            rejectionRate >= 0.95,
+            "a still camera must veto bobbing: rejected ${engine.stepGate.rejectedPhantomCount}/$candidates",
+        )
+        consumer.stop()
+        engine.stop()
+    }
+
+    /**
+     * The opposite failure: the fix must not veto real walking. Same bobbing
+     * accelerometer, camera advancing, so expansion clears the motion floor.
+     */
+    @Test
+    fun frameTimeEgoKeepsRealStepsWhenTheCameraAdvances() {
+        val engine = PdrEngine(visualAssist = true)
+        val consumer = VisualMotionConsumer(
+            TestTap(),
+            TestInput(),
+            intervalNs = INTERVAL_NS,
+            onEgo = { ego, tNs -> engine.onVisualEgo(ego, tNs) },
+        )
+        assertTrue(consumer.start())
+        engine.start()
+        bobForTwelveSeconds(engine, consumer, metresPerFrame = 0.04)
+
+        assertTrue(
+            engine.stepGate.acceptedStepCount > 0,
+            "forward camera expansion must keep real steps accepted",
+        )
+        consumer.stop()
+        engine.stop()
+    }
+
+    /**
+     * Twelve seconds of 2 Hz vertical bobbing at 50 Hz IMU rate, with camera
+     * frames delivered at [INTERVAL_NS] through the consumer's frame-time path.
+     */
+    private fun bobForTwelveSeconds(
+        engine: PdrEngine,
+        consumer: VisualMotionConsumer,
+        metresPerFrame: Double = 0.0,
+    ) {
+        val world = world()
+        val hz = 50
+        var nextFrameNs = START_NS
+        var frame = 0
+        for (i in 0 until hz * 12) {
+            val tNs = START_NS + i * (1_000_000_000L / hz)
+            while (nextFrameNs <= tNs) {
+                consumer.onFrame(sample(world, START.copy(y = START.y + frame * metresPerFrame), nextFrameNs))
+                frame++
+                nextFrameNs += INTERVAL_NS
+            }
+            val tSec = i.toDouble() / hz
+            val az = 9.81 + 2.2 * sin(2.0 * PI * 2.0 * tSec)
+            engine.onAccelerometer(ImuSample(tNs, 0.0, 0.0, az))
+        }
     }
 
     private fun assertRejected(consumer: VisualMotionConsumer, sample: FrameSample, reason: VisualReason) {

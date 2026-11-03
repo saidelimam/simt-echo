@@ -84,7 +84,16 @@ class BuiltInPdrMotionSource internal constructor(
         engine.visualAssist = enabled
         if (!enabled) return false
         val input = VisualImuHistory()
-        val consumer = VisualMotionConsumer(tap, input, intervalNs = intervalNs)
+        val consumer = VisualMotionConsumer(
+            tap,
+            input,
+            intervalNs = intervalNs,
+            // Frame-time delivery is the ordering that makes the step gate
+            // work: the engine judges a candidate on the IMU thread, so it
+            // must already hold this frame. Feeding the engine only from
+            // drainVisual (after the step was emitted) left the gate blind.
+            onEgo = { ego, tNs -> engine.onVisualEgo(ego, tNs) },
+        )
         if (!consumer.start()) {
             engine.visualAssist = false
             return false
@@ -100,10 +109,14 @@ class BuiltInPdrMotionSource internal constructor(
         session?.consumer?.stop()
     }
 
+    /**
+     * The newest ego at or before [tNs], for presentation and capture readers
+     * (the live frame, the parallax profiler). It deliberately does NOT feed
+     * [PdrEngine.onVisualEgo]: the consumer already delivered every ego at
+     * frame time, and a second delivery would double-count one observation.
+     */
     override fun drainVisual(tNs: Long): VisualMotionFrame? =
-        visualSession?.consumer?.drain(tNs)?.also { frame ->
-            engine.onVisualEgo(frame.ego, frame.tNs)
-        }
+        visualSession?.consumer?.drain(tNs)
 
     /** Calibration reaches the engine it wraps (W4-02): without this
      * forward, `CaptureSession`'s step-K push silently no-ops on the

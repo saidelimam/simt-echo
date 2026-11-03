@@ -105,7 +105,13 @@ class NavigateViewModel(
         private set
 
     fun attachVisualTap(tap: FrameTap): Boolean =
-        (motion as? VisualMotionSource)?.attachVisual(tap, visualAssistRequested) == true
+        (motion as? VisualMotionSource)?.attachVisual(
+            tap,
+            visualAssistRequested,
+            // The step gate's ±0.4 s window needs frames faster than the 2 Hz
+            // navigation rate, or a candidate is judged with an empty window.
+            app.simt.echo.capture.FrameRateGovernor.VISUAL_GATE_INTERVAL_NS,
+        ) == true
 
     fun detachVisualTap() {
         (motion as? VisualMotionSource)?.detachVisual()

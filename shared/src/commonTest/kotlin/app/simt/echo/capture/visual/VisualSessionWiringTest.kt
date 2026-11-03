@@ -159,7 +159,8 @@ class VisualSessionWiringTest {
             ViewModelProvider.create(store, viewModelFactory { addInitializer(NavigateViewModel::class) { model } })[NavigateViewModel::class]
             assertEquals(enabled, model.attachVisualTap(FrameTapMux()))
             assertEquals(enabled, motion.requested)
-            assertEquals(FrameRateGovernor.NAVIGATE_INTERVAL_NS, motion.interval)
+            // The step gate's ±0.4 s window needs frames faster than 2 Hz.
+            assertEquals(FrameRateGovernor.VISUAL_GATE_INTERVAL_NS, motion.interval)
             model.start()
             runCurrent()
             motion.updates.emit(update(step = true))
