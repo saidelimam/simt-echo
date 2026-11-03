@@ -1,5 +1,7 @@
 package app.simt.echo.ui.screens.settings
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,6 +19,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -30,6 +37,8 @@ import app.simt.echo.ui.components.CosmosSecondaryButton
 import app.simt.echo.ui.components.CosmosTextField
 import app.simt.echo.ui.components.threeDecimals
 import app.simt.echo.ui.copy.cloudAiStatusCopy
+import app.simt.echo.ui.theme.EchoExtras
+import app.simt.echo.ui.theme.EchoSpace20
 
 /**
  * Settings in Cosmos (plan W8-11, freeze §5/§7): sectioned rows on the
@@ -252,6 +261,9 @@ fun SettingsScreen(
             )
         }
 
+        // Promo, not a setting: one tappable card that opens the SIMT site.
+        SimtPromoBanner()
+
         // Copyright footer: the ownership facts a legal page needs, in the
         // same section grammar as everything above, then the copyright line
         // in the quietest type on the screen so it reads as a colophon and
@@ -274,6 +286,68 @@ fun SettingsScreen(
                 )
             }
         }
+    }
+}
+
+/** Where the promo banner sends a tap; the one place the address lives. */
+internal const val SimtSiteUrl = "https://simt.app"
+
+/** Test seam: the card is a single tappable node with this tag. */
+internal const val SimtPromoBannerTag = "SimtPromoBanner"
+
+/**
+ * SIMT promo banner, sitting above the About footer.
+ *
+ * A marketing card is not a setting, so it is not a record row: one tappable
+ * canopy card with the brand accent as a soft wash (never a second card
+ * grammar, never a raw dialog surface) that sends the tap to [SimtSiteUrl].
+ * [onOpen] is the test seam; production passes null and the platform URI
+ * handler opens the site.
+ */
+@Composable
+internal fun SimtPromoBanner(
+    modifier: Modifier = Modifier,
+    onOpen: (() -> Unit)? = null,
+) {
+    val uriHandler = LocalUriHandler.current
+    val extras = EchoExtras
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag(SimtPromoBannerTag)
+            .clip(MaterialTheme.shapes.large)
+            .background(
+                Brush.horizontalGradient(
+                    listOf(extras.ember.copy(alpha = 0.20f), extras.rose.copy(alpha = 0.16f)),
+                ),
+            )
+            .clickable(onClickLabel = "Open simt.app", role = Role.Button) {
+                onOpen?.invoke() ?: uriHandler.openUri(SimtSiteUrl)
+            }
+            .padding(horizontal = EchoSpace20, vertical = EchoSpace20),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            text = "SIMT",
+            style = MaterialTheme.typography.titleSmall,
+            color = extras.ember,
+            modifier = Modifier.semantics { heading() },
+        )
+        Text(
+            text = "Walk with SIMT",
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Text(
+            text = "The app from Simt Space, the makers of ECHO. Open simt.app to see what else it does.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = "simt.app →",
+            style = MaterialTheme.typography.labelLarge,
+            color = extras.ember,
+        )
     }
 }
 
