@@ -42,8 +42,13 @@ first 100 as the fast subset. It writes the resulting evidence to
   moving occluder, phone-specific exposure/FOV, and optional rotational blur.
 - `SimWalk` uses a 20 Hz clock, seeded cadence (1.6–2.2 Hz), walking speed
   (0.9–1.1 m/s), stride scale (0.88–1.12), yaw noise/drift, and magnetic and
-  pressure readings. Each trial runs the real `Navigator` engine using only
-  generated `MotionUpdate`s; truth is retained separately for scoring.
+  pressure readings. Each sample also synthesizes a `HandsetWitness` derived
+  from the same camera pose (hold offset, yaw/pitch wobble, gyro step deltas,
+  and gravity projection) after the legacy `MotionUpdate` RNG draws so the
+  committed sensor baseline stays unchanged. Each trial runs through the
+  `WalkEstimator` seam (defaulting to the real `Navigator` engine) using only
+  generated `MotionUpdate`s; truth is retained separately for scoring, and
+  negative-control tests run seeded walks through a faulty estimator.
 - Arrival and uncertainty trials score the first true-position sample at or
   beyond 45 m on a 60 m straight navigation route. The remaining 15 m is padding
   so route-end clamping cannot hide baseline error. Every trial uses the same
@@ -65,9 +70,12 @@ first 100 as the fast subset. It writes the resulting evidence to
   between estimated and true route position is no greater than `2 × σ`.
   Coverage below 95% fails even when it is within the regression tolerance.
 - `headingDriftP95Deg`: nearest-rank p95 of the absolute wrapped difference
-  between measured yaw and true route heading at the 45 m checkpoint. This is
-  a sensor-only, roughly 45-second measurement shared by both engines, not the
-  later slice's ten-minute heading-fusion target.
+  between the scored heading and true route heading at the 45 m checkpoint.
+  When the estimator does not emit a fused heading, `ScenarioMetrics.headingMetric`
+  is `"raw-sensor-yaw"` and scores raw `sample.motion.yawRad` (a sensor-only,
+  roughly 45-second measurement shared by both engines, not the later slice's
+  ten-minute heading-fusion target). Estimators that emit a heading are tagged
+  `"fused-heading"`.
 - `relockDistanceP95M`: nearest-rank p95 of true metres walked from `Lost` to
   return to `WALK`. Failed attempts remain in `relockAttempts` and reduce
   `relockSuccessRate01`; `LINEAR` reports relock as not applicable (`null`, zero

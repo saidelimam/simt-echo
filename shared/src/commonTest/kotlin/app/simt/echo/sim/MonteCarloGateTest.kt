@@ -1,6 +1,7 @@
 package app.simt.echo.sim
 
 import app.simt.echo.model.NavigatorEngine
+import kotlin.math.PI
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -119,6 +120,30 @@ class MonteCarloGateTest {
         assertTrue("heading-drift-p95-deg" in failures)
         assertTrue("relock-distance-p95-m" in failures)
         assertTrue("relock-success-rate" in failures)
+    }
+
+    @Test
+    fun disconnectedEstimatorFailsTheGateOnItsEmittedState() {
+        val seeds = listOf(SimWalk.BASELINE_SEED)
+        val real = MonteCarloGate.measure(SimEnvironment.CORRIDOR, seeds)
+        val broken = MonteCarloGate.measure(SimEnvironment.CORRIDOR, seeds) { _, _ ->
+            FixedWalkEstimator(estimatedDistanceM = 0.0, uncertaintyM = 0.05, headingRad = PI / 2.0)
+        }
+
+        assertEquals(MonteCarloGate.HEADING_METRIC_RAW_SENSOR, real.headingMetric)
+        assertEquals(MonteCarloGate.HEADING_METRIC_RAW_SENSOR, broken.headingMetric)
+        assertTrue(real.arrivalErrorP95M < broken.arrivalErrorP95M)
+        val failures = MonteCarloGate.evaluate(broken, real).failures.map { it.metric }.toSet()
+        assertTrue("arrival-error-p95" in failures)
+        assertTrue("sigma-coverage-2s" in failures)
+        assertTrue("heading-drift-p95-deg" in failures)
+    }
+
+    @Test
+    fun fusedHeadingNumbersAreNotScoredAsTheRawSensorBaseline() {
+        val raw = baselineMetrics()
+        val fused = raw.copy(headingMetric = MonteCarloGate.HEADING_METRIC_FUSED)
+        assertTrue(MonteCarloGate.evaluate(fused, raw).failures.any { it.metric == "heading-metric" })
     }
 
     @Test

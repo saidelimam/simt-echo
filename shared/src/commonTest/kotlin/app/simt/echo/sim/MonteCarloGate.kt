@@ -2,6 +2,7 @@ package app.simt.echo.sim
 
 import app.simt.echo.Fixtures
 import app.simt.echo.model.EchoConfig
+import app.simt.echo.model.EchoRoute
 import app.simt.echo.model.NavigatorEngine
 import app.simt.echo.nav.NavInput
 import app.simt.echo.nav.NavPhase
@@ -37,6 +38,8 @@ data class ScenarioMetrics(
     val sigmaCoverage01: Double,
     val sigmaSamples: Int,
     val headingDriftP95Deg: Double,
+    /** Which heading quantity [headingDriftP95Deg] scores. The recorded baseline is raw sensor yaw. */
+    val headingMetric: String = MonteCarloGate.HEADING_METRIC_RAW_SENSOR,
     val relockDistanceP95M: Double? = null,
     val relockAttempts: Int = 0,
     val relockSuccesses: Int = 0,
@@ -91,6 +94,7 @@ object MonteCarloGate {
         require(trials.all { it.sigmaSamples > 0 && it.sigmaCoveredSamples in 0..it.sigmaSamples })
         require(trials.all { it.arrivalErrorM.isFinite() && it.arrivalErrorM >= 0.0 })
         require(trials.all { it.headingDriftDeg.isFinite() && it.headingDriftDeg >= 0.0 })
+        require(trials.all { it.headingMetric == trials.first().headingMetric && it.headingMetric.isNotEmpty() })
         require(trials.all { trial ->
             val distance = trial.relockDistanceM
             distance == null || (trial.relockAttempted && distance.isFinite() && distance >= 0.0)
@@ -107,6 +111,7 @@ object MonteCarloGate {
             sigmaCoverage01 = coveredSamples.toDouble() / sigmaSamples,
             sigmaSamples = sigmaSamples,
             headingDriftP95Deg = percentile(trials.map { it.headingDriftDeg }, P95),
+            headingMetric = trials.first().headingMetric,
             relockDistanceP95M = successfulRelocks.takeIf { it.isNotEmpty() }?.let { percentile(it, P95) },
             relockAttempts = relockTrials.size,
             relockSuccesses = successfulRelocks.size,
@@ -141,6 +146,14 @@ object MonteCarloGate {
         val failures = mutableListOf<GateFailure>()
         if (measured.scenario != baseline.scenario || measured.engine != baseline.engine) {
             failures += GateFailure("identity", null, null, "scenario and engine must match the baseline")
+        }
+        if (measured.headingMetric != baseline.headingMetric) {
+            failures += GateFailure(
+                "heading-metric",
+                null,
+                null,
+                "heading drift is ${baseline.headingMetric}; ${measured.headingMetric} is a different seam",
+            )
         }
         if (measured.walkCount <= 0 || baseline.walkCount <= 0 || measured.walkCount != baseline.walkCount ||
             measured.sigmaSamples <= 0 || baseline.sigmaSamples <= 0
@@ -206,15 +219,38 @@ object MonteCarloGate {
         return GateReport(failures)
     }
 
+    /**
+     * Scores seeds through [estimator]. The default reads the real [Navigator] and the
+     * raw sensor yaw. Relock stays on [runSuite]; this path is the arrival and heading seam.
+     */
+    fun measure(
+        scenario: SimEnvironment,
+        seeds: List<Long>,
+        engine: NavigatorEngine = NavigatorEngine.LINEAR,
+        estimator: (route: EchoRoute, seed: Long) -> WalkEstimator = { route, seed ->
+            NavigatorWalkEstimator(route, engine, seed)
+        },
+    ): ScenarioMetrics {
+        require(seeds.isNotEmpty())
+        val route = SimWalk.straightRoute(BASELINE_ROUTE_LENGTH_M)
+        val trials = seeds.map { seed -> scoreWalk(scenario, seed, route, estimator(route, seed)) }
+        return summarize(scenario, engine, trials)
+    }
+
     private fun runTrial(scenario: SimEnvironment, engine: NavigatorEngine, seed: Long): WalkMetrics {
         val route = SimWalk.straightRoute(BASELINE_ROUTE_LENGTH_M)
-        val config = EchoConfig(navigatorEngine = engine)
-        val nav = Navigator(route, config, ghostSeed = seed xor GHOST_SEED_SALT)
+        val scored = scoreWalk(scenario, seed, route, NavigatorWalkEstimator(route, engine, seed))
+        val relock = if (engine == NavigatorEngine.GHOST) measureRelock(scenario, seed xor RELOCK_SEED_SALT) else null
+        return scored.copy(
+            relockAttempted = engine == NavigatorEngine.GHOST,
+            relockDistanceM = relock,
+        )
+    }
+
+    private fun scoreWalk(scenario: SimEnvironment, seed: Long, route: EchoRoute, estimator: WalkEstimator): WalkMetrics {
         val samples = SimWalk(scenario, seed).samples(route).iterator()
         check(samples.hasNext()) { "SimWalk must yield an initial sensor sample" }
-        nav.onInput(NavInput.Motion(samples.next().motion))
-        nav.onInput(NavInput.Aligned)
-
+        estimator.onSample(samples.next())
         var finalEstimatedDistanceM = 0.0
         var finalTrueDistanceM = 0.0
         var headingDriftDeg = 0.0
@@ -222,26 +258,24 @@ object MonteCarloGate {
         var sigmaSamples = 0
         while (samples.hasNext()) {
             val sample = samples.next()
-            nav.onInput(NavInput.Motion(sample.motion))
-            val estimatedDistanceM = route.totalLengthM - nav.ui.value.distanceToNextM
+            estimator.onSample(sample)
+            val estimatedDistanceM = estimator.estimatedDistanceM
             val errorM = abs(estimatedDistanceM - sample.trueDistanceM)
             finalEstimatedDistanceM = estimatedDistanceM
             finalTrueDistanceM = sample.trueDistanceM
-            val sigma = nav.ui.value.uncertaintyM
+            val sigma = estimator.uncertaintyM
             if (sigma.isFinite() && sigma >= 0.0 && errorM <= 2.0 * sigma) sigmaCoveredSamples += 1
             sigmaSamples += 1
-            headingDriftDeg = abs(wrapAngle(sample.motion.yawRad - sample.trueYawRad)) * 180.0 / PI
+            headingDriftDeg = abs(wrapAngle(estimator.headingRad - sample.trueYawRad)) * 180.0 / PI
             if (sample.trueDistanceM >= ARRIVAL_SCORE_DISTANCE_M) break
         }
         check(sigmaSamples > 0)
-        val relock = if (engine == NavigatorEngine.GHOST) measureRelock(scenario, seed xor RELOCK_SEED_SALT) else null
         return WalkMetrics(
             arrivalErrorM = arrivalErrorAtBoundary(finalEstimatedDistanceM, finalTrueDistanceM),
             sigmaCoveredSamples = sigmaCoveredSamples,
             sigmaSamples = sigmaSamples,
             headingDriftDeg = headingDriftDeg,
-            relockAttempted = engine == NavigatorEngine.GHOST,
-            relockDistanceM = relock,
+            headingMetric = estimator.headingMetric,
         )
     }
 
@@ -294,6 +328,7 @@ object MonteCarloGate {
         val sigmaCoveredSamples: Int,
         val sigmaSamples: Int,
         val headingDriftDeg: Double,
+        val headingMetric: String = HEADING_METRIC_RAW_SENSOR,
         val relockAttempted: Boolean = false,
         val relockDistanceM: Double? = null,
     )
@@ -305,7 +340,9 @@ object MonteCarloGate {
     internal const val ARRIVAL_SCORE_DISTANCE_M = 45.0
     private const val RELOCK_START_M = 15.0
     private const val SCENARIO_SEED_STRIDE = 1_000_000L
-    private const val GHOST_SEED_SALT = 0x6a09_e667_f3bc_c909L
+    internal const val GHOST_SEED_SALT = 0x6a09_e667_f3bc_c909L
+    const val HEADING_METRIC_RAW_SENSOR = "raw-sensor-yaw"
+    const val HEADING_METRIC_FUSED = "fused-heading"
     private const val RELOCK_SEED_SALT = -0x4498_517a_7b35_58c5L
     private const val METRIC_EPSILON = 1e-9
 }

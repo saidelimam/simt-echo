@@ -16,12 +16,32 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.random.Random
 
+/**
+ * One handset at one instant. [travelYawRad] is the route direction.
+ * Camera and gyro include the hold and the wobble; the legacy [SimWalkSample.motion]
+ * yaw stays the navigation baseline and does not.
+ */
+data class HandsetWitness(
+    val travelYawRad: Double,
+    val cameraYawRad: Double,
+    val cameraPitchRad: Double,
+    val idealYawRateRadPerSec: Double,
+    val idealPitchRateRadPerSec: Double,
+    val measuredYawRateRadPerSec: Double,
+    val measuredPitchRateRadPerSec: Double,
+    val rotationVectorYawRad: Double,
+    val gravityRightG: Double,
+    val gravityDownG: Double,
+    val gravityForwardG: Double,
+)
+
 data class SimWalkSample(
     val trueDistanceM: Double,
     val trueYawRad: Double,
     val cameraPose: SimPose,
     val motion: MotionUpdate,
     val frame: FrameSample?,
+    val handset: HandsetWitness,
 )
 
 /** Seeded gait and phone sensors for a walk over a route's independent geometry. */
@@ -29,6 +49,10 @@ class SimWalk(
     val environment: SimEnvironment,
     val seed: Long,
     val phone: SimPhone = SimPhone.forSeed(seed),
+    private val yawWobbleRad: Double = YAW_WOBBLE_RAD,
+    private val pitchWobbleRad: Double = PITCH_WOBBLE_RAD,
+    private val sensorNoise: Boolean = true,
+    private val driftPerMinuteRad: Double? = null,
 ) {
     private val world = SimWorld(environment, phone, seed)
 
@@ -44,13 +68,18 @@ class SimWalk(
         val cadenceHz = random.nextDouble(MIN_CADENCE_HZ, MAX_CADENCE_HZ)
         val walkingSpeedMps = random.nextDouble(MIN_SPEED_MPS, MAX_SPEED_MPS)
         val strideScale = random.nextDouble(MIN_STRIDE_SCALE, MAX_STRIDE_SCALE)
-        val driftPerMinute = random.nextDouble(-MAX_ROTATION_DRIFT_RAD_PER_MIN, MAX_ROTATION_DRIFT_RAD_PER_MIN)
+        val driftPerMinute = driftPerMinuteRad ?: if (sensorNoise) {
+            random.nextDouble(-MAX_ROTATION_DRIFT_RAD_PER_MIN, MAX_ROTATION_DRIFT_RAD_PER_MIN)
+        } else {
+            0.0
+        }
         var trueDistanceM = 0.0
         var odometerM = 0.0
         var stepPhase = 0.0
         var stepCount = 0
         var gyroBiasRad = 0.0
         var previousCameraYaw = routeHeadingAt(route, 0.0) + phone.holdYawOffsetRad
+        var previousCameraPitch = phone.holdPitchRad
         var previousTimeNs = START_TIME_NS
         var nextFrameNs = START_TIME_NS + frameIntervalNs
 
@@ -62,8 +91,8 @@ class SimWalk(
                 stepPhase -= 1.0
                 stepCount += 1
                 val idealStepM = walkingSpeedMps / cadenceHz
-                odometerM += (idealStepM * strideScale + random.nextDouble(-STEP_NOISE_M, STEP_NOISE_M))
-                    .coerceAtLeast(0.0)
+                val stepNoise = if (sensorNoise) random.nextDouble(-STEP_NOISE_M, STEP_NOISE_M) else 0.0
+                odometerM += (idealStepM * strideScale + stepNoise).coerceAtLeast(0.0)
             }
 
             val timeNs = previousTimeNs + SAMPLE_INTERVAL_NS
@@ -71,12 +100,12 @@ class SimWalk(
             val trueYaw = routeHeadingAt(route, trueDistanceM)
             val anomalyRad = magneticYawAnomaly(trueDistanceM)
             val driftRad = driftPerMinute * timeSeconds / SECONDS_PER_MINUTE
-            gyroBiasRad += random.nextDouble(-1.0, 1.0) * GYRO_BIAS_RW_RAD * sqrt(SAMPLE_INTERVAL_S)
-            val measuredYaw = wrapAngle(
-                trueYaw + driftRad + gyroBiasRad + anomalyRad + random.nextDouble(-YAW_NOISE_RAD, YAW_NOISE_RAD),
-            )
-            val magneticMagnitude = MAG_FIELD_BASE_UT + abs(anomalyRad) * MAG_FIELD_ANOMALY_SCALE +
-                random.nextDouble(-MAG_FIELD_NOISE_UT, MAG_FIELD_NOISE_UT)
+            val biasBefore = gyroBiasRad
+            if (sensorNoise) gyroBiasRad += random.nextDouble(-1.0, 1.0) * GYRO_BIAS_RW_RAD * sqrt(SAMPLE_INTERVAL_S)
+            val yawNoise = if (sensorNoise) random.nextDouble(-YAW_NOISE_RAD, YAW_NOISE_RAD) else 0.0
+            val measuredYaw = wrapAngle(trueYaw + driftRad + gyroBiasRad + anomalyRad + yawNoise)
+            val magneticNoise = if (sensorNoise) random.nextDouble(-MAG_FIELD_NOISE_UT, MAG_FIELD_NOISE_UT) else 0.0
+            val magneticMagnitude = MAG_FIELD_BASE_UT + abs(anomalyRad) * MAG_FIELD_ANOMALY_SCALE + magneticNoise
             val magneticVertical = MAG_VERTICAL_BASE_UT + anomalyRad * MAG_VERTICAL_ANOMALY_SCALE
             val headingQuality = if (abs(anomalyRad) >= MAG_ANOMALY_GATE_RAD) {
                 MAG_ANOMALY_QUALITY
@@ -86,17 +115,21 @@ class SimWalk(
 
             val (pathX, pathY) = routePositionAt(route, trueDistanceM)
             val baseHeightM = world.floorHeightM(pathY)
-            val yawWobble = sin(timeSeconds * YAW_WOBBLE_HZ * 2.0 * PI) * YAW_WOBBLE_RAD
-            val pitchWobble = sin(timeSeconds * cadenceHz * 2.0 * PI) * PITCH_WOBBLE_RAD
+            val yawWobble = sin(timeSeconds * YAW_WOBBLE_HZ * 2.0 * PI) * yawWobbleRad
+            val pitchWobble = sin(timeSeconds * cadenceHz * 2.0 * PI) * pitchWobbleRad
             val cameraYaw = trueYaw + phone.holdYawOffsetRad + yawWobble
+            val cameraPitch = phone.holdPitchRad + pitchWobble
             val cameraPose = SimPose(
                 x = pathX,
                 y = pathY,
                 z = baseHeightM + CAMERA_HEIGHT_M + abs(sin(stepPhase * PI)) * CAMERA_BOB_M,
                 yawRad = cameraYaw,
-                pitchRad = phone.holdPitchRad + pitchWobble,
+                pitchRad = cameraPitch,
             )
-            val angularVelocity = wrapAngle(cameraYaw - previousCameraYaw) / SAMPLE_INTERVAL_S
+            val idealYawRate = wrapAngle(cameraYaw - previousCameraYaw) / SAMPLE_INTERVAL_S
+            val idealPitchRate = wrapAngle(cameraPitch - previousCameraPitch) / SAMPLE_INTERVAL_S
+            val biasRate = (gyroBiasRad - biasBefore) / SAMPLE_INTERVAL_S
+            val angularVelocity = idealYawRate
             val frame = if (renderFrames && timeNs >= nextFrameNs) {
                 nextFrameNs += frameIntervalNs
                 world.render(cameraPose, timeNs, angularVelocity)
@@ -116,6 +149,8 @@ class SimWalk(
                 magMag = magneticMagnitude,
                 magVert = magneticVertical,
             )
+            val sinPitch = sin(cameraPitch)
+            val cosPitch = cos(cameraPitch)
             yield(
                 SimWalkSample(
                     trueDistanceM = trueDistanceM,
@@ -123,9 +158,23 @@ class SimWalk(
                     cameraPose = cameraPose,
                     motion = motion,
                     frame = frame,
+                    handset = HandsetWitness(
+                        travelYawRad = trueYaw,
+                        cameraYawRad = cameraYaw,
+                        cameraPitchRad = cameraPitch,
+                        idealYawRateRadPerSec = idealYawRate,
+                        idealPitchRateRadPerSec = idealPitchRate,
+                        measuredYawRateRadPerSec = idealYawRate + biasRate,
+                        measuredPitchRateRadPerSec = idealPitchRate,
+                        rotationVectorYawRad = wrapAngle(cameraYaw + driftRad + gyroBiasRad + anomalyRad + yawNoise),
+                        gravityRightG = 0.0,
+                        gravityDownG = cosPitch,
+                        gravityForwardG = -sinPitch,
+                    ),
                 ),
             )
             previousCameraYaw = cameraYaw
+            previousCameraPitch = cameraPitch
             previousTimeNs = timeNs
         }
     }
