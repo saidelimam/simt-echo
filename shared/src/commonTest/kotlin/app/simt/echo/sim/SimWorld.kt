@@ -72,36 +72,53 @@ class SimWorld(
     val environment: SimEnvironment,
     val phone: SimPhone = SimPhone(),
     private val seed: Long = 0L,
+    private val pixelSamplesPerAxis: Int = 8,
 ) {
-    fun render(
+    init {
+        require(pixelSamplesPerAxis in 1..16)
+    }
+
+    /** Integrate the unchanged tiled material over the pixel, then apply imaging. */
+    internal fun pixelAt(
+        x: Int,
+        y: Int,
         pose: SimPose,
         tNs: Long,
         angularVelocityRadPerSec: Double = 0.0,
-    ): FrameSample {
+    ): Int {
         require(angularVelocityRadPerSec.isFinite())
         val blurSamples = if (abs(angularVelocityRadPerSec) * phone.exposureSeconds >= BLUR_THRESHOLD_RAD) {
             BLUR_SAMPLES
         } else {
             1
         }
-        val luma = ByteArray(LUMA_WIDTH * LUMA_HEIGHT)
-        for (y in 0 until LUMA_HEIGHT) {
-            for (x in 0 until LUMA_WIDTH) {
-                var brightness = 0
-                for (sample in 0 until blurSamples) {
-                    val shutterOffset = if (blurSamples == 1) {
-                        0.0
-                    } else {
-                        (sample.toDouble() / (blurSamples - 1) - 0.5) * phone.exposureSeconds
-                    }
+        var brightness = 0
+        for (sample in 0 until blurSamples) {
+            val shutterOffset = if (blurSamples == 1) 0.0 else (sample.toDouble() / (blurSamples - 1) - 0.5) * phone.exposureSeconds
+            val sampledPose = if (blurSamples == 1) pose else pose.copy(yawRad = pose.yawRad + angularVelocityRadPerSec * shutterOffset)
+            for (sy in 0 until pixelSamplesPerAxis) {
+                for (sx in 0 until pixelSamplesPerAxis) {
                     brightness += samplePixel(
-                        x = x,
-                        y = y,
-                        pose = pose.copy(yawRad = pose.yawRad + angularVelocityRadPerSec * shutterOffset),
+                        x + (sx + 0.5) / pixelSamplesPerAxis,
+                        y + (sy + 0.5) / pixelSamplesPerAxis,
+                        sampledPose,
                         tNs = tNs,
                     )
                 }
-                luma[y * LUMA_WIDTH + x] = (brightness / blurSamples).toByte()
+            }
+        }
+        return applyPhone(brightness / (blurSamples * pixelSamplesPerAxis * pixelSamplesPerAxis), x, y)
+    }
+
+    fun render(
+        pose: SimPose,
+        tNs: Long,
+        angularVelocityRadPerSec: Double = 0.0,
+    ): FrameSample {
+        val luma = ByteArray(LUMA_WIDTH * LUMA_HEIGHT)
+        for (y in 0 until LUMA_HEIGHT) {
+            for (x in 0 until LUMA_WIDTH) {
+                luma[y * LUMA_WIDTH + x] = pixelAt(x, y, pose, tNs, angularVelocityRadPerSec).toByte()
             }
         }
         return FrameSample(
@@ -149,11 +166,11 @@ class SimWorld(
         0.0
     }
 
-    private fun samplePixel(x: Int, y: Int, pose: SimPose, tNs: Long): Int {
-        val nx = (x + 0.5 - LUMA_WIDTH / 2.0) / phone.focalLengthPx
-        val ny = (LUMA_HEIGHT / 2.0 - y - 0.5) / phone.focalLengthPx
+    private fun samplePixel(x: Double, y: Double, pose: SimPose, tNs: Long): Int {
+        val nx = (x - LUMA_WIDTH / 2.0) / phone.focalLengthPx
+        val ny = (LUMA_HEIGHT / 2.0 - y) / phone.focalLengthPx
         val ray = rayDirection(pose, nx, ny)
-        val hit = nearestHit(pose, ray, tNs) ?: return applyPhone(24, x, y)
+        val hit = nearestHit(pose, ray, tNs) ?: return 24
         val textureX: Double
         val textureY: Double
         when (hit.material) {
@@ -180,8 +197,7 @@ class SimWorld(
         }
         val cellX = floor(textureX * TEXTURE_SCALE).toInt()
         val cellY = floor(textureY * TEXTURE_SCALE).toInt()
-        val base = texture(hit.material, cellX, cellY)
-        return applyPhone(base, x, y)
+        return texture(hit.material, cellX, cellY)
     }
 
     private fun rayDirection(pose: SimPose, nx: Double, ny: Double): SimPoint3 {
