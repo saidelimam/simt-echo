@@ -14,7 +14,16 @@
   "r2_buckets": [
     {
       "binding": "MEDIA",
-      "bucket_name": "echo-media"
+      "bucket_name": "echo-media",
+      // R9-02 (review 0009, F2): a 24 h backstop for what the hourly cron
+      // (see `triggers`) does not reach in time — terminal job prefixes
+      // (inputs, events, SAM evidence, results) and relay ciphertext.
+      // Relay objects normally die at their 30 min TTL; jobs at 24 h past
+      // a terminal stage.
+      "lifecycle_rules": [
+        { "id": "expire-jobs", "prefix": "jobs/", "expiration": { "days": 1 } },
+        { "id": "expire-relay", "prefix": "relay/", "expiration": { "days": 1 } }
+      ]
     }
   ],
   "workflows": [
@@ -44,8 +53,9 @@
     "WORKERS_AI_MODELS": "@cf/meta/llama-4-scout-17b-16e-instruct,@cf/google/gemma-4-26b-a4b-it",
     "ENV": "dev"
   },
-  // Hourly expiry backstop: sweeps staged uploads past their 1 h TTL and
-  // orphaned idempotency records (see `scheduled` in src/index.ts).
+  // Hourly expiry sweep (R9-02): staged uploads past their 1 h TTL, orphaned
+  // idempotency records, terminal jobs past the 24 h retention window, and
+  // relay objects past their expiry (see `scheduled` in src/index.ts).
   "triggers": {
     "crons": ["0 * * * *"]
   },

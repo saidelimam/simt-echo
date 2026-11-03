@@ -239,6 +239,75 @@ export async function sweepExpiredUploads(env: Env, now: number = Date.now()): P
   return swept;
 }
 
+// R9-02 (review 0009, F2): indoor photos are the privacy-sensitive payload,
+// so a job's prefix — inputs, events, SAM evidence, results — is retained
+// 24 h after the job reaches a terminal stage, then deleted wholesale. The
+// R2 lifecycle rule in wrangler.jsonc (same window) is the final backstop
+// for whatever an hourly cycle misses.
+export const JOB_RETENTION_MS = 24 * 60 * 60 * 1000;
+const TERMINAL_STAGES = new Set(["complete", "errored"]);
+
+/**
+ * Deletes the prefixes of jobs whose progress record is terminal and older
+ * than 24 h. A job without a readable progress record is left alone: a
+ * mid-write job is not terminal, and the lifecycle rule covers the rest.
+ * Returns the number of job prefixes deleted.
+ */
+export async function sweepExpiredJobs(env: Env, now: number = Date.now()): Promise<number> {
+  const groups = new Map<string, string[]>();
+  let cursor: string | undefined;
+  for (;;) {
+    const page = await env.MEDIA.list({ prefix: "jobs/", cursor });
+    for (const o of page.objects) {
+      const rest = o.key.slice("jobs/".length);
+      const slash = rest.indexOf("/");
+      if (slash < 0) continue;
+      const id = rest.slice(0, slash);
+      if (id === "staging" || id === "idem") continue; // Sibling trees, not jobs.
+      const keys = groups.get(id) ?? [];
+      keys.push(o.key);
+      groups.set(id, keys);
+    }
+    if (!page.truncated) break;
+    cursor = page.cursor;
+  }
+  let swept = 0;
+  for (const [id, keys] of groups) {
+    const progress = await readJson<{ stage?: unknown; updatedAt?: unknown }>(
+      env,
+      `jobs/${id}/progress.json`,
+    );
+    const stage = progress?.stage;
+    const updatedAt = progress?.updatedAt;
+    if (typeof stage !== "string" || !TERMINAL_STAGES.has(stage)) continue;
+    if (typeof updatedAt !== "number" || now - updatedAt < JOB_RETENTION_MS) continue;
+    await env.MEDIA.delete(keys);
+    swept++;
+  }
+  return swept;
+}
+
+/**
+ * R9-02: deletes relay objects whose `expiresAt` has passed even though no
+ * one GETted them — `getRelay` covers the read path, this covers abandoned
+ * codes. Returns the number of objects deleted.
+ */
+export async function sweepExpiredRelayObjects(env: Env, now: number = Date.now()): Promise<number> {
+  const expired: string[] = [];
+  let cursor: string | undefined;
+  for (;;) {
+    const page = await env.MEDIA.list({ prefix: "relay/", cursor });
+    for (const o of page.objects) {
+      const expiresAt = Number(o.customMetadata?.expiresAt ?? NaN);
+      if (Number.isFinite(expiresAt) && expiresAt <= now) expired.push(o.key);
+    }
+    if (!page.truncated) break;
+    cursor = page.cursor;
+  }
+  if (expired.length > 0) await env.MEDIA.delete(expired);
+  return expired.length;
+}
+
 /** POST /v1/jobs with a JSON v1.1 body (jobs.ts dispatches here). */
 export async function handleCreateJobV11(c: Context<AppEnv>): Promise<Response> {
   if (!c.env.PIPELINE) {

@@ -1,6 +1,11 @@
 import { Hono } from "hono";
 import { registerJobsRoutes } from "./jobs";
-import { registerUploadRoutes, sweepExpiredUploads } from "./uploads";
+import {
+  registerUploadRoutes,
+  sweepExpiredJobs,
+  sweepExpiredRelayObjects,
+  sweepExpiredUploads,
+} from "./uploads";
 import { getRelay, postRelay } from "./relay";
 import { postDevice, resolveDevice, timingSafeEqual } from "./devices";
 
@@ -151,8 +156,13 @@ export default {
   fetch: app.fetch,
   // Hourly cron (wrangler.jsonc `triggers.crons`): staged uploads and
   // orphaned idempotency records otherwise expire only when someone next
-  // touches the upload API.
+  // touches the upload API; R9-02 adds the 24 h retention sweep for
+  // terminal jobs and the no-GET expiry of abandoned relay codes. The R2
+  // lifecycle rule in wrangler.jsonc is the backstop for whatever a cycle
+  // misses.
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
     await sweepExpiredUploads(env);
+    await sweepExpiredJobs(env);
+    await sweepExpiredRelayObjects(env);
   },
 };
