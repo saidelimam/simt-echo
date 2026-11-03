@@ -3,6 +3,8 @@ package app.simt.echo.capture
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 
 /** Plan W10-03 gate: the rate governor throttles deterministically. */
 class FrameRateGovernorTest {
@@ -58,5 +60,33 @@ class FrameRateGovernorTest {
         val governor = FrameRateGovernor(FrameRateGovernor.RECORD_INTERVAL_NS)
         assertTrue(governor.shouldEmit(100L))
         assertTrue(governor.shouldEmit(100L + 10_000_000_000L))
+    }
+
+    @Test
+    fun changingDutyPreservesHistoryAndZeroPauses() {
+        val governor = FrameRateGovernor(100L)
+        assertTrue(governor.shouldEmit(0L))
+        governor.setBaseInterval(200L)
+        assertEquals(200L, governor.baseIntervalNs)
+        assertFalse(governor.shouldEmit(100L))
+        assertTrue(governor.shouldEmit(200L))
+        governor.setBaseInterval(0L)
+        assertFalse(governor.shouldEmit(10_000L))
+        governor.setBaseInterval(50L)
+        assertTrue(governor.shouldEmit(10_000L))
+        assertFalse(governor.shouldEmit(10_099L, ThermalState.MODERATE))
+        assertTrue(governor.shouldEmit(10_100L, ThermalState.MODERATE))
+        assertFalse(governor.shouldEmit(10_200L, ThermalState.SEVERE))
+    }
+
+    @Test
+    fun negativeIntervalsAndClockReversalAreRejected() {
+        assertFailsWith<IllegalArgumentException> { FrameRateGovernor(-1L) }
+        val governor = FrameRateGovernor(10L)
+        assertFailsWith<IllegalArgumentException> { governor.setBaseInterval(-1L) }
+        assertTrue(governor.shouldEmit(100L))
+        assertFalse(governor.shouldEmit(90L))
+        governor.setBaseInterval(Long.MAX_VALUE)
+        assertFalse(governor.shouldEmit(120L, ThermalState.MODERATE))
     }
 }

@@ -14,6 +14,9 @@ import app.simt.echo.capture.FrameConsumer
 import app.simt.echo.capture.FrameRateGovernor
 import app.simt.echo.capture.FrameSample
 import app.simt.echo.capture.FrameTap
+import app.simt.echo.capture.FrameTapMux
+import app.simt.echo.capture.CameraIntrinsics
+import app.simt.echo.capture.CameraOptics
 import app.simt.echo.capture.LumaBufferPool
 import app.simt.echo.capture.ThermalState
 import app.simt.echo.capture.TimestampAlignment
@@ -44,16 +47,50 @@ class FrameTapSource(
     private val governor: FrameRateGovernor,
     private val thermalNow: () -> ThermalState = { ThermalState.NORMAL },
     private val alignmentNow: () -> TimestampAlignment = { TimestampAlignment.REALTIME },
+    private val recordingIntervalNs: Long = 0L,
 ) : FrameTap {
+    private val mux = FrameTapMux()
+    private var requestedIntervalNs = governor.baseIntervalNs
+    private var hasPrimary = false
+
     @Volatile
-    private var consumer: FrameConsumer? = null
+    private var optics: CameraOptics? = null
+    private var cachedIntrinsics: CameraIntrinsics? = null
+    private var cachedOptics: CameraOptics? = null
+    private var cachedWidth = 0
+    private var cachedHeight = 0
+
+    fun setOptics(optics: CameraOptics?) {
+        this.optics = optics
+    }
 
     /** True while a consumer is registered; analysis-only graphs bind only then. */
     val hasConsumer: Boolean
-        get() = consumer != null
+        get() = mux.hasConsumers
 
+    @Synchronized
     override fun setConsumer(consumer: FrameConsumer?) {
-        this.consumer = consumer
+        mux.setConsumer(consumer)
+        hasPrimary = consumer != null
+        updateDuty()
+    }
+
+    override fun addConsumer(consumer: FrameConsumer): Boolean = mux.addConsumer(consumer)
+    override fun removeConsumer(consumer: FrameConsumer): Boolean = mux.removeConsumer(consumer)
+
+    @Synchronized
+    override fun setBaseInterval(intervalNs: Long) {
+        require(intervalNs >= 0L)
+        requestedIntervalNs = intervalNs
+        updateDuty()
+    }
+
+    private fun updateDuty() {
+        governor.setBaseInterval(
+            if (hasPrimary && recordingIntervalNs > 0L) {
+                if (requestedIntervalNs == 0L) recordingIntervalNs else minOf(requestedIntervalNs, recordingIntervalNs)
+            } else requestedIntervalNs,
+        )
     }
 
     @Volatile
@@ -68,14 +105,18 @@ class FrameTapSource(
     val analyzer = ImageAnalysis.Analyzer { image ->
         try {
             // No consumer: zero work beyond closing the frame.
-            val sink = consumer ?: return@Analyzer
-            val tNs = alignTimestamp(image.imageInfo.timestamp, alignmentNow())
+            if (!mux.hasConsumers) return@Analyzer
+            val alignment = alignmentNow()
+            // A guessed offset is not evidence that gyro/frame clocks agree.
+            if (!alignment.isRealtime) return@Analyzer
+            val tNs = alignTimestamp(image.imageInfo.timestamp, alignment)
+            if (!mux.wantsFrame(tNs)) return@Analyzer
             if (tNs - lastThermalCheckNs >= THERMAL_POLL_NS) {
                 cachedThermal = runCatching { thermalNow() }.getOrDefault(ThermalState.NORMAL)
                 lastThermalCheckNs = tNs
             }
             if (!governor.shouldEmit(tNs, cachedThermal)) return@Analyzer
-            deliver(image, tNs, sink)
+            deliver(image, tNs, mux)
         } finally {
             image.close()
         }
@@ -86,6 +127,13 @@ class FrameTapSource(
         val downW = image.width / DECIMATION
         val downH = image.height / DECIMATION
         if (downW <= 0 || downH <= 0) return
+        val currentOptics = optics
+        if (cachedIntrinsics == null || cachedWidth != downW || cachedHeight != downH || cachedOptics !== currentOptics) {
+            cachedIntrinsics = currentOptics?.forPlane(downW, downH) ?: CameraIntrinsics.defaultFor(downW, downH)
+            cachedWidth = downW
+            cachedHeight = downH
+            cachedOptics = currentOptics
+        }
         val need = downW * downH
         var current = pool
         if (current == null || current.bufferSize != need) {
@@ -105,6 +153,8 @@ class FrameTapSource(
                         decimation = DECIMATION,
                         luma = luma,
                         jpeg = { image.toLedgerJpeg() },
+                        intrinsics = cachedIntrinsics,
+                        visualClockAligned = true,
                     ),
                 )
             }
@@ -215,19 +265,23 @@ internal fun Context.currentThermalState(): ThermalState {
  * read — so the recorder binds without analysis (`LEDGER_OFF`) instead of
  * scoring frames against the wrong odometer.
  */
-internal fun queryTimestampAlignment(context: Context): TimestampAlignment? = runCatching {
+internal fun queryTimestampAlignment(context: Context, cameraId: String): TimestampAlignment? = runCatching {
     val manager = context.getSystemService(CameraManager::class.java) ?: return null
-    val backId = manager.cameraIdList.firstOrNull { id ->
-        runCatching {
-            manager.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING) ==
-                CameraCharacteristics.LENS_FACING_BACK
-        }.getOrDefault(false)
-    } ?: return null
-    val source = manager.getCameraCharacteristics(backId)
+    val source = manager.getCameraCharacteristics(cameraId)
         .get(CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE)
     val alignment = timestampAlignmentFor(source == CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME)
     if (alignment == null) Log.w(TAG, "Camera timestamp source is not REALTIME (source=$source); ledger off")
     alignment
+}.getOrNull()
+
+/** Selected-camera optics; unavailable metadata is a labelled default, not an error. */
+internal fun queryCameraOptics(context: Context, cameraId: String): CameraOptics? = runCatching {
+    val manager = context.getSystemService(CameraManager::class.java) ?: return null
+    val characteristics = manager.getCameraCharacteristics(cameraId)
+    val focal = characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.firstOrNull() ?: return null
+    val sensor = characteristics.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE) ?: return null
+    val active = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return null
+    CameraOptics(focal.toDouble(), sensor.width.toDouble(), active.width(), active.height())
 }.getOrNull()
 
 private const val TAG = "EchoFrameTap"

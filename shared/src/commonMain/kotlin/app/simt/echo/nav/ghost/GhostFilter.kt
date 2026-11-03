@@ -59,8 +59,7 @@ class GhostFilter(
      * reused by [observeTurnSignature].
      */
     private val sigExp = DoubleArray(MAX_SIGNATURE_STEPS)
-    private val dtwPrev = DoubleArray(MAX_SIGNATURE_STEPS + 1)
-    private val dtwCurr = DoubleArray(MAX_SIGNATURE_STEPS + 1)
+    private val signatureDtw = Dtw.Scratch(MAX_SIGNATURE_STEPS)
 
     private var spareValid = false
     private var spareValue = 0.0
@@ -217,40 +216,16 @@ class GhostFilter(
                 sigExp[j] = wrapPi(next - prev)
                 prev = next
             }
-            wA[i] *= exp(-dtwDistance(deltasRad, n) / (2.0 * n * RELOCK_SIGMA_RAD * RELOCK_SIGMA_RAD)) +
+            val cost = Dtw.distance(n, n, DTW_BAND_STEPS, signatureDtw) { row, column ->
+                val error = wrapPi(deltasRad[row] - sigExp[column])
+                error * error
+            }
+            wA[i] *= exp(-cost / (2.0 * n * RELOCK_SIGMA_RAD * RELOCK_SIGMA_RAD)) +
                 TURN_FLOOR
         }
         normalizeAndMaybeResample()
     }
 
-    /**
-     * DTW distance (squared wrapped-angle cost) between the observed
-     * [n]-sequence and [sigExp], constrained to a Sakoe-Chiba band of
-     * [DTW_BAND_STEPS] (|i - j| <= band): a heading change may slip by a
-     * step, not be matched to a distant one. Operates on the reused
-     * [dtwPrev]/[dtwCurr] rows — allocates nothing.
-     */
-    private fun dtwDistance(observed: DoubleArray, n: Int): Double {
-        dtwPrev[0] = 0.0
-        for (j in 1..n) dtwPrev[j] = Double.POSITIVE_INFINITY
-        for (i in 1..n) {
-            dtwCurr[0] = Double.POSITIVE_INFINITY
-            for (j in 1..n) {
-                if (abs(i - j) > DTW_BAND_STEPS) {
-                    dtwCurr[j] = Double.POSITIVE_INFINITY
-                    continue
-                }
-                val err = wrapPi(observed[i - 1] - sigExp[j - 1])
-                val cost = err * err
-                var best = dtwPrev[j]
-                if (dtwCurr[j - 1] < best) best = dtwCurr[j - 1]
-                if (dtwPrev[j - 1] < best) best = dtwPrev[j - 1]
-                dtwCurr[j] = cost + best
-            }
-            for (j in 0..n) dtwPrev[j] = dtwCurr[j]
-        }
-        return dtwPrev[n]
-    }
 
     /**
      * Landmark confirm: hard anchor — every particle re-spreads uniform

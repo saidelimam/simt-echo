@@ -114,13 +114,13 @@ Evidence naming as 0003 §6: `./gradlew :shared:testAndroidHostTest --tests "<cl
 
 | ID | State | Slice | Tier | Lane | Depends on | Evidence |
 |---|---|---|---|---|---|---|
-| W15-01 | Queued | SimWorld + Monte-Carlo accuracy gate + GHOST baselines | F (S) | F | — | — |
-| W15-02 | Queued | Bundle perception v2.1 contract freeze (parallax, strips, leg σ) | S | A | — | — |
-| W15-03 | Queued | Frame Tap v2: dynamic duty, fan-out mux, intrinsics | S | G | — | — |
-| W15-04 | Queued | Generic `Dtw` extraction (copies 3 and 4 never made) | T (S) | C | — | — |
-| W15-05 | Queued | Pose mode + visual usability (hold angle, blur, texture, light) | T | G | W15-03 | — |
-| W16-01 | Queued | Visual flow kernel: pyramid, block SAD, de-rotation | S | G | W15-01, W15-03 | — |
-| W16-02 | Queued | Ego-motion fit: expansion, FOE, yaw residual, confidence | S | G | W16-01, W15-05 | — |
+| W15-01 | Complete | SimWorld + Monte-Carlo accuracy gate + GHOST baselines | F (S) | F | — | fb8c059a501981bbe8141836039b339a6cc57962 · test: ./gradlew :shared:testAndroidHostTest --tests app.simt.echo.sim.SimWorldTest --tests app.simt.echo.sim.MonteCarloGateTest --tests app.simt.echo.nav.GhostFilterTest --tests app.simt.echo.nav.NavigatorTest --tests app.simt.echo.nav.RelockTest :shared:simWorldFastBaseline :shared:simWorldFullBaseline |
+| W15-02 | Complete | Bundle perception v2.1 contract freeze (parallax, strips, leg σ) | S | A | — | e527028f82f35fc7ab04ea881bc528de735b801a · test: ./gradlew :shared:testAndroidHostTest --tests app.simt.echo.model.ModelJsonTest --tests app.simt.echo.model.ParallaxProfileTest --tests app.simt.echo.bundle.BundleCodecTest --tests app.simt.echo.transfer.ExportSelectionTest :shared:compileKotlinIosArm64 :shared:compileKotlinIosSimulatorArm64 |
+| W15-03 | Complete | Frame Tap v2: dynamic duty, fan-out mux, intrinsics | S | G | — | 24099f2518e50a6397b6d04f4183818134e16d6b · test: ./gradlew :shared:testAndroidHostTest --tests app.simt.echo.capture.FrameTapMuxTest --tests app.simt.echo.capture.FrameTapMuxAllocationTest --tests app.simt.echo.capture.FrameRateGovernorTest --tests app.simt.echo.capture.CameraIntrinsicsTest --tests app.simt.echo.platform.FrameTapAnalyzerTest --tests app.simt.echo.platform.FrameTapSourceTest --tests app.simt.echo.capture.RecordingLedgerTest --tests app.simt.echo.capture.CaptureSessionTest :shared:compileKotlinIosArm64 :shared:compileKotlinIosSimulatorArm64 |
+| W15-04 | Complete | Generic `Dtw` extraction (copies 3 and 4 never made) | T (S) | C | — | 0f1b287d6f0f1354b33957098b681948eff869cd · test: ./gradlew :shared:testAndroidHostTest --tests app.simt.echo.nav.DtwTest --tests app.simt.echo.nav.DtwAllocationTest --tests app.simt.echo.nav.MagneticMatchTest --tests app.simt.echo.nav.RelockTest --tests app.simt.echo.nav.GhostFilterTest --tests app.simt.echo.nav.NavigatorTest :shared:simWorldFastBaseline |
+| W15-05 | Complete | Pose mode + visual usability (hold angle, blur, texture, light) | T | G | W15-03 | 0c4fcc6084fb03b97796fe547f8dcad3ffb9964d · test: ./gradlew :shared:testAndroidHostTest --tests app.simt.echo.capture.visual.PoseModeTest --tests app.simt.echo.capture.visual.VisualUsabilityTest --tests app.simt.echo.capture.FrameQualityTest |
+| W16-01 | Complete | Visual flow kernel: pyramid, block SAD, de-rotation | S | G | W15-01, W15-03 | 18ea87c79b067c8d756aa8c03d1d635c22084fec · test: ./gradlew :shared:testAndroidHostTest --tests app.simt.echo.capture.visual.VisualFlowTest --tests app.simt.echo.capture.visual.VisualFlowAllocationTest --tests app.simt.echo.sim.SimPixelIntegrationTest --tests app.simt.echo.sim.SimWorldTest --tests app.simt.echo.capture.visual.VisualUsabilityTest :shared:simWorldFastBaseline :shared:compileKotlinIosArm64 :shared:compileKotlinIosSimulatorArm64 |
+| W16-02 | Complete | Ego-motion fit: expansion, FOE, yaw residual, confidence | S | G | W16-01, W15-05 | 91617e0e95d26ca45f0f47e72ce13eeae723708a · test: ./gradlew :shared:testAndroidHostTest --tests app.simt.echo.capture.visual.EgoMotionFitTest --tests app.simt.echo.capture.visual.EgoMotionFitAllocationTest --tests app.simt.echo.capture.visual.VisualUsabilityTest :shared:compileKotlinIosArm64 :shared:compileKotlinIosSimulatorArm64 |
 | W16-03 | Queued | Heading triangulation: visual gyro-bias, `correctedYaw` applied, travel-direction offset | S | H | W16-02 | — |
 | W16-04 | Queued | Visual step gate: phantom and missed steps | T (S) | H | W16-02 | — |
 | W16-05 | Queued | Android wiring: tap consumer, ring to nav thread, alloc/time proof | F (T) | G | W16-02, W15-03 | — |
@@ -163,7 +163,7 @@ Critical paths (staff first): `W15-03 → W16-01 → W16-02 → W17-01 → W17-0
 | `S/nav/ghost/*` and `Navigator.kt` | Lane C serial: W15-04 → W17-02 → W17-03 → W17-04 → W18-03 | Geometry-touching edits carry an S reviewer; no HTTP in `nav/` |
 | `S/capture/PdrEngine.kt`, `HeadingQuality.kt`, `AndroidImuSource` | W16-03 (S), then W16-04 | No other slice edits sensor maths |
 | New `S/capture/visual/*` (flow, fit, usability, scheduler) | Lane G: W15-05 → W16-01 → W16-02 → W16-05 | Pure kernels never import platform types |
-| `shared/src/commonTest/.../sim/*` | W15-01 | Later slices add scenarios by *new files*, never edit the generator |
+| `shared/src/commonTest/.../sim/*` | W15-01 | Later slices add scenarios by *new files*, never edit the generator; W16-01 scoped exception: pixel-footprint integration with independent edge-coverage/convergence regressions, preserving geometry, seeded materials and accuracy thresholds |
 | `docs/perf/accuracy-baseline.json` | W15-01 creates; updating it needs an S slice | A silent baseline edit is a BLOCK |
 | `EchoConfig` (`visualAssist`, `navigatorEngine`) | W16-05 adds `visualAssist`; W19-06 decides default | — |
 | Navigate screen and Settings consent surface | W19-01 | Visual-lock chip is read-only over the nav state |

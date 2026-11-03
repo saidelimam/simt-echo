@@ -188,4 +188,39 @@ class ModelJsonTest {
         val e = assertFailsWith<IllegalArgumentException> { big.validate() }
         assertTrue(e.message!!.contains("65536"), e.message)
     }
+
+    @Test
+    fun v20FixtureReadsWithoutParallaxInV21() {
+        val route = EchoJson.decodeFromString<EchoRoute>(EchoJson.encodeToString(Fixtures.V2_ROUTE))
+        assertEquals(2, route.schemaVersion)
+        assertNull(requireNotNull(route.perception).parallax)
+        assertEquals(Fixtures.V2_ROUTE.perception, route.perception)
+    }
+
+    @Test
+    fun v21RoundTripsWithoutChangingSchemaVersion() {
+        val route = ParallaxFixtures.route
+        val decoded = EchoJson.decodeFromString<EchoRoute>(EchoJson.encodeToString(route))
+        assertEquals(route, decoded)
+        assertEquals(2, decoded.schemaVersion)
+        assertEquals(ParallaxFixtures.profile, requireNotNull(decoded.perception).parallax)
+    }
+
+    @Test
+    fun v20ReaderIgnoresParallaxAndRetainsExistingPerception() {
+        val perception = requireNotNull(ParallaxFixtures.route.perception)
+        val viewed = EchoJson.decodeFromString<V20PerceptionView>(EchoJson.encodeToString(perception))
+        assertEquals(perception.fingerprints, viewed.fingerprints)
+        assertEquals(perception.waypointPrints, viewed.waypointPrints)
+        assertEquals(perception.magProfile, viewed.magProfile)
+        assertEquals(perception.sigilSeed, viewed.sigilSeed)
+        assertEquals(perception.health, viewed.health)
+    }
+
+    @Test
+    fun unknownParallaxVersionDecodesButIsNotUsed() {
+        val profile = ParallaxFixtures.profile.copy(parallaxVersion = 99)
+        val decoded = EchoJson.decodeFromString<ParallaxProfile>(EchoJson.encodeToString(profile))
+        assertFalse(decoded.compatibleWith(profile.estimatorId))
+    }
 }

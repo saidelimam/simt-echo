@@ -101,10 +101,11 @@ object MagneticMatch {
 
         val candidates = refMag.size - m + 1
         val costs = DoubleArray(candidates)
+        val scratch = Dtw.Scratch(m)
         for (j in 0 until candidates) {
             val rMag = zeroMean(refMag, j, m)
             val rVert = zeroMean(refVert, j, m)
-            costs[j] = dtwMeanCost(qMag, qVert, rMag, rVert)
+            costs[j] = dtwMeanCost(qMag, qVert, rMag, rVert, scratch)
         }
         var best = 0
         for (j in 1 until candidates) if (costs[j] < costs[best]) best = j
@@ -132,50 +133,15 @@ object MagneticMatch {
         qVert: DoubleArray,
         rMag: DoubleArray,
         rVert: DoubleArray,
+        scratch: Dtw.Scratch = Dtw.Scratch(qMag.size),
     ): Double {
         val m = qMag.size
         val band = max(1, (BAND_FRAC * m).roundToInt())
-        val inf = Double.POSITIVE_INFINITY
-        var prev = DoubleArray(m + 1) { inf }
-        var curr = DoubleArray(m + 1) { inf }
-        var prevLen = IntArray(m + 1)
-        var currLen = IntArray(m + 1)
-        prev[0] = 0.0
-        prevLen[0] = 0
-        for (i in 1..m) {
-            curr[0] = inf
-            val klo = max(1, i - band)
-            val khi = minOf(m, i + band)
-            for (k in 1..m) {
-                if (k < klo || k > khi) {
-                    curr[k] = inf
-                    continue
-                }
-                val dm = qMag[i - 1] - rMag[k - 1]
-                val dv = qVert[i - 1] - rVert[k - 1]
-                val local = dm * dm + dv * dv
-                var bestPrev = prev[k]
-                var bestLen = prevLen[k]
-                if (curr[k - 1] < bestPrev) {
-                    bestPrev = curr[k - 1]
-                    bestLen = currLen[k - 1]
-                }
-                if (prev[k - 1] < bestPrev) {
-                    bestPrev = prev[k - 1]
-                    bestLen = prevLen[k - 1]
-                }
-                curr[k] = if (bestPrev.isInfinite()) inf else bestPrev + local
-                currLen[k] = if (bestPrev.isInfinite()) 0 else bestLen + 1
-            }
-            val tmp = prev
-            prev = curr
-            curr = tmp
-            val tmpLen = prevLen
-            prevLen = currLen
-            currLen = tmpLen
+        return Dtw.distance(m, m, band, scratch, mean = true) { i, j ->
+            val dm = qMag[i] - rMag[j]
+            val dv = qVert[i] - rVert[j]
+            dm * dm + dv * dv
         }
-        if (prev[m].isInfinite() || prevLen[m] == 0) return inf
-        return prev[m] / prevLen[m]
     }
 
     private fun zeroMean(series: DoubleArray): DoubleArray {

@@ -7,6 +7,7 @@ import app.simt.echo.model.EchoJson
 import app.simt.echo.model.EchoSchemaVersion
 import app.simt.echo.model.EmbeddedPrint
 import app.simt.echo.model.PrivacyInfo
+import app.simt.echo.model.ParallaxFixtures
 import app.simt.echo.model.WaypointPrint
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.encodeToString
@@ -16,6 +17,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.TimeSource
+import kotlin.io.encoding.Base64
 
 /** W2-02 gate: container, seal/open, tamper, wrong key, expiry. */
 class BundleCodecTest {
@@ -173,5 +175,35 @@ class BundleCodecTest {
             BundleCodec.encode(route, assets)
         }
         assertTrue(e.message!!.contains("65536"), e.message)
+    }
+
+    @Test
+    fun parallaxInheritsSealingAndExpiry() = runTest {
+        val route = ParallaxFixtures.route.copy(privacy = PrivacyInfo(expiresAtEpochMs = 1_000L))
+        val container = BundleCodec.encode(route, assets)
+        assertEquals(route, BundleCodec.open(container).getOrThrow().route)
+        val (sealed, key) = BundleCodec.seal(container)
+        assertEquals(route, BundleCodec.open(sealed, key, nowMs = 999L).getOrThrow().route)
+        assertEquals(BundleError.NEEDS_KEY, errorOf(BundleCodec.open(sealed)))
+        assertEquals(BundleError.EXPIRED, errorOf(BundleCodec.open(sealed, key, nowMs = 1_000L)))
+    }
+
+    @Test
+    fun parallaxSizeCountsTowardWholePerceptionCap() = runTest {
+        val profile = ParallaxFixtures.profile.copy(
+            inverseDepth = Base64.encode(ByteArray(30_000)),
+            trackability = Base64.encode(ByteArray(30_000)),
+        )
+        val route = ParallaxFixtures.route.copy(
+            perception = requireNotNull(ParallaxFixtures.route.perception).copy(parallax = profile),
+        )
+        val error = assertFailsWith<IllegalArgumentException> { BundleCodec.encode(route, assets) }
+        assertTrue(requireNotNull(error.message).contains("65536"))
+    }
+
+    @Test
+    fun parallaxSigmaCountIsCheckedAgainstRouteOnEncode() = runTest {
+        val route = ParallaxFixtures.route.copy(legs = emptyList())
+        assertFailsWith<IllegalArgumentException> { BundleCodec.encode(route, assets) }
     }
 }
