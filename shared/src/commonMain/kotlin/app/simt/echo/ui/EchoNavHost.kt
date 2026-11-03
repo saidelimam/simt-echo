@@ -32,6 +32,8 @@ import app.simt.echo.platform.rememberFileSharing
 import app.simt.echo.platform.rememberHaptics
 import app.simt.echo.platform.rememberMediaTools
 import app.simt.echo.platform.rememberMotionSource
+import app.simt.echo.platform.rememberNfcPairingController
+import app.simt.echo.platform.rememberNfcSettingsOpener
 import app.simt.echo.ui.atmosphere.cosmosMotionTier
 import app.simt.echo.ui.motion.LocalEchoDestinationScope
 import app.simt.echo.ui.motion.LocalEchoSharedScope
@@ -216,6 +218,10 @@ fun EchoNavHost(
                 sharing = rememberFileSharing(),
                 onClose = { navController.popBackStack() },
                 sigil = remember(route.routeId) { graph.routeRepository.get(route.routeId)?.let(::routeSigil) },
+                // Route-scoped NFC: the controller lives as long as this
+                // destination and is closed when it leaves.
+                pairing = rememberNfcPairingController(),
+                onOpenNfcSettings = rememberNfcSettingsOpener(),
             )
         }
         echoDestination<EchoRoute.Receive> {
@@ -224,6 +230,8 @@ fun EchoNavHost(
                 service = graph.transferService,
                 sharing = rememberFileSharing(),
                 onImported = { navController.navigateTo(EchoRoute.RouteDetail(it)) },
+                pairing = rememberNfcPairingController(),
+                onOpenNfcSettings = rememberNfcSettingsOpener(),
             )
         }
         echoDestination<EchoRoute.Align> { entry ->

@@ -83,7 +83,10 @@ import kotlin.test.assertTrue
  *   fixed dp box) with the reticle motif.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36], manifest = Config.NONE, shadows = [HostTestResourcesShadow::class])
+// A phone-sized window (Robolectric defaults to a 320x470 screen): Share now
+// stacks a selector, the pairing surface and the QR, and the read-order and
+// scroll assertions describe what a real screen shows, not a clipped fragment.
+@Config(sdk = [36], manifest = Config.NONE, shadows = [HostTestResourcesShadow::class], qualifiers = "w411dp-h891dp")
 class ProcessingShareReceiveCosmosTest {
 
     private val activityRule = RobolectricActivityRule()

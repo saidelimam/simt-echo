@@ -42,7 +42,9 @@ import kotlin.coroutines.EmptyCoroutineContext
  * file's perception opt-in is off by default and reachable (switch role).
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36], manifest = Config.NONE, shadows = [HostTestResourcesShadow::class])
+// Phone-sized window: Share stacks a method selector and the pairing surface
+// above the export preview, so the preview lives below a 470 dp fragment.
+@Config(sdk = [36], manifest = Config.NONE, shadows = [HostTestResourcesShadow::class], qualifiers = "w411dp-h891dp")
 class SharePerceptionDisclosureUiTest {
 
     private val activityRule = RobolectricActivityRule()

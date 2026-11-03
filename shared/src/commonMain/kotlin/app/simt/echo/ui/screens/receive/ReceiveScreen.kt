@@ -18,6 +18,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -25,12 +26,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import app.simt.echo.platform.CameraPermissionGate
 import app.simt.echo.platform.FileSharing
+import app.simt.echo.platform.NfcPairingController
 import app.simt.echo.platform.QrScannerView
+import app.simt.echo.platform.UnavailableNfcPairingController
+import app.simt.echo.transfer.PairingMethod
+import app.simt.echo.transfer.PairingRole
 import app.simt.echo.transfer.TransferService
 import app.simt.echo.ui.atmosphere.CanopyPanel
 import app.simt.echo.ui.atmosphere.CanopyVariant
@@ -38,8 +45,13 @@ import app.simt.echo.ui.components.CosmosErrorState
 import app.simt.echo.ui.components.CosmosPrimaryButton
 import app.simt.echo.ui.components.CosmosSecondaryButton
 import app.simt.echo.ui.components.CosmosSuccessState
+import app.simt.echo.ui.components.NfcTapPanel
+import app.simt.echo.ui.components.PairingLifecycle
+import app.simt.echo.ui.components.PairingMethodSelector
 import app.simt.echo.ui.components.TransferParticles
 import app.simt.echo.ui.components.oneDecimal
+import app.simt.echo.ui.components.pairingFailureCopy
+import app.simt.echo.ui.copy.PairingCopy
 import app.simt.echo.ui.copy.UNTITLED_WALK
 import app.simt.echo.ui.copy.expiryCopy
 import app.simt.echo.ui.sigil.RouteSigil
@@ -47,19 +59,21 @@ import app.simt.echo.ui.theme.EchoExtras
 import app.simt.echo.ui.theme.EchoSpace12
 import app.simt.echo.ui.theme.EchoSpace16
 import app.simt.echo.ui.theme.EchoSpace24
+import app.simt.echo.ui.theme.EchoSpace8
 
 const val ReceiveScannerTag = "ReceiveScanner"
 const val ReceiveReticleTag = "ReceiveReticle"
 const val ReceiveImportSheetTag = "ReceiveImportSheet"
 
 /**
- * Receive screen in Cosmos (plan §8.3 / W2-04, slice W8-09): a full-bleed
- * scanner surface with the reticle motif, fetch spinner, then the import
- * sheet (name, length, landmarks, creator, expiry) as a canopy sheet —
- * no dialog windows. "Import file" (W2-07) feeds a picked plain `.echo`
- * into the same sheet.
+ * Receive screen in Cosmos (plan §8.3 / W2-04, slices W8-09 and W21-03).
  *
- * Presentation only: scan/fetch/save ViewModel behaviour is untouched.
+ * The method selector sits above everything — including the camera gate, so
+ * it stays available when the camera is denied. QR is the default and keeps
+ * the full-bleed scanner with the reticle motif; choosing NFC disposes the
+ * scanner and puts the tap panel in its place, with no camera permission
+ * involved at all. Either source ends in the same verified import canopy and
+ * the same explicit Save.
  *
  * W8-05: the shell owns the Receive heading and the Close chrome.
  */
@@ -69,9 +83,21 @@ fun ReceiveScreen(
     sharing: FileSharing,
     onImported: (String) -> Unit,
     modifier: Modifier = Modifier,
+    /** Route-scoped NFC controller; null keeps the honest unavailable one. */
+    pairing: NfcPairingController? = null,
+    /** Opens the system NFC settings screen (never toggles the adapter). */
+    onOpenNfcSettings: () -> Unit = {},
 ) {
-    val viewModel = remember(service, sharing) { ReceiveViewModel(service, sharing) }
+    val controller = pairing ?: remember { UnavailableNfcPairingController() }
+    val viewModel = remember(service, sharing, controller) {
+        ReceiveViewModel(service, sharing, pairing = controller)
+    }
     val ui by viewModel.ui.collectAsState()
+    PairingLifecycle(
+        onResume = viewModel::onResumed,
+        onPause = viewModel::onPaused,
+        onDispose = viewModel::close,
+    )
 
     Column(
         modifier = modifier
@@ -81,48 +107,85 @@ fun ReceiveScreen(
         verticalArrangement = Arrangement.spacedBy(EchoSpace16),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        PairingMethodSelector(
+            role = PairingRole.RECEIVE,
+            selected = ui.method,
+            enabled = !ui.methodLocked,
+            onSelect = viewModel::selectMethod,
+            modifier = Modifier.fillMaxWidth(),
+        )
         val savedId = ui.savedRouteId
         val preview = ui.preview
         when {
-            savedId != null -> {
-                CosmosSuccessState(
-                    title = "Received ✓",
-                    actionLabel = "Open route",
-                    onAction = { onImported(savedId) },
+            savedId != null -> CosmosSuccessState(
+                title = "Received ✓",
+                actionLabel = "Open route",
+                onAction = { onImported(savedId) },
+            )
+
+            preview != null -> Column(
+                verticalArrangement = Arrangement.spacedBy(EchoSpace8),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                // The selected method stays visible above the sheet: what
+                // arrived is indented under how it arrived.
+                MethodIndicator(method = ui.method)
+                ImportSheet(
+                    preview = preview,
+                    onSave = { viewModel.save(onImported) },
+                    onCancel = viewModel::cancel,
                 )
             }
 
-            preview != null -> ImportSheet(
-                preview = preview,
-                onSave = { viewModel.save(onImported) },
-                onRescan = viewModel::rescan,
-            )
-
             else -> {
                 if (!ui.fetching) {
-                    CameraPermissionGate {
-                        ReceiveScannerFrame(modifier = Modifier.fillMaxWidth()) {
-                            androidx.compose.runtime.key(ui.generation) {
-                                QrScannerView(
-                                    onScanned = viewModel::onScanned,
-                                    modifier = Modifier.fillMaxSize(),
-                                )
+                    when (ui.method) {
+                        PairingMethod.QR -> {
+                            // The gate wraps only QR capture: NFC never asks
+                            // for the camera.
+                            CameraPermissionGate {
+                                ReceiveScannerFrame(modifier = Modifier.fillMaxWidth()) {
+                                    key(ui.generation) {
+                                        QrScannerView(
+                                            onScanned = viewModel::onScanned,
+                                            modifier = Modifier.fillMaxSize(),
+                                        )
+                                    }
+                                }
                             }
+                            Text(
+                                text = PairingCopy.RECEIVE_SCAN_PROMPT,
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
                         }
+
+                        PairingMethod.NFC -> NfcTapPanel(
+                            role = PairingRole.RECEIVE,
+                            readiness = ui.nfcReadiness,
+                            listening = ui.nfcListening,
+                            tapRead = false,
+                            failure = ui.pairingFailure,
+                            onOpenNfcSettings = onOpenNfcSettings,
+                            onUseQrInstead = { viewModel.selectMethod(PairingMethod.QR) },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
+                }
+                if (ui.method == PairingMethod.QR) {
                     Text(
-                        text = "Scan the other phone's QR",
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                    CosmosSecondaryButton(
-                        label = "Import file",
-                        onClick = viewModel::importFile,
-                        modifier = Modifier.fillMaxWidth(),
+                        text = PairingCopy.RECEIVE_CHOOSE_NFC,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 if (ui.fetching) {
                     CircularProgressIndicator()
-                    Text(text = "Fetching…", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        text = PairingCopy.RECEIVE_FETCHING,
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                    )
                     // W13-14: particle flow between the two phones, driven
                     // only by measured bytes — frozen until bytes arrive.
                     val progress = ui.progress
@@ -138,13 +201,44 @@ fun ReceiveScreen(
                 if (error != null) {
                     CosmosErrorState(
                         message = error,
-                        actionLabel = "Scan again",
+                        actionLabel = PairingCopy.RECEIVE_SCAN_AGAIN,
                         onAction = viewModel::rescan,
                     )
+                } else if (ui.method == PairingMethod.QR) {
+                    // A rejected invitation is not network advice: it keeps
+                    // its own typed copy, and retry stays in this method.
+                    ui.pairingFailure?.let { failure ->
+                        Text(
+                            text = pairingFailureCopy(PairingRole.RECEIVE, failure),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
                 }
+                CosmosSecondaryButton(
+                    label = PairingCopy.RECEIVE_IMPORT_FILE,
+                    onClick = viewModel::importFile,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    text = PairingCopy.SAME_NETWORK,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
+}
+
+/** One line naming how this route is arriving (plan 0005 §2). */
+@Composable
+private fun MethodIndicator(method: PairingMethod) {
+    Text(
+        text = if (method == PairingMethod.NFC) "NFC · Tap phones" else "QR · Scan code",
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.semantics { heading() },
+    )
 }
 
 /**
@@ -180,45 +274,45 @@ internal fun ReceiveScannerFrame(
                     .fillMaxSize()
                     .testTag(ReceiveReticleTag),
             ) {
-            val arm = 28.dp.toPx()
-            val inset = 12.dp.toPx()
-            val stroke = 3.dp.toPx()
-            val w = size.width
-            val h = size.height
-            // Four L-shaped corner marks; pairs share the live channel so
-            // the frame state never rides on hue alone (marks + border).
-            val corners = listOf(
-                Offset(inset, inset) to Pair(1f, 1f),
-                Offset(w - inset, inset) to Pair(-1f, 1f),
-                Offset(inset, h - inset) to Pair(1f, -1f),
-                Offset(w - inset, h - inset) to Pair(-1f, -1f),
-            )
-            corners.forEach { (origin, dir) ->
-                drawLine(
-                    color = live,
-                    start = origin,
-                    end = origin + Offset(dir.first * arm, 0f),
-                    strokeWidth = stroke,
-                    cap = StrokeCap.Round,
+                val arm = 28.dp.toPx()
+                val inset = 12.dp.toPx()
+                val stroke = 3.dp.toPx()
+                val w = size.width
+                val h = size.height
+                // Four L-shaped corner marks; pairs share the live channel so
+                // the frame state never rides on hue alone (marks + border).
+                val corners = listOf(
+                    Offset(inset, inset) to Pair(1f, 1f),
+                    Offset(w - inset, inset) to Pair(-1f, 1f),
+                    Offset(inset, h - inset) to Pair(1f, -1f),
+                    Offset(w - inset, h - inset) to Pair(-1f, -1f),
                 )
-                drawLine(
-                    color = live,
-                    start = origin,
-                    end = origin + Offset(0f, dir.second * arm),
-                    strokeWidth = stroke,
-                    cap = StrokeCap.Round,
-                )
+                corners.forEach { (origin, dir) ->
+                    drawLine(
+                        color = live,
+                        start = origin,
+                        end = origin + Offset(dir.first * arm, 0f),
+                        strokeWidth = stroke,
+                        cap = StrokeCap.Round,
+                    )
+                    drawLine(
+                        color = live,
+                        start = origin,
+                        end = origin + Offset(0f, dir.second * arm),
+                        strokeWidth = stroke,
+                        cap = StrokeCap.Round,
+                    )
+                }
             }
         }
     }
-}
 }
 
 @Composable
 private fun ImportSheet(
     preview: ImportPreview,
     onSave: () -> Unit,
-    onRescan: () -> Unit,
+    onCancel: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     CanopyPanel(
@@ -264,8 +358,16 @@ private fun ImportSheet(
                     style = MaterialTheme.typography.bodyLarge,
                 )
             }
-            CosmosPrimaryButton(label = "Save", onClick = onSave, modifier = Modifier.fillMaxWidth())
-            CosmosSecondaryButton(label = "Scan again", onClick = onRescan, modifier = Modifier.fillMaxWidth())
+            CosmosPrimaryButton(
+                label = PairingCopy.RECEIVE_SAVE,
+                onClick = onSave,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            CosmosSecondaryButton(
+                label = PairingCopy.RECEIVE_CANCEL,
+                onClick = onCancel,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
     }
 }

@@ -7,20 +7,16 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -30,52 +26,48 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import app.simt.echo.platform.FileSharing
 import app.simt.echo.platform.Haptics
-import app.simt.echo.transfer.ExpiryOption
-import app.simt.echo.transfer.ExportItem
-import app.simt.echo.transfer.ExportSelection
-import app.simt.echo.transfer.ExportSummary
+import app.simt.echo.platform.NfcPairingController
+import app.simt.echo.platform.UnavailableNfcPairingController
 import app.simt.echo.transfer.FILE_PERCEPTION_OPT_IN_LABEL
-import app.simt.echo.transfer.LANDMARK_TEXT_DISCLOSURE
-import app.simt.echo.transfer.PERCEPTION_DISCLOSURE
-import app.simt.echo.transfer.START_PHOTO_ITEM_ID
+import app.simt.echo.transfer.NfcReadiness
+import app.simt.echo.transfer.PairingMethod
+import app.simt.echo.transfer.PairingRole
 import app.simt.echo.transfer.TransferService
 import app.simt.echo.ui.atmosphere.CanopyPanel
 import app.simt.echo.ui.atmosphere.CanopyVariant
 import app.simt.echo.ui.components.CosmosPrimaryButton
 import app.simt.echo.ui.components.CosmosSecondaryButton
-import app.simt.echo.ui.components.CosmosTertiaryButton
+import app.simt.echo.ui.components.NfcTapPanel
+import app.simt.echo.ui.components.PairingLifecycle
+import app.simt.echo.ui.components.PairingMethodSelector
 import app.simt.echo.ui.components.StatusChip
 import app.simt.echo.ui.components.TransferParticles
-import app.simt.echo.ui.copy.UNTITLED_WALK
-import app.simt.echo.ui.copy.createdCopy
-import app.simt.echo.ui.copy.expiryCopy
+import app.simt.echo.ui.copy.PairingCopy
 import app.simt.echo.ui.sigil.SigilGeometry
-import app.simt.echo.ui.theme.EchoSpace12
 import app.simt.echo.ui.theme.EchoSpace16
 import app.simt.echo.ui.theme.EchoSpace24
 import app.simt.echo.ui.theme.EchoSpace8
 
 const val ShareQrTag = "ShareQr"
 const val ShareQrImageTag = "ShareQrImage"
-const val ShareExportSectionTag = "ShareExportSection"
-const val ShareExportToggleTag = "ShareExportToggle"
-const val SharePerceptionDisclosureTag = "SharePerceptionDisclosure"
 const val ShareFilePerceptionTag = "ShareFilePerception"
 
 /**
- * Share screen in Cosmos (plan §8.3 / W2-04, slice W8-09): the QR is the
- * first read — the QR card on its light surface at the frozen ≥260 dp size —
- * with the export preview collapsed into a canopy section below it.
- * "Waiting for the other phone…" until the peer downloads, then "Sent ✓".
- * "Share as file" (W2-07) raises the plain-file privacy warning first and
- * only writes the `.echo` container after confirmation. Serving stops when
- * the screen leaves.
+ * Share screen in Cosmos (plan §8.3 / W2-04, slices W8-09 and W21-03).
+ *
+ * The method selector comes first, then the surface that method actually
+ * uses: the tap panel for NFC, the high-contrast QR for QR. Both encode the
+ * same sealed invitation, so switching never re-seals what is on offer.
+ * Share opens in NFC (plan 0005 §1); a phone that cannot present shows the
+ * QR it can still use, with the recovery that says why.
+ *
+ * "What others receive" and every export/perception control stay directly
+ * below the pairing surface. "Share as file" (W2-07) raises the plain-file
+ * privacy warning first and only writes the `.echo` container after
+ * confirmation. Serving stops when the screen leaves.
  *
  * Presentation only: offer/selection/relay/file ViewModel behaviour is
- * untouched — only the read order and surfaces moved.
- *
- * W8-05: the shell owns the Share heading and the Close chrome — [onClose]
- * stays for hosts that render this screen outside the shell.
+ * owned by [ShareViewModel]; this screen renders it.
  */
 @Composable
 fun ShareScreen(
@@ -85,17 +77,28 @@ fun ShareScreen(
     sharing: FileSharing,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
-    /** The route's sigil for the QR centre (W13-07); null shows a plain code. */
+    /** The route's sigil for the QR centre and the tap panel (W13-07). */
     sigil: SigilGeometry? = null,
+    /** Route-scoped NFC controller; null keeps the honest unavailable one. */
+    pairing: NfcPairingController? = null,
+    /** Opens the system NFC settings screen (never toggles the adapter). */
+    onOpenNfcSettings: () -> Unit = {},
 ) {
-    val viewModel = remember(routeId, sharing) {
-        ShareViewModel(routeId, service, haptics, sharing)
+    val controller = pairing ?: remember { UnavailableNfcPairingController() }
+    val viewModel = remember(routeId, sharing, controller) {
+        ShareViewModel(routeId, service, haptics, sharing, pairing = controller)
     }
     val ui by viewModel.ui.collectAsState()
-    DisposableEffect(viewModel) {
-        onDispose { viewModel.stop() }
-    }
+    // NFC only runs while this screen is resumed; disposal ends the visit
+    // so a late callback cannot republish a replaced offer.
+    PairingLifecycle(
+        onResume = viewModel::onResumed,
+        onPause = viewModel::onPaused,
+        onDispose = viewModel::close,
+    )
 
+    val qrUri = ui.qrUri
+    val nfcUnavailable = ui.nfcReadiness == NfcReadiness.UNAVAILABLE
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -104,9 +107,33 @@ fun ShareScreen(
         verticalArrangement = Arrangement.spacedBy(EchoSpace16),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        // First read: the QR on its light surface, at the frozen size.
-        val qrUri = ui.qrUri
-        if (qrUri != null) {
+        PairingMethodSelector(
+            role = PairingRole.SHARE,
+            selected = ui.method,
+            enabled = true,
+            onSelect = viewModel::selectMethod,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (ui.method == PairingMethod.NFC) {
+            NfcTapPanel(
+                role = PairingRole.SHARE,
+                readiness = ui.nfcReadiness,
+                listening = ui.readyToTap,
+                tapRead = ui.tapRead,
+                failure = ui.tapFailure,
+                onOpenNfcSettings = onOpenNfcSettings,
+                onUseQrInstead = { viewModel.selectMethod(PairingMethod.QR) },
+                sigil = sigil,
+                modifier = Modifier.fillMaxWidth(),
+                // A phone that cannot present gets the short form: the code
+                // it can serve stays visible instead of sitting under a
+                // panel for a tap that could never happen.
+                compact = nfcUnavailable,
+            )
+        }
+        // QR is the sibling surface in QR mode, and the honest fallback on a
+        // phone whose NFC cannot present at all.
+        if (qrUri != null && (ui.method == PairingMethod.QR || nfcUnavailable)) {
             ShareQrCode(
                 qrUri = qrUri,
                 listening = !ui.sent && ui.error == null,
@@ -115,8 +142,7 @@ fun ShareScreen(
                 modifier = Modifier.testTag(ShareQrTag),
             )
         }
-        // Collapsed by default: the preview no longer buries the QR.
-        ExportSection(
+        ShareExportSection(
             items = ui.exportItems,
             selection = ui.selection,
             summary = ui.summary,
@@ -132,9 +158,9 @@ fun ShareScreen(
                 color = MaterialTheme.colorScheme.error,
             )
 
-            ui.sent -> StatusChip(text = "Sent ✓")
-            qrUri != null -> StatusChip(text = "Waiting for the other phone…")
-            else -> StatusChip(text = "Starting offer…")
+            ui.sent -> StatusChip(text = PairingCopy.SHARE_DOWNLOADED)
+            qrUri != null -> StatusChip(text = PairingCopy.SHARE_WAITING)
+            else -> StatusChip(text = PairingCopy.SHARE_STARTING)
         }
         // W13-14: particle flow between the two phones, driven only by
         // measured bytes — frozen until the first byte moves.
@@ -148,11 +174,18 @@ fun ShareScreen(
         }
         if (error != null && qrUri == null) {
             CosmosPrimaryButton(
-                label = "Try again",
+                label = PairingCopy.SHARE_TRY_AGAIN,
                 onClick = viewModel::retryOffer,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
+        Text(
+            text = PairingCopy.SAME_NETWORK + " " + PairingCopy.MATCHING_MODE,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        // Relay is a network option, not a third pairing tab, and it only
+        // appears when this backend can actually carry a peer's route.
         if (ui.relayAvailable && !ui.relayOffered && qrUri != null) {
             CosmosPrimaryButton(
                 label = "Use internet relay",
@@ -177,6 +210,7 @@ fun ShareScreen(
                     Text(
                         text = "Share as file?",
                         style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.semantics { heading() },
                     )
                     Text(
                         text = FILE_WARNING_COPY,
@@ -206,7 +240,7 @@ fun ShareScreen(
         }
         if (!ui.fileShared) {
             CosmosSecondaryButton(
-                label = "Share as file",
+                label = PairingCopy.SHARE_AS_FILE,
                 onClick = viewModel::requestFileShare,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -241,203 +275,4 @@ private fun FilePerceptionOptIn(
         )
         Switch(checked = include, onCheckedChange = null)
     }
-}
-
-/**
- * Export preview as a collapsed canopy section (plan W3-08): one honest
- * summary line while collapsed, the full asset toggles + link-expiry
- * selector when opened. Inline, not a dialog.
- */
-@Composable
-private fun ExportSection(
-    items: List<ExportItem>,
-    selection: ExportSelection,
-    summary: ExportSummary?,
-    onToggle: (String, Boolean) -> Unit,
-    onExpiry: (ExpiryOption) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    var open by remember { mutableStateOf(false) }
-    CanopyPanel(
-        variant = CanopyVariant.Flat,
-        modifier = modifier.testTag(ShareExportSectionTag),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(EchoSpace16),
-            verticalArrangement = Arrangement.spacedBy(EchoSpace8),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "What others receive",
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier
-                        .weight(1f)
-                        .semantics { heading() },
-                )
-                CosmosTertiaryButton(
-                    label = if (open) "Hide details" else "Show details",
-                    onClick = { open = !open },
-                    modifier = Modifier.testTag(ShareExportToggleTag),
-                )
-            }
-            if (!open) {
-                Text(
-                    text = collapsedSummary(summary, items.size),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            } else {
-                ExportPreview(
-                    items = items,
-                    selection = selection,
-                    summary = summary,
-                    onToggle = onToggle,
-                    onExpiry = onExpiry,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-        }
-    }
-}
-
-private fun collapsedSummary(summary: ExportSummary?, itemCount: Int): String {
-    if (summary == null) return if (itemCount == 0) "Loading export…" else "$itemCount items"
-    val name = summary.routeName.ifEmpty { UNTITLED_WALK }
-    return "$name · ${summary.nodeCount} nodes · ${summary.landmarkCountText()}"
-}
-
-private fun ExportSummary.landmarkCountText(): String {
-    val n = landmarks.size
-    return if (n == 1) "1 landmark" else "$n landmarks"
-}
-
-/**
- * Export preview rows (plan W3-08): every asset the bundle will hold,
- * with a toggle each, plus the link-expiry selector.
- */
-@Composable
-private fun ExportPreview(
-    items: List<ExportItem>,
-    selection: ExportSelection,
-    summary: ExportSummary?,
-    onToggle: (String, Boolean) -> Unit,
-    onExpiry: (ExpiryOption) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(EchoSpace8),
-    ) {
-        if (summary != null) {
-            Text(
-                text = "${summary.routeName.ifEmpty { UNTITLED_WALK }} · by ${summary.creatorLabel} · " +
-                    createdCopy(summary.createdAtEpochMs),
-                style = MaterialTheme.typography.bodyLarge,
-            )
-            Text(
-                text = "${summary.nodeCount} nodes · ${summary.pathPointCount} path points · ${summary.totalLengthM} m",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Text(text = "Start: ${summary.startDescription}", style = MaterialTheme.typography.bodyMedium)
-            Text(
-                text = if (summary.hasAlignmentHint) "Alignment hint included" else "No alignment hint",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Text(
-                text = if (summary.hasStartPhoto) "Start photo included" else "Start photo not included",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            summary.landmarks.forEach { landmark ->
-                Text(
-                    text = "Landmark: ${landmark.title} — ${landmark.cue}" +
-                        (landmark.signText?.let { " · sign: $it" } ?: "") +
-                        when {
-                            !landmark.hasCrop -> " · text only"
-                            landmark.cropIncluded -> " · photo included"
-                            else -> " · photo off, text still included"
-                        },
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
-            Text(text = LANDMARK_TEXT_DISCLOSURE, style = MaterialTheme.typography.bodyMedium)
-            if (summary.hasPerception) {
-                Text(
-                    text = PERCEPTION_DISCLOSURE,
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.testTag(SharePerceptionDisclosureTag),
-                )
-            }
-            summary.ai?.let { ai ->
-                Text(
-                    text = "AI suggestions included (${ai.scoutModel} / ${ai.groundModel})",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
-            Text(
-                text = expiryCopy(summary.expiresAtEpochMs),
-                style = MaterialTheme.typography.bodyMedium,
-            )
-        }
-        items.forEach { item ->
-            val included = if (item.id == START_PHOTO_ITEM_ID) {
-                selection.includeStartPhoto
-            } else {
-                item.id !in selection.excludedCropIds
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(EchoSpace8),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(text = item.label, style = MaterialTheme.typography.bodyLarge)
-                    if (item.privacyRisk) {
-                        Text(
-                            text = "May show people or screens — off by default",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                    }
-                }
-                Switch(checked = included, onCheckedChange = { onToggle(item.id, it) })
-            }
-        }
-        Text(
-            text = "Link expires",
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.semantics { heading() },
-        )
-        val expiryOptions = buildList {
-            if (selection.expiry == ExpiryOption.KEEP_STORED) add(ExpiryOption.KEEP_STORED)
-            add(ExpiryOption.NONE)
-            add(ExpiryOption.HOURS_24)
-            add(ExpiryOption.DAYS_7)
-        }
-        expiryOptions.forEach { option ->
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(EchoSpace8),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                RadioButton(
-                    selected = selection.expiry == option,
-                    onClick = { onExpiry(option) },
-                )
-                Text(text = expiryLabel(option), style = MaterialTheme.typography.bodyLarge)
-            }
-        }
-        Text(text = RAW_VIDEO_NOTE, style = MaterialTheme.typography.bodyMedium)
-    }
-}
-
-private fun expiryLabel(option: ExpiryOption): String = when (option) {
-    ExpiryOption.NONE -> "Never"
-    ExpiryOption.HOURS_24 -> "After 24 hours"
-    ExpiryOption.DAYS_7 -> "After 7 days"
-    ExpiryOption.KEEP_STORED -> "Keep existing expiry"
 }
