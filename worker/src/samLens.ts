@@ -56,8 +56,11 @@ export type StepRunner = <T extends Rpc.Serializable<T>>(
 /** Direct execution (tests, non-Workflow callers): steps run inline. */
 export const inlineRunner: StepRunner = (_name, fn) => fn();
 
-/** Emits one job event inside its own step: a replay returns the recorded
- * step instead of emitting a duplicate under a fresh event id. */
+/** Emits one job event inside its own step. The id is minted before the
+ * step runs (R9-08, review 0009 F7): a step retry after a successful
+ * put re-records the same event under the same id instead of a
+ * duplicate under a fresh one, and a Workflow replay returns the
+ * recorded step without emitting at all. */
 export function emitStep(
   runner: StepRunner,
   env: Env,
@@ -65,8 +68,9 @@ export function emitStep(
   name: string,
   build: (id: string) => JobEvent,
 ): Promise<void> {
+  const id = newEventId();
   return runner(name, async () => {
-    await emitJobEvent(env, jobId, build(newEventId()));
+    await emitJobEvent(env, jobId, build(id));
   });
 }
 

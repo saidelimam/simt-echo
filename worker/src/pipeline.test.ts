@@ -355,8 +355,20 @@ describe("EchoPipeline lens phase (W11-06)", () => {
     expect(out.usage.budgetExhausted).toBe(false);
 
     const events = await readJobEvents(env, "job1");
-    expect(events.map((e) => e.type)).toEqual(["stage", "checkpoint", "usage", "complete"]);
-    const checkpoint = events[1];
+    // One of each event; chronological across milliseconds is contract,
+    // same-millisecond order is not (R9-08: the id's tiebreak is random).
+    expect(events.map((e) => e.type).sort()).toEqual([
+      "checkpoint",
+      "complete",
+      "stage",
+      "usage",
+    ]);
+    const ts = (id: string) => parseInt(id.slice(0, id.indexOf("-")), 36);
+    const byType = Object.fromEntries(events.map((e) => [e.type, e]));
+    expect(ts(byType["stage"].id)).toBeLessThanOrEqual(ts(byType["checkpoint"].id));
+    expect(ts(byType["checkpoint"].id)).toBeLessThanOrEqual(ts(byType["usage"].id));
+    expect(ts(byType["usage"].id)).toBeLessThanOrEqual(ts(byType["complete"].id));
+    const checkpoint = byType["checkpoint"];
     expect(checkpoint).toMatchObject({ type: "checkpoint", nodeId: "n2", status: "grounded" });
   });
 });

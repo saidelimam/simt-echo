@@ -58,13 +58,14 @@ export async function putError(env: Env, jobId: string, message: string): Promis
 const eventsPrefix = (jobId: string) => `jobs/${jobId}/events/`;
 const eventKey = (jobId: string, id: string) => `jobs/${jobId}/events/${id}.json`;
 
-/** Monotonic-ish event id: time-ordered, unique per emit. The per-isolate
- * sequence keeps same-millisecond emits in emit order under the R2 key
- * sort that [readJobEvents] relies on. */
-let eventSeq = 0;
-export function newEventId(): string {
-  const seq = (eventSeq++).toString(36).padStart(4, "0");
-  return `${Date.now().toString(36)}-${seq}-${crypto.randomUUID().slice(0, 8)}`;
+/** Event id: zero-padded base-36 epoch ms (fixed width) plus the full
+ * UUID as tiebreak. No isolate state (R9-08, review 0009 F7): two emits
+ * in the same millisecond from two isolates share the timestamp part,
+ * and [readJobEvents] orders by that part, so neither can sort before
+ * the other's cursor and be skipped on resume. */
+const EVENT_ID_TS_WIDTH = 11; // 36^11 ms ≈ year 41 000 CE
+export function newEventId(now: number = Date.now()): string {
+  return `${now.toString(36).padStart(EVENT_ID_TS_WIDTH, "0")}-${crypto.randomUUID()}`;
 }
 
 /** Validates against the frozen W10-06 union, then stores the record. */
@@ -73,20 +74,37 @@ export async function emitJobEvent(env: Env, jobId: string, event: JobEvent): Pr
   await env.MEDIA.put(eventKey(jobId, event.id), JSON.stringify(event));
 }
 
-/** Stored events for a job in emit (key) order, only those whose id sorts
- * after `afterId` when given. Skips unreadable rows. */
+/** The timestamp part of an event id: the base-36 epoch ms before the
+ * first "-", compared numerically so padded and legacy unpadded ids
+ * order chronologically. NaN when unparseable. */
+function eventIdTimestamp(id: string): number {
+  const dash = id.indexOf("-");
+  return parseInt(dash === -1 ? id : id.slice(0, dash), 36);
+}
+
+/** Stored events for a job in id (key) order, only those whose timestamp
+ * is at least `afterId`'s when given (R9-08, review 0009 F7). Same-
+ * timestamp events are included even if the client saw them: the
+ * stream's events are additive and the client merges them idempotently,
+ * so an event emitted after the client's cursor can never sort before
+ * it and be skipped. An unparseable id biases toward inclusion. Within
+ * one millisecond the order follows the id's UUID tiebreak (arbitrary);
+ * the client treats same-millisecond events as a set. Skips unreadable
+ * rows. */
 export async function readJobEvents(
   env: Env,
   jobId: string,
   afterId?: string,
 ): Promise<JobEvent[]> {
   const prefix = eventsPrefix(jobId);
+  const after = afterId === undefined ? Number.NaN : eventIdTimestamp(afterId);
   const keys: string[] = [];
   let cursor: string | undefined;
   for (;;) {
     const page = await env.MEDIA.list({ prefix, cursor });
     for (const o of page.objects) {
-      if (afterId === undefined || o.key.slice(prefix.length) > `${afterId}.json`) keys.push(o.key);
+      const ts = eventIdTimestamp(o.key.slice(prefix.length));
+      if (!Number.isFinite(after) || !Number.isFinite(ts) || ts >= after) keys.push(o.key);
     }
     if (!page.truncated) break;
     cursor = page.cursor;
@@ -128,6 +146,12 @@ export function jobEventStream(
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   let cancelled = false;
+  // R9-08: the timestamp filter re-includes the cursor's millisecond
+  // bucket on every poll; within one connection the client has already
+  // seen those ids, so skip re-sending them. A fresh connection with
+  // Last-Event-ID still drains the bucket once — at-least-once across
+  // disconnects, and the client merges events idempotently.
+  const sent = new Set<string>();
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       const startedAt = Date.now();
@@ -137,7 +161,10 @@ export function jobEventStream(
         while (!cancelled) {
           const terminal = TERMINAL_STATUSES.has((await instance.status()).status);
           for (const e of await readJobEvents(env, jobId, cursor)) {
-            controller.enqueue(encoder.encode(`id: ${e.id}\ndata: ${JSON.stringify(e)}\n\n`));
+            if (!sent.has(e.id)) {
+              sent.add(e.id);
+              controller.enqueue(encoder.encode(`id: ${e.id}\ndata: ${JSON.stringify(e)}\n\n`));
+            }
             cursor = e.id;
             lastWrite = Date.now();
           }

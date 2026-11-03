@@ -577,8 +577,9 @@ describe("runGround SAM lens (W11-06)", () => {
     await runGround(env, "job1", manifest, lensScout());
 
     const events = await readJobEvents(env, "job1");
-    expect(events.map((e) => e.type)).toEqual(["checkpoint", "usage"]);
-    const checkpoint = events[0];
+    // Same-millisecond order is not contract (R9-08); assert the set.
+    expect(events.map((e) => e.type).sort()).toEqual(["checkpoint", "usage"]);
+    const checkpoint = events.find((e) => e.type === "checkpoint");
     expect(checkpoint).toMatchObject({ nodeId: "n2", status: "grounded" });
   });
 });
