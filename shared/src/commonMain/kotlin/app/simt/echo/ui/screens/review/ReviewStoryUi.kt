@@ -2,7 +2,9 @@ package app.simt.echo.ui.screens.review
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.rememberTransformableState
@@ -18,7 +20,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -26,7 +31,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
@@ -39,6 +46,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -49,10 +57,12 @@ import app.simt.echo.platform.decodeImage
 import app.simt.echo.ui.atmosphere.CosmosMotionDurations
 import app.simt.echo.ui.atmosphere.CosmosMotionTier
 import app.simt.echo.ui.atmosphere.cosmosMotionTier
+import app.simt.echo.ui.components.CosmosBadge
 import app.simt.echo.ui.components.CosmosSecondaryButton
 import app.simt.echo.ui.components.CropImage
 import app.simt.echo.ui.components.roundedOneDecimal
 import app.simt.echo.ui.motion.echoSharedElement
+import app.simt.echo.ui.theme.EchoExtras
 import kotlin.math.roundToInt
 
 /** Semantics tag for the film strip (host UI gate target). */
@@ -84,23 +94,53 @@ fun RouteHealthHeader(
     onNudge: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(
+    val accent = when {
+        health.score >= 75 -> EchoExtras.success
+        health.score >= 50 -> EchoExtras.gold
+        else -> EchoExtras.ember
+    }
+    Surface(
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         modifier = modifier
             .fillMaxWidth()
             .testTag(HealthHeaderTag)
             .semantics { contentDescription = "Route health ${health.score}: ${health.band}" },
-        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Text(
-            text = "Route health ${health.score} · ${health.band}",
-            style = MaterialTheme.typography.titleMedium,
-        )
-        health.nudges.forEach { nudge ->
-            CosmosSecondaryButton(
-                label = nudge,
-                onClick = { onNudge(nudge) },
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
                 modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = "Route health ${health.score} · ${health.band}",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                CosmosBadge(text = "${health.score}/100")
+            }
+            LinearProgressIndicator(
+                progress = { (health.score / 100f).coerceIn(0f, 1f) },
+                color = accent,
+                trackColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .clip(CircleShape),
             )
+            health.nudges.forEach { nudge ->
+                CosmosSecondaryButton(
+                    label = nudge,
+                    onClick = { onNudge(nudge) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
     }
 }
@@ -119,6 +159,7 @@ fun FilmStrip(
     onScrub: (String) -> Unit,
     onInspect: (String) -> Unit,
     modifier: Modifier = Modifier,
+    landmarkCounts: Map<String, Int> = emptyMap(),
 ) {
     Row(
         modifier = modifier
@@ -126,26 +167,30 @@ fun FilmStrip(
             .horizontalScroll(rememberScrollState())
             .testTag(FilmStripTag)
             .semantics { contentDescription = "Film strip, ${frames.size} frames by distance" },
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        frames.forEach { frame ->
+        frames.forEachIndexed { index, frame ->
             val selected = frame.nodeId == selectedNodeId
-            Column(
+            val landmarkCount = landmarkCounts[frame.nodeId] ?: 0
+            Surface(
+                shape = MaterialTheme.shapes.medium,
+                color = if (selected) {
+                    MaterialTheme.colorScheme.surfaceContainerHigh
+                } else {
+                    MaterialTheme.colorScheme.surfaceContainerLow
+                },
+                border = BorderStroke(
+                    width = if (selected) 2.dp else 1.dp,
+                    color = if (selected) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.outlineVariant
+                    },
+                ),
                 modifier = Modifier
-                    .width(88.dp)
+                    .width(104.dp)
+                    .clip(MaterialTheme.shapes.medium)
                     .clickable { if (selected) onInspect(frame.nodeId) else onScrub(frame.nodeId) }
-                    .then(
-                        if (selected) {
-                            Modifier.border(
-                                2.dp,
-                                MaterialTheme.colorScheme.primary,
-                                MaterialTheme.shapes.medium,
-                            )
-                        } else {
-                            Modifier
-                        },
-                    )
-                    .padding(2.dp)
                     .semantics {
                         contentDescription =
                             "Frame at ${frame.atDistanceM.roundToInt()} m" +
@@ -153,30 +198,103 @@ fun FilmStrip(
                                 (if (selected) ". Selected — activate again to inspect" else "")
                     },
             ) {
-                val bytes = heroes[frame.nodeId]
-                var cellModifier = Modifier
-                    .fillMaxWidth()
-                    .height(64.dp)
-                if (selected) cellModifier = cellModifier.echoSharedElement(reviewKeyframeKey(frame.nodeId))
-                CropImage(
-                    bytes = bytes,
-                    contentDescription = null,
-                    modifier = cellModifier,
+                Column(
+                    modifier = Modifier.padding(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
+                    val bytes = heroes[frame.nodeId]
+                    var cellModifier = Modifier
+                        .fillMaxWidth()
+                        .height(68.dp)
+                        .clip(MaterialTheme.shapes.small)
+                    if (selected) cellModifier = cellModifier.echoSharedElement(reviewKeyframeKey(frame.nodeId))
+                    Box(modifier = Modifier.fillMaxWidth().height(68.dp)) {
+                        CropImage(
+                            bytes = bytes,
+                            contentDescription = null,
+                            modifier = cellModifier,
+                        ) {
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = cellModifier.background(MaterialTheme.colorScheme.surfaceContainer),
+                            ) {
+                                Text(
+                                    text = "${frame.atDistanceM.roundToInt()} m",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .padding(4.dp)
+                                .background(
+                                    color = if (selected) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.surface.copy(alpha = 0.82f)
+                                    },
+                                    shape = CircleShape,
+                                )
+                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                        ) {
+                            Text(
+                                text = "${index + 1}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (selected) {
+                                    MaterialTheme.colorScheme.onPrimary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                },
+                            )
+                        }
+                        if (landmarkCount > 0) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .padding(4.dp)
+                                    .background(
+                                        color = EchoExtras.gold,
+                                        shape = CircleShape,
+                                    )
+                                    .padding(horizontal = 5.dp, vertical = 1.dp),
+                            ) {
+                                Text(
+                                    text = "★$landmarkCount",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.surface,
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        text = frame.label.ifEmpty {
+                            when (index) {
+                                0 -> "Start"
+                                frames.lastIndex -> "Destination"
+                                else -> "Spot ${index + 1}"
+                            }
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = if (selected) {
+                            MaterialTheme.colorScheme.onSurface
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
                     Text(
                         text = "${frame.atDistanceM.roundToInt()} m",
                         style = MaterialTheme.typography.bodySmall,
+                        color = if (selected) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                     )
                 }
-                Text(
-                    text = "${frame.atDistanceM.roundToInt()} m",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (selected) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                )
             }
         }
     }

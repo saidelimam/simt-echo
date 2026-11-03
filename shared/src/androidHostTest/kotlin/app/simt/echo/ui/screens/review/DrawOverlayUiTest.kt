@@ -9,6 +9,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.down
 import androidx.compose.ui.test.moveTo
 import androidx.compose.ui.test.performTouchInput
@@ -16,6 +17,8 @@ import androidx.compose.ui.test.up
 import app.simt.echo.host.HostTestResourcesShadow
 import app.simt.echo.host.RobolectricActivityRule
 import app.simt.echo.media.CropBox
+import app.simt.echo.Fixtures
+import okio.Path.Companion.toPath
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -110,6 +113,62 @@ class DrawOverlayUiTest {
             }
         }
         compose.onNodeWithContentDescription("Start selected").assertIsDisplayed()
+    }
+
+    @Test
+    fun reviewScreen_displaysOnlySelectedFrameDetailsAndSwitchesOnNext() {
+        val dir = java.nio.file.Files.createTempDirectory("review-single-frame").toString()
+        val store = app.simt.echo.data.FileStore(okio.FileSystem.SYSTEM, dir.toPath())
+        val drafts = app.simt.echo.data.DraftRepository(store)
+        val routes = app.simt.echo.data.RouteRepository(store)
+        val route = Fixtures.L_ROUTE.copy(
+            routeId = "draft-single",
+            name = "Morning commute",
+        )
+        drafts.saveDraftRoute(route)
+        val media = object : app.simt.echo.media.MediaTools {
+            override suspend fun extractFrame(video: okio.Path, atMs: Long, maxSide: Int, out: okio.Path) = Unit
+            override suspend fun cropJpeg(input: okio.Path, box: CropBox, maxSide: Int, out: okio.Path) = Unit
+            override suspend fun cutClip(
+                video: okio.Path,
+                startMs: Long,
+                endMs: Long,
+                maxFps: Int,
+                out: okio.Path,
+            ) = app.simt.echo.media.ClipInfo(out, 0, 0L)
+        }
+        val vm = ReviewViewModel(
+            draftId = "draft-single",
+            drafts = drafts,
+            routes = routes,
+            media = media,
+            nowMs = { 0L },
+            newId = { "lm-1" },
+            ioDispatcher = kotlinx.coroutines.Dispatchers.Unconfined,
+        )
+        compose.setContent {
+            app.simt.echo.ui.theme.EchoTheme(darkTheme = true) {
+                ReviewScreen(
+                    viewModel = vm,
+                    onSaved = {},
+                    onBack = {},
+                )
+            }
+        }
+        compose.waitForIdle()
+
+        // Initially the first frame (Start) is selected: StartCard is shown,
+        // while non-selected NodeCard controls ("Draw landmark", "Spoken cue") are not.
+        compose.onNodeWithContentDescription("Start selected").assertExists()
+        compose.onNodeWithText("Start description").assertExists()
+        compose.onNodeWithText("Draw landmark").assertDoesNotExist()
+        compose.onNodeWithText("End").assertExists()
+
+        // Step to the next frame: now only that node's card is rendered.
+        compose.onNodeWithText("Next").performScrollTo().performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Start description").assertDoesNotExist()
+        compose.onNodeWithText("Draw landmark").assertExists()
     }
 
     companion object {
