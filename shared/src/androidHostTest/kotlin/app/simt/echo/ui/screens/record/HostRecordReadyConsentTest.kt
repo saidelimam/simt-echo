@@ -70,9 +70,9 @@ class HostRecordReadyConsentTest {
     fun overlay_offersOptInUncheckedByDefault() {
         instrument()
         compose.onNodeWithTag(RecordPrestartTag).assertIsDisplayed()
-        compose.onNodeWithText("Find landmarks while I walk · Wi-Fi only").assertIsDisplayed()
+        compose.onNodeWithText("Find landmarks while I walk").assertIsDisplayed()
         compose.onNodeWithTag(RecordOptInTag).assertIsOff()
-        compose.onNodeWithText("Find landmarks while I walk").assertDoesNotExist()
+        compose.onNodeWithText("Allow").assertDoesNotExist()
     }
 
     @Test
@@ -93,7 +93,6 @@ class HostRecordReadyConsentTest {
             onDeclineConsent = { declined = true },
         )
         compose.onNodeWithTag(RecordOptInTag).assertIsOn()
-        compose.onNodeWithText("Find landmarks while I walk").assertIsDisplayed()
         compose.onNodeWithText("Not now").assertIsDisplayed()
         compose.onNodeWithText("Allow").performClick()
         assertTrue(granted)

@@ -20,8 +20,10 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -34,6 +36,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import app.simt.echo.ui.EchoRoute
 import app.simt.echo.ui.atmosphere.CosmosMotionDurations
@@ -43,10 +46,11 @@ import app.simt.echo.ui.atmosphere.EchoRippleState
 import app.simt.echo.ui.atmosphere.LocalEchoRipples
 import app.simt.echo.ui.atmosphere.cosmosMotionTier
 import app.simt.echo.ui.brand.EchoMark
+import app.simt.echo.ui.components.CosmosIconButton
+import app.simt.echo.ui.components.CosmosPrimaryButton
+import app.simt.echo.ui.components.CosmosSecondaryButton
 import app.simt.echo.ui.icons.EchoIcons
 import app.simt.echo.ui.motion.LuminousSprings
-import app.simt.echo.ui.components.CosmosIconButton
-import app.simt.echo.ui.components.CosmosSecondaryButton
 
 // App shell & navigation grammar (plan W8-05, freeze §9.2 tool-deck/top-chrome
 // grammar — the orbital-dock pattern does not apply: ECHO has 2 persistent
@@ -84,17 +88,23 @@ data class EchoShellConfig(
     val title: String,
     val chrome: EchoChrome,
     val showSettings: Boolean,
+    val showPrimaryDeck: Boolean = false,
 )
 
 /**
- * Navigation grammar: which chrome, heading and gear each route gets.
- * The gear rides the chrome on collection/task screens only — transient
- * (Processing/Share/Receive), instrument (Align/Navigate) and terminal
- * (Arrived) viewports keep a single job, and Settings never gears to
- * itself.
+ * Navigation grammar: which chrome, heading, gear and Home action deck each
+ * route gets. The gear rides the chrome on collection/task screens only —
+ * transient (Processing/Share/Receive), instrument (Align/Navigate) and
+ * terminal (Arrived) viewports keep a single job, and Settings never gears to
+ * itself. The Record + Receive deck belongs to Home only.
  */
 fun shellConfigFor(route: EchoRoute): EchoShellConfig = when (route) {
-    is EchoRoute.Home -> EchoShellConfig(title = "Echo", chrome = EchoChrome.NONE, showSettings = true)
+    is EchoRoute.Home -> EchoShellConfig(
+        title = "Home",
+        chrome = EchoChrome.NONE,
+        showSettings = true,
+        showPrimaryDeck = true,
+    )
     is EchoRoute.Record -> EchoShellConfig(title = "Record", chrome = EchoChrome.BACK, showSettings = true)
     is EchoRoute.Review -> EchoShellConfig(title = "Review", chrome = EchoChrome.BACK, showSettings = true)
     is EchoRoute.Processing -> EchoShellConfig(title = "Cloud landmarks", chrome = EchoChrome.CLOSE, showSettings = false)
@@ -156,10 +166,8 @@ private fun exit(tier: CosmosMotionTier, towardStart: Boolean): ExitTransition =
 
 /**
  * The one Cosmos shell. [config] comes from [shellConfigFor] for the current
- * route; [content] is the destination body (NavHost). The deck pair are
- * equal persistent actions (secondary commands, never a second primary —
- * W8-04 one-primary-per-region rule); each disables on its own route so the
- * shell never pushes a duplicate destination.
+ * route; [content] is the destination body (NavHost). The Record + Receive
+ * deck sits fixed at the bottom of Home only.
  */
 @Composable
 fun EchoShell(
@@ -170,8 +178,6 @@ fun EchoShell(
     onRecord: () -> Unit,
     onReceive: () -> Unit,
     modifier: Modifier = Modifier,
-    recordEnabled: Boolean = true,
-    receiveEnabled: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     // The echo field (W13-01) and every command that ripples across it
@@ -190,12 +196,12 @@ fun EchoShell(
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     content()
                 }
-                PrimaryDeck(
-                    onRecord = onRecord,
-                    onReceive = onReceive,
-                    recordEnabled = recordEnabled,
-                    receiveEnabled = receiveEnabled,
-                )
+                if (config.showPrimaryDeck) {
+                    PrimaryDeck(
+                        onRecord = onRecord,
+                        onReceive = onReceive,
+                    )
+                }
             }
         }
     }
@@ -277,31 +283,49 @@ private fun TopChrome(
 private fun PrimaryDeck(
     onRecord: () -> Unit,
     onReceive: () -> Unit,
-    recordEnabled: Boolean,
-    receiveEnabled: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
-            .padding(horizontal = 16.dp, vertical = 8.dp)
-            .testTag(EchoShellDeckTag),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        modifier = modifier.fillMaxWidth().testTag(EchoShellDeckTag),
     ) {
-        CosmosSecondaryButton(
-            label = "Record",
-            icon = EchoIcons.Record,
-            onClick = onRecord,
-            enabled = recordEnabled,
-            modifier = Modifier.weight(1f).testTag(EchoShellRecordTag),
-        )
-        CosmosSecondaryButton(
-            label = "Receive",
-            icon = EchoIcons.Receive,
-            onClick = onReceive,
-            enabled = receiveEnabled,
-            modifier = Modifier.weight(1f).testTag(EchoShellReceiveTag),
-        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)),
+        ) {
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = "Walk it once. Share the way.",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    CosmosPrimaryButton(
+                        label = "Record",
+                        icon = EchoIcons.Record,
+                        onClick = onRecord,
+                        modifier = Modifier.weight(1f).testTag(EchoShellRecordTag),
+                    )
+                    CosmosSecondaryButton(
+                        label = "Receive",
+                        icon = EchoIcons.Receive,
+                        onClick = onReceive,
+                        modifier = Modifier.weight(1f).testTag(EchoShellReceiveTag),
+                    )
+                }
+            }
+        }
     }
 }

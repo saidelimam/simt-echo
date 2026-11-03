@@ -46,8 +46,29 @@ fun StartCard(
     heroBytes: ByteArray?,
     onDescription: (String) -> Unit,
     modifier: Modifier = Modifier,
+    /** Story selection (W13-05): the selected timeline card reads by ring, never hue alone. */
+    selected: Boolean = false,
 ) {
-    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .then(
+                if (selected) {
+                    Modifier.border(
+                        2.dp,
+                        MaterialTheme.colorScheme.primary,
+                        MaterialTheme.shapes.medium,
+                    )
+                } else {
+                    Modifier
+                },
+            )
+            .padding(if (selected) 6.dp else 0.dp)
+            .semantics {
+                if (selected) contentDescription = "Start selected"
+            },
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         CosmosRecordRow(title = "Start", subtitle = "Route start")
         HeroImage(bytes = heroBytes, contentDescription = "Start photo")
         CosmosTextField(

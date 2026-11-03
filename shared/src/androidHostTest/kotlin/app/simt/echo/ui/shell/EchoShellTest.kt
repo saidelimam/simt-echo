@@ -6,9 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsFocused
-import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -58,8 +56,6 @@ class EchoShellTest {
         onSettings: () -> Unit = {},
         onRecord: () -> Unit = {},
         onReceive: () -> Unit = {},
-        recordEnabled: Boolean = true,
-        receiveEnabled: Boolean = true,
         body: String = "body",
     ) {
         compose.setContent {
@@ -71,8 +67,6 @@ class EchoShellTest {
                     onSettings = onSettings,
                     onRecord = onRecord,
                     onReceive = onReceive,
-                    recordEnabled = recordEnabled,
-                    receiveEnabled = receiveEnabled,
                 ) {
                     androidx.compose.material3.Text(text = body)
                 }
@@ -158,7 +152,7 @@ class EchoShellTest {
             }
         }
         compose.waitForIdle()
-        compose.onNodeWithTag(EchoShellHeadingTag).assertTextEquals("Echo")
+        compose.onNodeWithTag(EchoShellHeadingTag).assertTextEquals("Home")
         compose.onNodeWithTag(EchoShellHeadingTag).assertIsFocused()
         compose.runOnIdle { route = EchoRoute.Record() }
         compose.waitForIdle()
@@ -167,16 +161,16 @@ class EchoShellTest {
     }
 
     @Test
-    fun primaryDeck_persistentRecordAndReceive() {
+    fun primaryDeck_showsRecordAndReceiveOnHomeOnly() {
         var recorded = false
         var received = false
-        // Persistent on an instrument screen, not just Home.
         setShell(
-            EchoRoute.Navigate("r", false),
+            EchoRoute.Home,
             onRecord = { recorded = true },
             onReceive = { received = true },
         )
         compose.onNodeWithTag(EchoShellDeckTag).assertIsDisplayed()
+        compose.onNodeWithText("Walk it once. Share the way.").assertIsDisplayed()
         compose.onNodeWithText("Record").assertIsDisplayed()
         compose.onNodeWithText("Receive").assertIsDisplayed()
         compose.onNodeWithText("Record").performClick()
@@ -186,10 +180,11 @@ class EchoShellTest {
     }
 
     @Test
-    fun primaryDeck_disablesCurrentRouteAction() {
-        setShell(EchoRoute.Record(), recordEnabled = false, receiveEnabled = true)
-        compose.onNodeWithTag(EchoShellRecordTag).assertIsNotEnabled()
-        compose.onNodeWithTag(EchoShellReceiveTag).assertIsEnabled()
+    fun primaryDeck_hiddenOutsideHome() {
+        setShell(EchoRoute.Record())
+        compose.onNodeWithTag(EchoShellDeckTag).assertDoesNotExist()
+        compose.onNodeWithTag(EchoShellRecordTag).assertDoesNotExist()
+        compose.onNodeWithTag(EchoShellReceiveTag).assertDoesNotExist()
     }
 
     @Test
@@ -199,7 +194,7 @@ class EchoShellTest {
             CompositionLocalProvider(LocalDensity provides big) {
                 EchoTheme(darkTheme = true) {
                     EchoShell(
-                        config = shellConfigFor(EchoRoute.RouteDetail("r")),
+                        config = shellConfigFor(EchoRoute.Home),
                         onBack = {},
                         onClose = {},
                         onSettings = {},
@@ -283,7 +278,11 @@ class EchoShellTest {
                     compose.onNodeWithContentDescription("Close").assertDoesNotExist()
                 }
             }
-            compose.onNodeWithTag(EchoShellDeckTag).assertIsDisplayed()
+            if (config.showPrimaryDeck) {
+                compose.onNodeWithTag(EchoShellDeckTag).assertIsDisplayed()
+            } else {
+                compose.onNodeWithTag(EchoShellDeckTag).assertDoesNotExist()
+            }
         }
     }
 

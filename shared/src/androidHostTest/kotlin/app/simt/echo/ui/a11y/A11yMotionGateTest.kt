@@ -114,9 +114,15 @@ class A11yMotionGateTest {
                     compose.onNodeWithContentDescription("Close").assertDoesNotExist()
                 }
             }
-            compose.onNodeWithTag(EchoShellDeckTag).assertIsDisplayed()
-            compose.onNodeWithTag(EchoShellRecordTag).assertIsDisplayed()
-            compose.onNodeWithTag(EchoShellReceiveTag).assertIsDisplayed()
+            if (config.showPrimaryDeck) {
+                compose.onNodeWithTag(EchoShellDeckTag).assertIsDisplayed()
+                compose.onNodeWithTag(EchoShellRecordTag).assertIsDisplayed()
+                compose.onNodeWithTag(EchoShellReceiveTag).assertIsDisplayed()
+            } else {
+                compose.onNodeWithTag(EchoShellDeckTag).assertDoesNotExist()
+                compose.onNodeWithTag(EchoShellRecordTag).assertDoesNotExist()
+                compose.onNodeWithTag(EchoShellReceiveTag).assertDoesNotExist()
+            }
         }
     }
 

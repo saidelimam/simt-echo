@@ -41,9 +41,9 @@ data class ReadyOptInUiState(
     /** The Settings "mobile data" switch, read when the screen opens. */
     val mobileData: Boolean = false,
 ) {
-    /** Pre-start checkbox label; says which networks the upload may use. */
+    /** Pre-start checkbox label; network details live in the consent sheet. */
     val optInLabel: String
-        get() = "Find landmarks while I walk · " + if (mobileData) "Wi-Fi or mobile data" else "Wi-Fi only"
+        get() = "Find landmarks while I walk"
 
     /** Consent sheet body; the network sentence follows the Settings switch. */
     val consentBody: String

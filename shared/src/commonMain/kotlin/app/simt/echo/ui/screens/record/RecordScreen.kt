@@ -1,5 +1,6 @@
 package app.simt.echo.ui.screens.record
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -52,12 +53,14 @@ import app.simt.echo.platform.rememberMotionSource
 import app.simt.echo.transfer.WalkStagerFactory
 import app.simt.echo.ui.components.CosmosBanner
 import app.simt.echo.ui.components.CosmosBannerKind
+import app.simt.echo.ui.components.CosmosPrimaryButton
 import app.simt.echo.ui.components.CosmosRecordButton
 import app.simt.echo.ui.components.CosmosSecondaryButton
 import app.simt.echo.ui.components.CosmosSheet
 import app.simt.echo.ui.components.CosmosTextField
 import app.simt.echo.ui.components.StatusChip
 import app.simt.echo.ui.components.oneDecimal
+import app.simt.echo.ui.icons.EchoIcons
 import app.simt.echo.ui.theme.EchoTouchOther
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -251,8 +254,22 @@ internal fun RecordInstrument(
                         onOptInChange = onOptInChange,
                     )
                     CaptureState.RECORDING -> {
-                        CosmosSecondaryButton(label = "Mark spot", onClick = onMark)
-                        FinishButton(onFinish = onBeginFinish)
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            CosmosPrimaryButton(
+                                label = "Mark spot",
+                                icon = EchoIcons.Record,
+                                onClick = onMark,
+                                modifier = Modifier.weight(1f),
+                            )
+                            FinishButton(
+                                onFinish = onBeginFinish,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
                     }
                     CaptureState.FINISHING, CaptureState.SAVED -> Unit
                 }
@@ -444,28 +461,36 @@ internal fun FinishSheet(
  * standard activation path, while sighted touch users keep the gesture.
  */
 @Composable
-private fun FinishButton(onFinish: () -> Unit) {
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-            .fillMaxWidth()
-            .sizeIn(minHeight = EchoTouchOther)
+private fun FinishButton(
+    onFinish: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.error),
+        modifier = modifier
+            .sizeIn(minWidth = EchoTouchOther, minHeight = EchoTouchOther)
             .semantics(mergeDescendants = true) {
                 role = Role.Button
                 contentDescription = "Hold to finish"
                 onClick { onFinish(); true }
                 onLongClick { onFinish(); true }
             }
-            .padding(vertical = 8.dp)
             .pointerInput(Unit) {
                 detectTapGestures(onLongPress = { onFinish() })
             },
     ) {
-        Text(
-            text = "Hold to finish",
-            style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.error,
-        )
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+        ) {
+            Text(
+                text = "Hold to finish",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
     }
 }
 

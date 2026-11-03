@@ -43,6 +43,23 @@ class ReviewInstrumentTest {
     }
 
     @Test
+    fun layoutCentersAndRotatesLongAxisToHorizontal() {
+        // Walked path is narrow in X (0..2) and tall in Y (0..20) in a 200x100 wide box.
+        // layoutReviewPoints rotates it so the 20-unit span lies horizontally,
+        // filling the width and centering vertically.
+        val points = listOf(Offset(0f, 0f), Offset(2f, 20f))
+        val mapped = layoutReviewPoints(points, boxWidth = 200f, boxHeight = 100f, paddingPx = 20f)
+        val spanX = mapped.maxOf { it.x } - mapped.minOf { it.x }
+        val spanY = mapped.maxOf { it.y } - mapped.minOf { it.y }
+        assertTrue(spanX > spanY, "long axis rotated to horizontal: spanX=$spanX, spanY=$spanY")
+        assertEquals(160f, spanX, 0.01f)
+        val centerX = (mapped.minOf { it.x } + mapped.maxOf { it.x }) * 0.5f
+        val centerY = (mapped.minOf { it.y } + mapped.maxOf { it.y }) * 0.5f
+        assertEquals(100f, centerX, 0.01f)
+        assertEquals(50f, centerY, 0.01f)
+    }
+
+    @Test
     fun statChipsKeepEveryStat() {
         assertEquals(
             listOf("SAM 0.86", "tracked 78%", "visible ~9 m"),

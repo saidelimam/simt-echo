@@ -117,6 +117,7 @@ fun ReviewScreen(
                 description = ui.startDescription,
                 heroBytes = startNode.heroBytes,
                 onDescription = viewModel::editStartDescription,
+                selected = startNode.node.id == ui.selectedNodeId,
             )
         }
         ui.nodes.filter { it.node.type != NodeType.START }.forEach { reviewNode ->

@@ -160,12 +160,12 @@ class RecordViewModelTest {
     @Test
     fun theCopyNamesOnlyTheNetworksTheSettingAllows() = runTest {
         val wifi = viewModel(this).first.readyOptIn.value
-        assertEquals("Find landmarks while I walk · Wi-Fi only", wifi.optInLabel)
+        assertEquals("Find landmarks while I walk", wifi.optInLabel)
         assertTrue("over Wi-Fi only so landmarks" in wifi.consentBody)
         assertFalse("mobile data" in wifi.consentBody)
 
         val data = viewModel(this, mobileDataAllowed = true).first.readyOptIn.value
-        assertEquals("Find landmarks while I walk · Wi-Fi or mobile data", data.optInLabel)
+        assertEquals("Find landmarks while I walk", data.optInLabel)
         assertTrue("mobile data when there is no Wi-Fi (never while roaming)" in data.consentBody)
         assertFalse("Wi-Fi only" in data.consentBody)
         assertFalse(data.optIn, "the data setting never turns the opt-in on")

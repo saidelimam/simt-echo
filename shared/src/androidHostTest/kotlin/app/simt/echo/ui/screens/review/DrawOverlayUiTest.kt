@@ -1,8 +1,10 @@
 package app.simt.echo.ui.screens.review
 
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -89,6 +91,21 @@ class DrawOverlayUiTest {
         assertEquals(0.55f, box.top, 0.12f)
         assertEquals(0.5f, box.right, 0.03f)
         assertEquals(0.9f, box.bottom, 0.03f)
+    }
+
+    @Test
+    fun startCard_marksSelectedWhenFirstFrameIsSelected() {
+        compose.setContent {
+            app.simt.echo.ui.theme.EchoTheme(darkTheme = true) {
+                StartCard(
+                    description = "Red door",
+                    heroBytes = null,
+                    onDescription = {},
+                    selected = true,
+                )
+            }
+        }
+        compose.onNodeWithContentDescription("Start selected").assertIsDisplayed()
     }
 
     companion object {

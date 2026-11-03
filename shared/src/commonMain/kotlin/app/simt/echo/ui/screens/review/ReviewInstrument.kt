@@ -9,11 +9,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import app.simt.echo.ui.theme.CosmosPetrol
 import app.simt.echo.ui.theme.EchoExtras
 
 /** Semantics tag for the Review route instrument (host UI gate target). */
@@ -54,10 +55,52 @@ fun mapReviewPoint(
 )
 
 /**
+ * Pure landscape + centered layout for a walked series inside a
+ * [boxWidth]×[boxHeight] box with [paddingPx] on every side. When the
+ * vertical span exceeds the horizontal span, the series is rotated 90° so
+ * the long axis lies horizontally across the wide container, then scaled and
+ * centered on both axes.
+ */
+fun layoutReviewPoints(
+    points: List<Offset>,
+    boxWidth: Float,
+    boxHeight: Float,
+    paddingPx: Float,
+): List<Offset> {
+    if (points.isEmpty()) return emptyList()
+    val rawMinX = points.minOf { it.x }
+    val rawMaxX = points.maxOf { it.x }
+    val rawMinY = points.minOf { it.y }
+    val rawMaxY = points.maxOf { it.y }
+    val rotateToHorizontal = (rawMaxY - rawMinY) > (rawMaxX - rawMinX)
+    val oriented = if (rotateToHorizontal) {
+        points.map { Offset(-it.y, it.x) }
+    } else {
+        points
+    }
+    val minX = oriented.minOf { it.x }
+    val maxX = oriented.maxOf { it.x }
+    val minY = oriented.minOf { it.y }
+    val maxY = oriented.maxOf { it.y }
+    val scale = reviewMapScale(minX, maxX, minY, maxY, boxWidth, boxHeight, paddingPx)
+    val spanX = maxX - minX
+    val spanY = maxY - minY
+    val offsetX = ((boxWidth - spanX * scale) * 0.5f).coerceAtLeast(paddingPx)
+    val offsetY = ((boxHeight - spanY * scale) * 0.5f).coerceAtLeast(paddingPx)
+    return oriented.map { p ->
+        Offset(
+            x = offsetX + (p.x - minX) * scale,
+            y = offsetY + (p.y - minY) * scale,
+        )
+    }
+}
+
+/**
  * Review route instrument (plan W8-08, freeze §2/§7): the walked path on
- * petrol map ground with the route in gold. The highlight node reads by
- * size + ring, never hue alone. Panel only — geometry stays sensor-owned
- * and read-only; this surface never edits it.
+ * the theme's hull container with the route in ember/primary and the active
+ * node in gold. The highlight node reads by size + ring, never hue alone.
+ * Panel only — geometry stays sensor-owned and read-only; this surface never
+ * edits it.
  */
 @Composable
 fun ReviewInstrumentMap(
@@ -65,10 +108,13 @@ fun ReviewInstrumentMap(
     highlightIndex: Int,
     modifier: Modifier = Modifier,
 ) {
-    val gold = EchoExtras.gold
+    val containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+    val trackColor = MaterialTheme.colorScheme.primary
+    val nodeColor = EchoExtras.emberSoft
+    val highlightColor = EchoExtras.gold
     Surface(
         shape = MaterialTheme.shapes.large,
-        color = CosmosPetrol,
+        color = containerColor,
         modifier = modifier
             .fillMaxWidth()
             .height(180.dp)
@@ -80,28 +126,28 @@ fun ReviewInstrumentMap(
     ) {
         Canvas(modifier = Modifier) {
             if (points.isEmpty()) return@Canvas
-            val paddingPx = 16.dp.toPx()
-            val minX = points.minOf { it.x }
-            val maxX = points.maxOf { it.x }
-            val minY = points.minOf { it.y }
-            val maxY = points.maxOf { it.y }
-            val scale = reviewMapScale(minX, maxX, minY, maxY, size.width, size.height, paddingPx)
-            val toScreen = { p: Offset -> mapReviewPoint(p, minX, minY, scale, paddingPx) }
-            for (i in 1 until points.size) {
-                drawLine(gold, toScreen(points[i - 1]), toScreen(points[i]), strokeWidth = 6f)
+            val paddingPx = 20.dp.toPx()
+            val mapped = layoutReviewPoints(points, size.width, size.height, paddingPx)
+            for (i in 1 until mapped.size) {
+                drawLine(
+                    color = trackColor,
+                    start = mapped[i - 1],
+                    end = mapped[i],
+                    strokeWidth = 6f,
+                    cap = StrokeCap.Round,
+                )
             }
-            points.forEachIndexed { index, point ->
-                val center = toScreen(point)
+            mapped.forEachIndexed { index, center ->
                 if (index == highlightIndex) {
-                    drawCircle(color = gold, radius = 12f, center = center)
+                    drawCircle(color = highlightColor, radius = 12f, center = center)
                     drawCircle(
-                        color = gold,
+                        color = highlightColor,
                         radius = 18f,
                         center = center,
-                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f),
+                        style = Stroke(width = 3f),
                     )
                 } else {
-                    drawCircle(color = gold, radius = 8f, center = center, alpha = 0.6f)
+                    drawCircle(color = nodeColor, radius = 7f, center = center, alpha = 0.8f)
                 }
             }
         }

@@ -3,9 +3,7 @@ package app.simt.echo.ui.screens
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -13,7 +11,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -85,7 +82,7 @@ fun HomeScreen(
         BoxWithConstraints(modifier = modifier.fillMaxSize()) {
             val tall = maxHeight >= TALL_HOME_MIN_HEIGHT
             CosmosEmptyState(
-                title = "Walk it once. Share the way.",
+                title = "No walks saved yet",
                 body = "Record a short walk to share it as a guided route. " +
                     "Recording and scanning use the camera — nothing leaves " +
                     "this phone until you share.",
@@ -98,12 +95,12 @@ fun HomeScreen(
                 secondaryLabel = PRACTICE_OFFER_LABEL,
                 onSecondary = onPractice,
                 hero = {
-                    EchoMark(markSize = if (tall) 132.dp else 72.dp, onDisc = true, idleEcho = true)
+                    EchoMark(markSize = if (tall) 116.dp else 64.dp, onDisc = true, idleEcho = true)
                 },
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
-                    .padding(top = if (tall) 32.dp else 0.dp),
+                    .padding(top = if (tall) 16.dp else 0.dp),
             )
         }
         return
@@ -116,14 +113,6 @@ fun HomeScreen(
             .padding(horizontal = 16.dp, vertical = 24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp).revealOnEnter(index++),
-        ) {
-            EchoMark(markSize = 52.dp, onDisc = true)
-            Text(text = "Walk it once. Share the way.", style = MaterialTheme.typography.titleMedium)
-        }
         if (recoverableDrafts.isNotEmpty()) {
             // Interrupted work first: a kill mid-record or mid-upload
             // must greet the user on relaunch, not hide.

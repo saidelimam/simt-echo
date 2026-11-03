@@ -2,9 +2,12 @@ package app.simt.echo.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
@@ -69,6 +72,7 @@ fun CosmosPrimaryButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     loading: Boolean = false,
+    icon: ImageVector? = null,
 ) {
     val shape = MaterialTheme.shapes.small
     val extras = EchoExtras
@@ -105,7 +109,11 @@ fun CosmosPrimaryButton(
             .then(if (focused) Modifier.border(2.dp, extras.gold, shape) else Modifier)
             .then(if (focused) Modifier.semantics { stateDescription = CosmosFocusedState } else Modifier),
     ) {
-        Box(contentAlignment = Alignment.Center) {
+        Row(
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
+        ) {
             if (loading) {
                 CircularProgressIndicator(
                     strokeWidth = 3.dp,
@@ -116,6 +124,10 @@ fun CosmosPrimaryButton(
                         .semantics { contentDescription = "$label loading" },
                 )
             } else {
+                if (icon != null) {
+                    Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(8.dp))
+                }
                 Text(
                     text = label,
                     style = MaterialTheme.typography.labelLarge,

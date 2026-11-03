@@ -82,10 +82,8 @@ fun EchoNavHost(
         onBack = { navController.popBackStack() },
         onClose = { navController.popBackStack() },
         onSettings = { navController.navigate(EchoRoute.Settings) },
-        onRecord = { if (currentRoute !is EchoRoute.Record) navController.navigate(EchoRoute.Record()) },
-        onReceive = { if (currentRoute !is EchoRoute.Receive) navController.navigate(EchoRoute.Receive) },
-        recordEnabled = currentRoute !is EchoRoute.Record,
-        receiveEnabled = currentRoute !is EchoRoute.Receive,
+        onRecord = { navController.navigate(EchoRoute.Record()) },
+        onReceive = { navController.navigate(EchoRoute.Receive) },
         modifier = modifier,
     ) {
     // Shared elements (W13-02): one transition scope over the whole graph,
