@@ -15,6 +15,15 @@
          still switch promotion off per app. -->
     <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
 
+    <!-- W20-04 ECHO Tap: a normal permission, never a runtime dialog. -->
+    <uses-permission android:name="android.permission.NFC" />
+
+    <!-- NFC is optional in both directions: a phone without the radio (or
+         without card emulation) still installs and keeps QR and file
+         sharing. Sending needs HCE, receiving needs only the reader. -->
+    <uses-feature android:name="android.hardware.nfc" android:required="false" />
+    <uses-feature android:name="android.hardware.nfc.hce" android:required="false" />
+
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.sensor.accelerometer" android:required="false" />
     <uses-feature android:name="android.hardware.sensor.gyroscope" android:required="false" />
@@ -40,6 +49,23 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- W20-04 ECHO Tap: foreground card emulation. Exported because the
+             OS binds it, protected by BIND_NFC_SERVICE so nothing else can.
+             `requireDeviceUnlock` and the absence of any intent filter keep
+             this to ECHO's own reader while the phone is unlocked — a tap
+             never launches an app, and it is not the default wallet. -->
+        <service
+            android:name="app.simt.echo.platform.nfc.EchoHostApduService"
+            android:exported="true"
+            android:permission="android.permission.BIND_NFC_SERVICE">
+            <intent-filter>
+                <action android:name="android.nfc.cardemulation.action.HOST_APDU_SERVICE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.nfc.cardemulation.host_apdu_service"
+                android:resource="@xml/echo_apdu_service" />
+        </service>
 
         <!-- W2-07: exposes app-private `exports/` for the `.echo` share sheet.
              Authority matches AndroidFileSharing: `<package>.echo.files`. -->

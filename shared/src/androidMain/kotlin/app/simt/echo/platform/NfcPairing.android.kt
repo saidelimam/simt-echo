@@ -1,12 +1,44 @@
 package app.simt.echo.platform
 
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
+// W20-04 installs the real foreground presenter: publishing writes an
+// immutable snapshot into the process registry, selects the HCE service as
+// the *foreground* preferred service, and reports ready only after the
+// platform accepted it. The reader side follows in W20-05.
+//
+// Devices without the NFC radio (or without HCE) get the unavailable
+// controller, which reports no capabilities and never renders ready.
 
-// W20-01 ships the seam only: the Android presenter (W20-04) and reader
-// (W20-05) install the real controller here. Until then this actual is
-// explicitly unavailable — a phone with NFC still reports no capabilities,
-// so no screen can render a Ready state that would not work.
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import app.simt.echo.platform.nfc.AndroidNfcPairingController
+
 @Composable
-actual fun rememberNfcPairingController(): NfcPairingController =
-    remember { UnavailableNfcPairingController() }
+actual fun rememberNfcPairingController(): NfcPairingController {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val controller = remember(context) { AndroidNfcPairingController.create(context) }
+    DisposableEffect(controller, lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> controller.onResumed()
+                Lifecycle.Event.ON_PAUSE -> controller.onPaused()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        controller.start()
+        if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            controller.onResumed()
+        }
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            controller.close()
+        }
+    }
+    return controller
+}

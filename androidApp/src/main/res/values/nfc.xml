@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Platform service descriptions for ECHO Tap (plan 0005 §2). These are what
+  Android shows for the card-emulation component; the in-app copy lives in
+  the shared module.
+-->
+<resources>
+    <string name="echo_tap_service_description">ECHO Tap hands one route to the phone held against this one.</string>
+    <string name="echo_tap_aid_group_description">ECHO Tap route sharing</string>
+</resources>
