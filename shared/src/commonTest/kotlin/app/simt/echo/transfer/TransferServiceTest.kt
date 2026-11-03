@@ -63,7 +63,7 @@ class TransferServiceTest {
     }
 
     /** In-memory relay (W4-05): stores sealed bytes by code, like R2. */
-    private class FakeRelay(private val code: String = "ABC234") : RelayClient {
+    private class FakeRelay(private val code: String = "ABCD2345") : RelayClient {
         val store = mutableMapOf<String, ByteArray>()
         var downloads = 0
         val progressFlow = MutableSharedFlow<TransferProgress>(extraBufferCapacity = 64)
@@ -216,10 +216,10 @@ class TransferServiceTest {
 
         val offer = withRelay.offer(Fixtures.L_ROUTE.routeId, useRelay = true)
         val payload = QrPayload.parse(offer.qrUri).getOrThrow()
-        assertEquals("ABC234", payload.relayCode)
+        assertEquals("ABCD2345", payload.relayCode)
 
         // The relay only ever holds the sealed bytes (ECX1 ciphertext).
-        val uploaded = relay.store.getValue("ABC234")
+        val uploaded = relay.store.getValue("ABCD2345")
         assertTrue(uploaded.contentEquals(seeded.transport.servedPayload))
         assertEquals("ECX1", uploaded.decodeToString(0, 4))
     }
@@ -357,7 +357,7 @@ class TransferServiceTest {
         collector.cancel()
 
         assertEquals(Fixtures.L_ROUTE, body.route)
-        val total = relay.store.getValue("ABC234").size.toLong()
+        val total = relay.store.getValue("ABCD2345").size.toLong()
         assertTrue(seen.isNotEmpty())
         assertTrue(seen.all { it.totalBytes == total })
         assertTrue(seen.zipWithNext().all { (a, b) -> b.bytesSent >= a.bytesSent })

@@ -27,9 +27,35 @@ class QrPayloadTest {
 
     @Test
     fun relayCodeRoundTrips() {
-        val withRelay = payload.copy(relayCode = "X7K2P")
+        // Exactly the 8-character code `worker/src/relay.ts` mints.
+        val withRelay = payload.copy(relayCode = "ABCD2345")
         val parsed = QrPayload.parse(withRelay.build()).getOrThrow()
-        assertEquals("X7K2P", parsed.relayCode)
+        assertEquals("ABCD2345", parsed.relayCode)
+    }
+
+    @Test
+    fun strictParseRefusesWhatTheScannerMustNotTrust() {
+        val good = payload.build()
+        fun broken(uri: String) = assertNotNull(QrPayload.parse(uri).exceptionOrNull(), uri)
+
+        broken("$good#fragment")
+        broken("$good&h=192.168.1.21")
+        broken("$good&x=" + "p".repeat(2_000))
+        broken(good.replace("n=Garage", "n=%ZZGarage"))
+        broken(good.replace("h=192.168.1.20", "h=127.0.0.1"))
+        broken(good.replace("h=192.168.1.20", "h=0.0.0.0"))
+        // Relay codes are exactly 8 characters of the worker alphabet.
+        broken("$good&c=ABCD")
+    }
+
+    @Test
+    fun parseFailuresNeverQuoteTheInvitation() {
+        // A bearer capability must not reach a log through an exception.
+        val bad = payload.build().replace("h=192.168.1.20", "h=not-an-address")
+        val message = QrPayload.parse(bad).exceptionOrNull()?.message.orEmpty()
+        assertTrue(!message.contains("AQID"), message)
+        assertTrue(!message.contains(base64Url(payload.key)), message)
+        assertTrue(!message.contains(base64Url(payload.token)), message)
     }
 
     @Test

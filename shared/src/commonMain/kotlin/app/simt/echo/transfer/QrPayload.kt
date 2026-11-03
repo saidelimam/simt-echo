@@ -4,11 +4,17 @@ import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 
 /**
- * QR pairing payload (plan §5.4):
+ * QR pairing payload (plan 0005 §4.2):
  * `simt-echo://r?v=1&h=<ipv4>&p=<port>&t=<token>&k=<key>&s=<sha8>&n=<name>[&c=<relay>]`
  *
  * The URI carries the AES key and a short body fingerprint, never bundle
- * bytes. Total length stays ≤ 200 chars so any QR scanner reads it.
+ * bytes. NFC carries this exact UTF-8 URI — there is no second token, no
+ * second key, and no schema change.
+ *
+ * Parsing is strict because the URI is untrusted input from a camera or a
+ * radio: bounded bytes, no duplicates, no fragments, no malformed escapes.
+ * Every failure message names a field, never its value — an invitation is a
+ * bearer capability and must not leak into logs through an exception.
  */
 data class QrPayload(
     val host: String,
@@ -20,9 +26,14 @@ data class QrPayload(
     val relayCode: String? = null,
 ) {
     fun build(): String {
-        require(token.size == TOKEN_BYTES) { "token must be $TOKEN_BYTES bytes" }
-        require(key.size == KEY_BYTES) { "key must be $KEY_BYTES bytes" }
-        require(sha8Hex.matches(Regex("[0-9a-f]{16}"))) { "s must be 8 bytes as lowercase hex" }
+        require(token.size == TOKEN_BYTES) { "t must be $TOKEN_BYTES bytes" }
+        require(key.size == KEY_BYTES) { "k must be $KEY_BYTES bytes" }
+        require(sha8Hex.matches(SHA8_PATTERN)) { "s must be 8 bytes as lowercase hex" }
+        require(isDialableIpv4(host)) { "h must be a dialable IPv4 address" }
+        require(port in 1..65535) { "p must be a port" }
+        require(relayCode == null || relayCode.matches(RELAY_CODE_PATTERN)) {
+            "c must be $RELAY_CODE_CHARS characters of the relay alphabet"
+        }
         val builder = StringBuilder(SCHEME)
         builder.append("?v=1")
         builder.append("&h=").append(host)
@@ -30,9 +41,16 @@ data class QrPayload(
         builder.append("&t=").append(base64Url(token))
         builder.append("&k=").append(base64Url(key))
         builder.append("&s=").append(sha8Hex)
-        builder.append("&n=").append(percentEncode(name.take(MAX_NAME_CHARS)))
+        builder.append("&n=").append(percentEncode(truncateToChars(name, MAX_NAME_CHARS)))
         if (relayCode != null) builder.append("&c=").append(relayCode)
-        return builder.toString()
+        val uri = builder.toString()
+        // The old "QRs are ≤ 200 chars" note is wrong for percent-encoded
+        // Unicode; the byte bound is what the wire actually carries. Never
+        // truncate silently — the caller offers file recovery instead.
+        require(uri.encodeToByteArray().size <= PairingInvitation.MAX_UTF8_BYTES) {
+            "invitation exceeds ${PairingInvitation.MAX_UTF8_BYTES} bytes"
+        }
+        return uri
     }
 
     override fun equals(other: Any?): Boolean {
@@ -54,55 +72,115 @@ data class QrPayload(
         return result
     }
 
+    /** Redacted: a data-class dump must never print the key or the token. */
+    override fun toString(): String =
+        "QrPayload(host=$host, port=$port, token=<redacted>, key=<redacted>, " +
+            "sha8=${sha8Hex.take(4)}…, name=<redacted>, relayCode=${relayCode != null})"
+
     companion object {
         const val TOKEN_BYTES = 16
         const val KEY_BYTES = 32
         const val MAX_NAME_CHARS = 40
-        private const val SCHEME = "simt-echo://r"
+        const val SCHEME = "simt-echo://r"
 
-        /** Parses a scanned URI; any malformation is a typed failure. */
-        fun parse(uri: String): Result<QrPayload> = runCatching {
-            require(uri.startsWith("$SCHEME?")) { "not an ECHO QR URI" }
-            val params = uri.substringAfter('?')
-                .split('&')
-                .filter { it.isNotEmpty() }
-                .associate { part ->
-                    val key = part.substringBefore('=')
-                    key to part.substringAfter('=', "")
-                }
-            require(params["v"] == "1") { "unsupported QR version ${params["v"]}" }
-            val host = params["h"]?.takeIf { it.isNotEmpty() }
-                ?: error("missing h")
-            require(isIpv4(host)) { "h is not an IPv4 address: $host" }
-            val port = params["p"]?.toIntOrNull()?.takeIf { it in 1..65535 }
-                ?: error("bad p")
-            val token = params["t"]?.let { base64UrlDecode(it) }
+        /** Relay code shape, matching `worker/src/relay.ts` exactly. */
+        const val RELAY_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+        const val RELAY_CODE_CHARS = 8
+
+        val SHA8_PATTERN = Regex("[0-9a-f]{16}")
+        val RELAY_CODE_PATTERN = Regex("^[$RELAY_CODE_ALPHABET]{$RELAY_CODE_CHARS}$")
+
+        /** Fields this version understands; duplicates of these always fail. */
+        private val KNOWN_KEYS = setOf("v", "h", "p", "t", "k", "s", "n", "c")
+
+        /** Parses a scanned or tapped URI; any malformation is a typed failure. */
+        fun parse(uri: String): Result<QrPayload> = runCatching { parseStrict(uri) }
+
+        internal fun parseStrict(uri: String): QrPayload {
+            require(uri.encodeToByteArray().size <= PairingInvitation.MAX_UTF8_BYTES) {
+                "not an ECHO invitation: over the byte bound"
+            }
+            require(!uri.contains('#')) { "not an ECHO invitation: fragment" }
+            require(uri.startsWith("$SCHEME?")) { "not an ECHO invitation" }
+            val fields = parseQuery(uri.substring(SCHEME.length + 1))
+            require(fields["v"] == "1") { "unsupported invitation version" }
+
+            val host = fields["h"] ?: error("missing h")
+            require(isDialableIpv4(host)) { "bad h" }
+            val port = fields["p"]?.toIntOrNull()?.takeIf { it in 1..65535 } ?: error("bad p")
+            val token = fields["t"]?.let { base64UrlDecode(it) }
                 ?.takeIf { it.size == TOKEN_BYTES } ?: error("bad t")
-            val key = params["k"]?.let { base64UrlDecode(it) }
+            val key = fields["k"]?.let { base64UrlDecode(it) }
                 ?.takeIf { it.size == KEY_BYTES } ?: error("bad k")
-            val sha = params["s"]?.takeIf { it.matches(Regex("[0-9a-f]{16}")) }
-                ?: error("bad s")
-            val name = params["n"]?.let { percentDecode(it) }?.take(MAX_NAME_CHARS)
-                ?: error("missing n")
-            QrPayload(
+            val sha = fields["s"]?.takeIf { SHA8_PATTERN.matches(it) } ?: error("bad s")
+            // Decoded exactly once, then bounded in characters (never bytes),
+            // so non-Latin names survive a round trip whole.
+            val name = fields["n"]
+                ?.let { percentDecode(it) }
+                ?.let { truncateToChars(it, MAX_NAME_CHARS) }
+                ?: error("bad n")
+            val relayCode = fields["c"]?.also {
+                require(RELAY_CODE_PATTERN.matches(it)) { "bad c" }
+            }
+            return QrPayload(
                 host = host,
                 port = port,
                 token = token,
                 key = key,
                 sha8Hex = sha,
                 name = name,
-                relayCode = params["c"]?.takeIf { it.isNotEmpty() },
+                relayCode = relayCode,
             )
         }
 
-        private fun isIpv4(host: String): Boolean {
-            val parts = host.split('.')
-            return parts.size == 4 && parts.all { part ->
-                part.length in 1..3 && part.all { it.isDigit() } &&
-                    part.toIntOrNull()?.let { it in 0..255 } == true
+        /**
+         * Splits the query, rejecting duplicates of every known field.
+         * Unknown fields are tolerated for legacy compatibility — only
+         * within the total byte bound enforced by the caller.
+         */
+        private fun parseQuery(query: String): Map<String, String> {
+            val fields = mutableMapOf<String, String>()
+            val seenKnown = mutableSetOf<String>()
+            for (part in query.split('&')) {
+                if (part.isEmpty()) continue
+                require(part.contains('=')) { "malformed field" }
+                val key = part.substringBefore('=')
+                val value = part.substringAfter('=')
+                require(key.isNotEmpty()) { "malformed field" }
+                if (key in KNOWN_KEYS) {
+                    require(seenKnown.add(key)) { "duplicate $key" }
+                }
+                fields[key] = value
             }
+            return fields
         }
     }
+}
+
+/**
+ * Whether [host] may be dialled for a LAN fetch (plan 0005 §4.2).
+ *
+ * Legitimate private LAN and hotspot addresses stay valid; loopback,
+ * unspecified, broadcast and multicast are refused so a crafted invitation
+ * cannot aim the client at the phone itself or at a fan-out address.
+ */
+internal fun isDialableIpv4(host: String): Boolean {
+    val parts = host.split('.')
+    if (parts.size != 4) return false
+    val octets = parts.map { part ->
+        if (part.isEmpty() || part.length > 3) return false
+        if (!part.all { it in '0'..'9' }) return false
+        // Leading zeros are ambiguous (octal on some stacks) and never minted.
+        if (part.length > 1 && part[0] == '0') return false
+        part.toInt()
+    }
+    if (octets.any { it !in 0..255 }) return false
+    val first = octets[0]
+    if (first == 0) return false // 0.0.0.0/8 "this network"
+    if (first == 127) return false // loopback
+    if (first in 224..239) return false // multicast
+    if (octets.all { it == 255 }) return false // limited broadcast
+    return true
 }
 
 @OptIn(ExperimentalEncodingApi::class)
@@ -132,17 +210,54 @@ internal fun percentEncode(value: String): String {
     return out.toString()
 }
 
+/**
+ * Strict inverse of [percentEncode]: every `%` must introduce two hex
+ * digits, only ASCII may appear raw, and the decoded bytes must be valid
+ * UTF-8 — a malformed name is a failed invitation, not a replacement
+ * character.
+ */
 internal fun percentDecode(value: String): String {
-    val bytes = mutableListOf<Byte>()
+    val bytes = ArrayList<Byte>(value.length)
     var i = 0
     while (i < value.length) {
-        if (value[i] == '%' && i + 2 <= value.lastIndex) {
-            bytes += value.substring(i + 1, i + 3).toInt(16).toByte()
+        val ch = value[i]
+        if (ch == '%') {
+            require(i + 2 <= value.lastIndex) { "malformed escape" }
+            val hi = hexDigit(value[i + 1])
+            val lo = hexDigit(value[i + 2])
+            require(hi >= 0 && lo >= 0) { "malformed escape" }
+            bytes.add(((hi shl 4) or lo).toByte())
             i += 3
         } else {
-            bytes += value[i].code.toByte()
+            require(ch.code < 0x80) { "raw non-ASCII byte" }
+            bytes.add(ch.code.toByte())
             i++
         }
     }
-    return bytes.toByteArray().decodeToString()
+    return bytes.toByteArray().decodeToString(throwOnInvalidSequence = true)
+}
+
+/** -1 for anything outside `0-9a-fA-F`. */
+private fun hexDigit(ch: Char): Int = when (ch) {
+    in '0'..'9' -> ch - '0'
+    in 'a'..'f' -> ch - 'a' + 10
+    in 'A'..'F' -> ch - 'A' + 10
+    else -> -1
+}
+
+/**
+ * Bounds [value] to [max] characters, counting code points so a surrogate
+ * pair is never split — an emoji name must stay valid Unicode.
+ */
+internal fun truncateToChars(value: String, max: Int): String {
+    var chars = 0
+    var i = 0
+    while (i < value.length) {
+        if (chars == max) return value.substring(0, i)
+        val high = value[i].isHighSurrogate()
+        val paired = high && i + 1 < value.length && value[i + 1].isLowSurrogate()
+        i += if (paired) 2 else 1
+        chars++
+    }
+    return value
 }
