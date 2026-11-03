@@ -55,7 +55,16 @@ data class SettingsUi(
     val deleteNote: String? = null,
     /** Anchored legs folded into the learned stride (W12-03). */
     val strideLearnedLegs: Int = 0,
-)
+    /** Files Delete all would erase right now; 0 disables the row (W8-11). */
+    val deletableItems: Int = 0,
+) {
+    /**
+     * Destructive rows stay inert when there is nothing to erase: an
+     * enabled "Delete all" over an empty store promises an action it
+     * cannot perform.
+     */
+    val canDeleteAll: Boolean get() = deletableItems > 0
+}
 
 private const val CALIBRATION_WALK_M = 10.0
 
@@ -100,6 +109,7 @@ class SettingsViewModel(
                 onPhoneModel = onPhoneModelName,
                 cloudAiConfigured = cloudAiConfigured,
                 strideLearnedLegs = it.learnedStrideLegs,
+                deletableItems = deletableCount(),
             )
         },
     )
@@ -227,8 +237,12 @@ class SettingsViewModel(
                 "Removed ${plural(routesRemoved, "route")}, ${plural(draftsRemoved, "draft")}, " +
                     "${plural(trialsRemoved, "trial")} and ${plural(exportsRemoved, "exported file")}."
             }
-        _ui.update { it.copy(deleteNote = note) }
+        _ui.update { it.copy(deleteNote = note, deletableItems = deletableCount()) }
     }
+
+    /** Saved routes, drafts and trial/export files Delete all would erase. */
+    private fun deletableCount(): Int =
+        (routes?.list()?.size ?: 0) + (drafts?.listDraftIds()?.size ?: 0) + trials.deletableFileCount()
 }
 
 /** Settings line for the learned stride (W12-03): "1 leg", "3 legs". */
