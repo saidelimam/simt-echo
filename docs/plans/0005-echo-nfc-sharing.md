@@ -146,9 +146,9 @@ Use `simt slice start <ID>` from this tracker before implementation, `simt why <
 
 | ID | State | Independently reviewable slice | Depends on | Owner / completion evidence |
 |---|---|---|---|---|
-| W20-01 | Queued | Pairing modes, capabilities, failures and platform seam | — | simt-echo · — |
-| W20-02 | Queued | Bounded shared invitation validation and NFC wire protocol | W20-01 | simt-echo · — |
-| W20-03 | Queued | Generation-safe transfer sessions and cancellation | W20-02 | simt-echo · — |
+| W20-01 | Complete | Pairing modes, capabilities, failures and platform seam | — | simt-echo · — |
+| W20-02 | Complete | Bounded shared invitation validation and NFC wire protocol | W20-01 | simt-echo · — |
+| W20-03 | Complete | Generation-safe transfer sessions and cancellation | W20-02 | simt-echo · — |
 | W20-04 | Complete | Android foreground NFC presenter, registry and manifest | W20-01, W20-02, W20-03 | simt-echo · — |
 | W20-05 | Complete | Android NFC reader with bounded cancellable exchange | W20-04 | simt-echo · — |
 | W21-01 | Complete | Share state machine, NFC default and mode switching | W20-03, W20-04 | simt-echo · — |
