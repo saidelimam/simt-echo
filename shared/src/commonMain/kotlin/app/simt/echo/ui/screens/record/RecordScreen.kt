@@ -51,6 +51,7 @@ import app.simt.echo.platform.KeepScreenOn
 import app.simt.echo.platform.cameraGraphFor
 import app.simt.echo.platform.currentEpochMs
 import app.simt.echo.platform.rememberCameraRecorder
+import app.simt.echo.platform.rememberCueOutput
 import app.simt.echo.platform.rememberHaptics
 import app.simt.echo.platform.rememberMotionSource
 import app.simt.echo.transfer.WalkStagerFactory
@@ -123,11 +124,16 @@ fun RecordScreen(
     // ladder reports its ledger mode into every capture.json.
     val camera = rememberCameraRecorder(cameraGraphFor(CaptureScreen.RECORD))
     val haptics = rememberHaptics()
+    // Sound cues (W13-09): the same opt-in output Navigate uses. Recording had
+    // no sonic channel at all, so the Settings switch could be on and a walk
+    // still stayed silent.
+    val cues = rememberCueOutput(earconsEnabled = config.earcons)
     val session = remember(motion, camera, haptics, drafts, config, resumeDraftId) {
         CaptureSession(
             motion = motion,
             camera = camera,
             haptics = haptics,
+            cues = cues,
             drafts = drafts,
             scope = CoroutineScope(Dispatchers.Default),
             nowMs = { currentEpochMs() },

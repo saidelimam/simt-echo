@@ -11,10 +11,12 @@ import app.simt.echo.capture.visual.VisualMotionFrame
 import app.simt.echo.capture.visual.VisualMotionSource
 import app.simt.echo.capture.visual.withParallax
 import app.simt.echo.platform.CameraRecorder
+import app.simt.echo.platform.CueOutput
 import app.simt.echo.platform.HapticPattern
 import app.simt.echo.platform.Haptics
 import app.simt.echo.platform.MotionSource
 import app.simt.echo.platform.MotionUpdate
+import app.simt.echo.platform.NoCueOutput
 import kotlin.concurrent.Volatile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -76,6 +78,14 @@ class CaptureSession(
      * unchanged, and fakes that report nothing stay honest.
      */
     private val perceptionMode: () -> String = { PerceptionMode.LEDGER_OFF },
+    /**
+     * Sonic cues for the record flow (plan W13-09): every cue that plays a
+     * haptic plays its earcon too, so the Settings "Sound cues" switch is
+     * audible while recording and not only while navigating. Silent by
+     * default; the platform output owns the opt-in gate. Last in the list so
+     * existing positional callers keep their meaning.
+     */
+    private val cues: CueOutput = NoCueOutput,
 ) {
     private val _state = MutableStateFlow(CaptureState.IDLE)
     val state: StateFlow<CaptureState> = _state.asStateFlow()
@@ -208,6 +218,8 @@ class CaptureSession(
         }
         _hud.update { it.copy(marks = count) }
         haptics.play(HapticPattern.CONFIRM)
+        // Centre pan, honestly: a mark has no direction to point at.
+        cues.earcon(HapticPattern.CONFIRM, arrowRad = 0.0)
     }
 
     /**

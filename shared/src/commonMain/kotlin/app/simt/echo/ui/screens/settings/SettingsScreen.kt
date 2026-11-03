@@ -193,8 +193,7 @@ fun SettingsScreen(
                     },
                     {
                         CosmosRecordRow(
-                            title = "Sound cues",
-                            subtitle = "Short tones at turns, panned to the arrow. Silent while a screen reader is on.",
+                            title = "Sound cues",                                    subtitle = "Short tones at turns and when you mark a spot, panned to the arrow. Silent while a screen reader is on.",
                             trailing = {
                                 Switch(
                                     checked = ui.earcons,

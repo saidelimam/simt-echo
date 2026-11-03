@@ -3,10 +3,12 @@ package app.simt.echo.capture
 import app.simt.echo.data.DraftRepository
 import app.simt.echo.data.FileStore
 import app.simt.echo.platform.CameraRecorder
+import app.simt.echo.platform.CueOutput
 import app.simt.echo.platform.HapticPattern
 import app.simt.echo.platform.Haptics
 import app.simt.echo.platform.MotionSource
 import app.simt.echo.platform.MotionUpdate
+import app.simt.echo.platform.NoCueOutput
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -82,6 +84,17 @@ class CaptureSessionTest {
         override fun play(pattern: HapticPattern) { played += pattern }
     }
 
+    private class FakeCues : CueOutput {
+        val earcons = mutableListOf<HapticPattern>()
+        val arrows = mutableListOf<Double>()
+        override val eyesFree: Boolean = false
+        override fun earcon(pattern: HapticPattern, arrowRad: Double) {
+            earcons += pattern
+            arrows += arrowRad
+        }
+        override fun announce(text: String) = Unit
+    }
+
     private fun update(tNs: Long, d: Double, step: Boolean, count: Int) = MotionUpdate(
         tNs = tNs, distanceM = d, yawRad = 0.0, stepCount = count,
         isStep = step, pressureHpa = null, source = "echo_builtin_pdr",
@@ -93,15 +106,43 @@ class CaptureSessionTest {
         haptics: FakeHaptics,
         drafts: DraftRepository,
         scope: CoroutineScope,
+        cues: CueOutput = NoCueOutput,
     ) = CaptureSession(
         motion = motion,
         camera = camera,
         haptics = haptics,
+        cues = cues,
         drafts = drafts,
         scope = scope,
         nowMs = { 1_762_000_000_000L },
         newDraftId = { "draft-1" },
     )
+
+    /**
+     * Regression: "Sound cues" was audible only while navigating. Recording had
+     * no sonic channel at all, so a walk stayed silent with the switch on. A mark
+     * plays the same confirm cue as its haptic, centre-panned (a mark has no
+     * direction to point at).
+     */
+    @Test
+    fun markPlaysTheConfirmEarconInTheCentre() = runTest {
+        val drafts = DraftRepository(FileStore(FakeFileSystem(), "/data".toPath()))
+        val haptics = FakeHaptics()
+        val cues = FakeCues()
+        val motion = FakeMotion()
+        val session = newSession(motion, FakeCamera(), haptics, drafts, this, cues = cues)
+        session.ready()
+        session.start()
+        runCurrent()
+
+        session.mark()
+
+        assertEquals(listOf(HapticPattern.CONFIRM), haptics.played)
+        assertEquals(listOf(HapticPattern.CONFIRM), cues.earcons, "a mark must be heard, not only felt")
+        assertEquals(listOf(0.0), cues.arrows, "a mark has no direction: it stays centre-panned")
+        // Stops the autosave/collector jobs, so the test scope can finish.
+        session.beginFinish()
+    }
 
     @Test
     fun theLiveLogGrowsWithTheWalkAndHasNoDraftBeforeStart() = runTest {
