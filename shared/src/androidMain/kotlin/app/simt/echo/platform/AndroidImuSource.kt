@@ -14,6 +14,11 @@ import app.simt.echo.capture.PdrEngine
 import app.simt.echo.capture.StepCalibratable
 import app.simt.echo.capture.PressureSample
 import app.simt.echo.capture.RotSample
+import app.simt.echo.capture.FrameTap
+import app.simt.echo.capture.visual.VisualImuHistory
+import app.simt.echo.capture.visual.VisualMotionConsumer
+import app.simt.echo.capture.visual.VisualMotionFrame
+import app.simt.echo.capture.visual.VisualMotionSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -50,7 +55,7 @@ import kotlinx.coroutines.launch
 class BuiltInPdrMotionSource internal constructor(
     context: Context,
     private val engine: PdrEngine,
-) : MotionSource, StepCalibratable {
+) : MotionSource, StepCalibratable, VisualMotionSource {
 
     constructor(context: Context) : this(context, PdrEngine())
 
@@ -67,6 +72,30 @@ class BuiltInPdrMotionSource internal constructor(
 
     private val forwardScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    private class VisualSession(val input: VisualImuHistory, val consumer: VisualMotionConsumer)
+    @Volatile private var visualSession: VisualSession? = null
+
+    override val visualAssistActive: Boolean
+        get() = visualSession?.consumer?.hasUsableFrame == true
+
+    override fun attachVisual(tap: FrameTap, enabled: Boolean, intervalNs: Long): Boolean {
+        detachVisual()
+        if (!enabled) return false
+        val input = VisualImuHistory()
+        val consumer = VisualMotionConsumer(tap, input, intervalNs = intervalNs)
+        if (!consumer.start()) return false
+        visualSession = VisualSession(input, consumer)
+        return true
+    }
+
+    override fun detachVisual() {
+        val session = visualSession
+        visualSession = null
+        session?.consumer?.stop()
+    }
+
+    override fun drainVisual(tNs: Long): VisualMotionFrame? = visualSession?.consumer?.drain(tNs)
+
     /** Calibration reaches the engine it wraps (W4-02): without this
      * forward, `CaptureSession`'s step-K push silently no-ops on the
      * shipping Android source. */
@@ -80,20 +109,26 @@ class BuiltInPdrMotionSource internal constructor(
         override fun onSensorChanged(event: SensorEvent) {
             val nowNs = SystemClock.elapsedRealtimeNanos()
             when (event.sensor.type) {
-                Sensor.TYPE_ACCELEROMETER -> engine.onAccelerometer(
-                    ImuSample(
-                        tNs = event.timestamp,
-                        ax = event.values[0].toDouble(),
-                        ay = event.values[1].toDouble(),
-                        az = event.values[2].toDouble(),
-                    ),
-                    wallNowNs = nowNs,
-                )
+                Sensor.TYPE_ACCELEROMETER -> {
+                    engine.onAccelerometer(
+                        ImuSample(
+                            tNs = event.timestamp,
+                            ax = event.values[0].toDouble(),
+                            ay = event.values[1].toDouble(),
+                            az = event.values[2].toDouble(),
+                        ),
+                        wallNowNs = nowNs,
+                    )
+                    visualSession?.input?.onAccelerometer(
+                        event.timestamp, event.values[0].toDouble(), event.values[1].toDouble(), event.values[2].toDouble(),
+                    )
+                }
 
                 Sensor.TYPE_GAME_ROTATION_VECTOR, Sensor.TYPE_ROTATION_VECTOR, Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR -> {
                     val matrix = FloatArray(9)
                     SensorManager.getRotationMatrixFromVector(matrix, event.values)
                     engine.onRotation(RotSample(tNs = event.timestamp, r = matrix), wallNowNs = nowNs)
+                    visualSession?.input?.onRotation(event.timestamp, matrix)
                 }
 
                 Sensor.TYPE_PRESSURE -> engine.onPressure(
@@ -143,6 +178,7 @@ class BuiltInPdrMotionSource internal constructor(
     override fun stop() {
         teardown()
         engine.stop()
+        detachVisual()
     }
 
     /** Ends any previous run: sensors, IMU thread, forwarder, buffered updates. */

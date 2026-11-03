@@ -188,4 +188,18 @@ afterEvaluate {
         taskDescription = "Record seeded 100- and 500-walk simulation metrics to the committed baseline artifact.",
         recordBaseline = true,
     )
+
+    tasks.register<Test>("visualCostBenchmark") {
+        group = "verification"
+        description = "Record relative host cost of visual flow versus the combined visual pipeline."
+        testClassesDirs = androidHostTest.get().testClassesDirs
+        classpath = androidHostTest.get().classpath
+        useJUnit()
+        filter { includeTestsMatching("app.simt.echo.capture.visual.VisualCostBenchmarkTest") }
+        outputs.upToDateWhen { false }
+        testLogging {
+            events("passed", "failed")
+            showStandardStreams = true
+        }
+    }
 }

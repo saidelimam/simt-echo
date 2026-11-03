@@ -30,6 +30,8 @@ data class EchoConfig(
      * pose or tracking exists in this app (review 0004 R4).
      */
     val cameraOverlayEnabled: Boolean = false,
+    /** On-device visual motion assistance (W16-05), opt-in until field evidence. */
+    val visualAssist: Boolean = false,
     /**
      * Distance heartbeat (W13-09, freeze §7): a TICK that quickens from
      * 1.2 s to 0.4 s over the last 8 m to a turn. Haptic only, so on by
