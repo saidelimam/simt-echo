@@ -5,8 +5,10 @@
 
 **Creator / hackathon participant:** Said Elimam\
 **Occasion:** Meta Global AI Developer Hackathon 2026\
-**Purpose:** Product narrative, technical storytelling, submission copy, and a three-minute showcase film\
+**Purpose:** Product narrative, technical storytelling, submission copy, and showcase films\
 **Date:** 3 November 2026
+
+**Animated companion:** [A Little World. A Shared Way. — 60-second 3D advertisement, video-generation prompt, and illustrated reference pack](SIMT_ECHO_ANIMATED_AD_60S.md).
 
 ---
 
@@ -422,17 +424,17 @@ Created by **Said Elimam**, SIMT ECHO connects physical experience, multimodal A
 
 The narrative follows the product, architecture, algorithm, design, and data-handling material across these local documents. Later technical contracts govern specific representation and behavior details.
 
-- [Hackathon product idea and human story](SIMT_ECHO_HACKATHON_PROPOSAL.md).
-- [Core architecture, route contracts, sensor algorithms, AI pipeline, and transfer](SIMT_ECHO_IMPLEMENTATION_PLAN_V2.md).
+- [Hackathon product idea and human story](../research/SIMT_ECHO_HACKATHON_PROPOSAL.md).
+- [Core architecture, route contracts, sensor algorithms, AI pipeline, and transfer](../research/SIMT_ECHO_IMPLEMENTATION_PLAN_V2.md).
 - [Plan 1: standalone foundations, package boundaries, and product loop](../plans/0001-agentic-flow.md).
 - [Plan 2: complete user journey and Cosmos adoption](../plans/0002-mvp-cosmos-design.md).
 - [Plan 3: Ghost, SAM Lens, local perception, Luminous, and multisensory guidance](../plans/0003-echo-luminous.md).
 - [Plan 4: Parallax, ViewFix, route learning, and adaptive computation](../plans/0004-echo-parallax.md).
-- [Cosmos visual, typography, accessibility, and motion specifications](cosmos-echo-freeze.md).
-- [Luminous brand, motifs, sigils, and haptic/sonic grammar](luminous-freeze.md).
-- [Parallax representation, compatibility, and derived-data privacy](parallax-contract.md).
-- [Shared sequence-matching behavior](dtw-inventory.md).
-- [Feature and contract inventory](echo-v2-coverage.md).
+- [Cosmos visual, typography, accessibility, and motion specifications](../research/cosmos-echo-freeze.md).
+- [Luminous brand, motifs, sigils, and haptic/sonic grammar](../research/luminous-freeze.md).
+- [Parallax representation, compatibility, and derived-data privacy](../research/parallax-contract.md).
+- [Shared sequence-matching behavior](../research/dtw-inventory.md).
+- [Feature and contract inventory](../research/echo-v2-coverage.md).
 
 > **SIMT ECHO — A place becomes easier to navigate because someone cared enough to pass on the way.**\
 > **Created by Said Elimam.**
