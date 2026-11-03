@@ -154,7 +154,7 @@ Use `simt slice start <ID>` from this tracker before implementation, `simt why <
 | W21-01 | Complete | Share state machine, NFC default and mode switching | W20-03, W20-04 | simt-echo · — |
 | W21-02 | Complete | Receive state machine, QR default and unified import | W20-03, W20-05 | simt-echo · — |
 | W21-03 | Complete | Complete Cosmos UI, resources, accessibility and navigation wiring | W21-01, W21-02 | simt-echo · — |
-| W21-04 | In progress | End-to-end compatibility, security and adversarial regressions | W21-03 | simt-echo · — |
+| W21-04 | Complete | End-to-end compatibility, security and adversarial regressions | W21-03 | simt-echo · — |
 | W21-05 | Queued | Real-device qualification and feature release evidence | W21-04 | simt-echo · — |
 
 ### W20-01 — freeze a testable platform seam
