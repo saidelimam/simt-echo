@@ -524,12 +524,13 @@ export function registerUploadRoutes(app: Hono<AppEnv>): void {
       const uploadId = crypto.randomUUID();
       const meta: StoredUploadMeta = { files, owner: c.get("deviceId"), createdAt: Date.now() };
       await c.env.MEDIA.put(stagingMetaKey(uploadId), JSON.stringify(meta));
-      // Opportunistic expiry sweep; never fails the create itself.
-      try {
-        await sweepExpiredUploads(c.env);
-      } catch {
-        // Stale staging stays until the next sweep; the create succeeded.
-      }
+      // R9-09 (review 0009, F8): no opportunistic sweep here. It cost
+      // O(staging + idem) list/GET/HEAD ops on every create — quadratically
+      // punishing the bursty ready-on-arrival client this endpoint serves.
+      // Cleanup is owned off the request path: the hourly cron runs
+      // sweepExpiredUploads (index.ts), loadUploadMeta lazily expires each
+      // session on its own reads, and the jobs/ lifecycle rule is the
+      // backstop.
       return c.json({ ok: true, uploadId, missing: names });
     } catch {
       return c.json({ ok: false, error: "upload_create_failed" }, 500);

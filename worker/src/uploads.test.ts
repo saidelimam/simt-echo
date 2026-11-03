@@ -208,6 +208,31 @@ describe("W11-09 ready-on-arrival uploads", () => {
     expect(ghost.status).toBe(204);
   });
 
+  it("does not sweep other sessions on create (R9-09: cron owns cleanup)", async () => {
+    const media = new FakeR2();
+    const env = await envFor(media, new FakePipeline());
+    // The state the old opportunistic sweep removed on every create: an
+    // expired foreign session and an orphaned idempotency record.
+    const stale = "11111111-1111-1111-1111-111111111111";
+    await media.put(
+      `jobs/staging/${stale}/meta.json`,
+      JSON.stringify({ files: [], owner: KEY, createdAt: Date.now() - 2 * 3_600_000 }),
+    );
+    await media.put(`jobs/staging/${stale}/kf_n2_0`, new Uint8Array([1, 2, 3]));
+    await media.put("jobs/idem/orphan.json", JSON.stringify({ jobId: "no-such-job" }));
+
+    const res = await createUpload(env, [
+      { name: "kf_n2_0", sha256: "a".repeat(64), bytes: 3 },
+    ]);
+    expect(res.status).toBe(200);
+
+    // Create touches only its own session: the stale keys survive until
+    // the hourly cron (or a lazy per-session check) removes them.
+    expect(media.store.has(`jobs/staging/${stale}/meta.json`)).toBe(true);
+    expect(media.store.has(`jobs/staging/${stale}/kf_n2_0`)).toBe(true);
+    expect(media.store.has("jobs/idem/orphan.json")).toBe(true);
+  });
+
   it("creates a job against per-window sessions and consumes all of them", async () => {
     const media = new FakeR2();
     const pipeline = new FakePipeline();
