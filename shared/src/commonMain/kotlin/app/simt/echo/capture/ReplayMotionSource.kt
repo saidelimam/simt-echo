@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import kotlin.math.atan2
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * Replays a recorded [CaptureLog] as a [MotionSource] (plan W2-05).
@@ -44,7 +45,7 @@ class ReplayMotionSource(
             while (captureNs <= endNs) {
                 _updates.emit(interpolate(samples, captureNs))
                 captureNs += tickCaptureNs
-                if (captureNs <= endNs) delay(TICK_MS)
+                if (captureNs <= endNs) delay(TICK_MS.milliseconds)
             }
             // Land exactly on the final sample: arrival checks key off it.
             if ((captureNs - tickCaptureNs) < endNs) {

@@ -31,6 +31,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.time.Duration.Companion.milliseconds
 
 @Composable
 actual fun rememberMotionSource(): MotionSource {
@@ -62,7 +63,7 @@ actual fun rememberOnline(pollMs: Long): Boolean {
                 val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
                 manager.activeNetwork != null
             }.getOrDefault(false)
-            delay(pollMs)
+            delay(pollMs.milliseconds)
         }
     }
     return online

@@ -13,6 +13,7 @@ import org.robolectric.annotation.Config
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlin.test.assertEquals
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * W20-03 gate for the real LAN server (plan 0005 §4.5): replacement must
@@ -54,7 +55,7 @@ class KtorLanSessionTest {
             // Re-offer immediately: the first server is replaced while its
             // 50 ms post-download shutdown is still armed.
             val second = transport.offer(ByteArray(96) { 2 }, "token-two", 2L)
-            delay(400)
+            delay(400.milliseconds)
 
             val reply = get(second, "token-two")
             assertEquals(200, reply.status, "the new offer must still be serving")
@@ -91,7 +92,7 @@ class KtorLanSessionTest {
 
             val served = withTimeout(10_000) {
                 val pending = async(Dispatchers.IO) { transport.servedOffers.first() }
-                delay(200)
+                delay(200.milliseconds)
                 get(current, "second")
                 pending.await()
             }
@@ -99,7 +100,7 @@ class KtorLanSessionTest {
 
             val sample = withTimeout(10_000) {
                 val pending = async(Dispatchers.IO) { transport.offerProgress.first() }
-                delay(200)
+                delay(200.milliseconds)
                 get(current, "second")
                 pending.await()
             }

@@ -28,6 +28,7 @@ import app.simt.echo.ui.atmosphere.cosmosMotionTier
 import app.simt.echo.ui.motion.LuminousSprings
 import app.simt.echo.ui.theme.EchoExtras
 import kotlinx.coroutines.delay
+import kotlin.time.Duration.Companion.milliseconds
 
 const val LedgerBracketsTag = "EchoWalkBrackets"
 
@@ -67,7 +68,7 @@ fun LedgerBrackets(
             CosmosMotionTier.REDUCED -> alpha.animateTo(1f, tween(CosmosMotionDurations.FEEDBACK_MS))
             CosmosMotionTier.STATIC -> alpha.snapTo(1f)
         }
-        delay(LEDGER_BRACKET_MS.toLong())
+        delay(LEDGER_BRACKET_MS.milliseconds)
         onExpired()
     }
     Box(

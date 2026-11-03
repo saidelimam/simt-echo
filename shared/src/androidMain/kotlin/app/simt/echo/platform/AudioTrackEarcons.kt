@@ -13,6 +13,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * Plays an [EarconPcm] clip through an [AudioTrack] (plan W13-09).
@@ -39,7 +40,7 @@ internal class AudioTrackEarcons(private val scope: CoroutineScope) {
                     track.play()
                     val clipMs = frames * 1000L / pcm.sampleRateHz
                     withTimeoutOrNull(clipMs + TAIL_MS) {
-                        while (isActive && track.playbackHeadPosition < frames) delay(POLL_MS)
+                        while (isActive && track.playbackHeadPosition < frames) delay(POLL_MS.milliseconds)
                     }
                 } finally {
                     track.release()

@@ -6,6 +6,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.milliseconds
 
 /** Silence after which a transfer that has not finished counts as stalled. */
 const val TRANSFER_STALL_MS = 1_000L
@@ -41,7 +42,7 @@ class ProgressRateTracker(
             null
         } else {
             scope.launch {
-                delay(stallAfterMs)
+                delay(stallAfterMs.milliseconds)
                 onStall()
             }
         }

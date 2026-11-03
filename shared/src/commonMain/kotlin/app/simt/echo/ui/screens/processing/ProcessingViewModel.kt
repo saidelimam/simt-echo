@@ -51,6 +51,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.encodeToString
+import kotlin.time.Duration.Companion.milliseconds
 
 /** What the consent sheet offers to send (plan W3-02 copy). */
 data class ConsentInfo(
@@ -728,7 +729,7 @@ class ProcessingViewModel(
             }
             val gapMs = FALLBACK_POLL_DELAYS_MS[minOf(attempt, FALLBACK_POLL_DELAYS_MS.lastIndex)]
             if (elapsedMs + gapMs > deadlineMs) break
-            delay(gapMs)
+            delay(gapMs.milliseconds)
             elapsedMs += gapMs
             attempt++
         }
@@ -745,7 +746,7 @@ class ProcessingViewModel(
     private suspend fun poll(jobId: String) {
         var consecutiveFailures = 0
         repeat(maxPolls) {
-            delay(pollIntervalMs)
+            delay(pollIntervalMs.milliseconds)
             val poll = try {
                 api.get(jobId)
             } catch (e: CancellationException) {

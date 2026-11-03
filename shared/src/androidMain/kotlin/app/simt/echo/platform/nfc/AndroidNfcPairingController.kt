@@ -36,6 +36,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * Foreground NFC pairing on Android (plan 0005 §4.4).
@@ -144,7 +145,7 @@ class AndroidNfcPairingController private constructor(
         }
         idleJob?.cancel()
         idleJob = scope.launch {
-            delay(NFC_READER_IDLE_TIMEOUT_MS)
+            delay(NFC_READER_IDLE_TIMEOUT_MS.milliseconds)
             if (readingAttempt == attemptId) {
                 // No automatic repeat: the screen offers "Try tap again".
                 stopReading(attemptId)

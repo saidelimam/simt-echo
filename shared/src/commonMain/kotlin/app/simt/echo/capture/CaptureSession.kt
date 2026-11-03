@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.milliseconds
 
 /** Capture lifecycle (plan W1-03): IDLE → READY → RECORDING → FINISHING → SAVED. */
 enum class CaptureState {
@@ -187,7 +188,7 @@ class CaptureSession(
         _state.value = CaptureState.RECORDING
         autosaveJob = scope.launch {
             while (isActive) {
-                delay(autosaveEveryMs)
+                delay(autosaveEveryMs.milliseconds)
                 if (_state.value == CaptureState.RECORDING) drafts.saveCapture(buildLog())
             }
         }
