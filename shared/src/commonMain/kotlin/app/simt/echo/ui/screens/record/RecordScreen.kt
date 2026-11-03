@@ -1,6 +1,7 @@
 package app.simt.echo.ui.screens.record
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
@@ -24,6 +26,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -71,6 +74,18 @@ const val RecordInstrumentTag = "RecordInstrument"
 const val RecordPrestartTag = "RecordPrestart"
 const val RecordHeadingTag = "RecordHeading"
 const val RecordOptInTag = "RecordOptIn"
+
+/** Live-path panel width: a compact instrument, not a full-width band. */
+private val TrailPanelWidth = 150.dp
+
+/** Compact panel height: a corner instrument, well clear of the action row. */
+private val TrailPanelHeight = 112.dp
+
+/** Top inset: 8 dp below the "Great view captured" banner, clear of the chips row. */
+private val TrailPanelTop = 112.dp
+
+/** End inset: the same 20 dp breathing room the panel keeps from the corner. */
+private val TrailPanelEnd = 20.dp
 
 /**
  * Record screen (plan §8.3 / W8-07): personal-orrery grammar (Cosmos §6.3).
@@ -219,10 +234,22 @@ internal fun RecordInstrument(
         // action zone stays on top; none consume input or semantics beyond
         // their documented tags.
         StepRipples(ripples = walk.ripples)
+        // Live path (W13-04): a compact top-end panel over the preview. It
+        // used to sit bottom-centre, directly behind the Mark spot/Finish
+        // row, so the trail was the one thing a walk never showed. The wash
+        // carries it over the camera in both schemes — no outline anywhere,
+        // matching the rest of the surface grammar.
         TrailRibbon(
             trail = walk.trail,
             headYaw = headingRad,
-            modifier = Modifier.align(Alignment.BottomCenter),
+            height = TrailPanelHeight,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = TrailPanelTop, end = TrailPanelEnd)
+                .width(TrailPanelWidth)
+                .clip(MaterialTheme.shapes.large)
+                .background(MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.55f))
+                .padding(horizontal = 6.dp, vertical = 4.dp),
         )
         LedgerBrackets(highlight = walk.highlight, onExpired = onHighlightExpired)
         Column(

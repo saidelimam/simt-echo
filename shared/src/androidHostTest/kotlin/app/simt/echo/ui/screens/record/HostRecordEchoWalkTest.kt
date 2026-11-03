@@ -10,6 +10,7 @@ import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.onChildren
 import androidx.compose.ui.test.onNodeWithTag
@@ -396,5 +397,16 @@ class HostRecordEchoWalkTest {
             .assertContentDescriptionEquals("Distance 23.4 m")
         compose.onNodeWithText("90° E").assertIsDisplayed()
         compose.onNodeWithText("Mark spot").assertIsDisplayed()
+
+        // Layout gate: the trail moved out of the action zone into the top-end
+        // corner, with real spacing from every neighbour — not merely present.
+        val instrument = compose.onNodeWithTag(RecordInstrumentTag).getUnclippedBoundsInRoot()
+        val trail = compose.onNodeWithTag(TrailRibbonTag).getUnclippedBoundsInRoot()
+        val chips = compose.onNodeWithText("31 steps").getUnclippedBoundsInRoot()
+        val action = compose.onNodeWithText("Mark spot").getUnclippedBoundsInRoot()
+        assertTrue(trail.top > chips.bottom, "trail sits below the chips row, never over it")
+        assertTrue(trail.right < instrument.right, "trail keeps its end inset")
+        assertTrue(trail.bottom < action.top, "trail must clear the action row it used to hide behind")
+        assertTrue(trail.right > instrument.right / 2, "trail lives on the end side of the screen")
     }
 }

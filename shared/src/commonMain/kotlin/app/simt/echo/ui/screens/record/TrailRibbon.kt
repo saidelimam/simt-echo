@@ -37,7 +37,7 @@ import kotlin.math.sin
 const val TrailRibbonTag = "EchoWalkTrail"
 const val TrailNodeTagPrefix = "EchoWalkNode"
 
-/** Ribbon height: a bottom band that never reaches the copy zone. */
+/** Default ribbon height. Callers may pass a smaller [TrailRibbon.height] for a compact panel. */
 val TrailRibbonHeight: Dp = 148.dp
 
 /** Perspective compression per metre behind the head. */
@@ -61,6 +61,8 @@ fun TrailRibbon(
     headYaw: Double?,
     modifier: Modifier = Modifier,
     tier: CosmosMotionTier = cosmosMotionTier(),
+    /** Height of the trail surface; the record screen renders a compact corner panel. */
+    height: Dp = TrailRibbonHeight,
 ) {
     if (trail.isEmpty()) return
     val yaw = headYaw ?: trail.last().yawRad
@@ -72,15 +74,15 @@ fun TrailRibbon(
     BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
-            .height(TrailRibbonHeight)
+            .height(height)
             .testTag(TrailRibbonTag)
             .semantics { contentDescription = "Walked trail: $turns turns, $marks spots" },
     ) {
         val density = LocalDensity.current
         val wPx = constraints.maxWidth.toFloat()
-        val hPx = with(density) { TrailRibbonHeight.toPx() }
+        val hPx = with(density) { height.toPx() }
         fun pointAt(i: Int): Offset = trailToPx(offsets[i].lateralM(yaw), offsets[i].behindM(yaw), wPx, hPx)
-        Canvas(modifier = Modifier.fillMaxWidth().height(TrailRibbonHeight)) {
+        Canvas(modifier = Modifier.fillMaxWidth().height(height)) {
             val n = offsets.size
             for (i in 1 until n) {
                 val t = i.toFloat() / (n - 1).coerceAtLeast(1)
