@@ -2,6 +2,9 @@ package app.simt.echo.ui.screens.navigate
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.simt.echo.capture.FrameTap
+import app.simt.echo.capture.visual.VisualMotionFrame
+import app.simt.echo.capture.visual.VisualMotionSource
 import app.simt.echo.data.ConfigRepository
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.data.TrialRepository
@@ -94,6 +97,18 @@ class NavigateViewModel(
 
     private val route = ephemeralRoute ?: routes.get(routeId)
     private val navigator = route?.let { Navigator(it, config) }
+    private val visualEnabled = config.visualAssist && !baselineMode && navigator != null
+    val visualAssistRequested: Boolean get() = visualEnabled && motion is VisualMotionSource
+    /** Owned by the navigation collector, not an image or a UI snapshot. */
+    var visualFrame: VisualMotionFrame? = null
+        private set
+
+    fun attachVisualTap(tap: FrameTap): Boolean =
+        (motion as? VisualMotionSource)?.attachVisual(tap, visualAssistRequested) == true
+
+    fun detachVisualTap() {
+        (motion as? VisualMotionSource)?.detachVisual()
+    }
 
     val ui: StateFlow<NavUi?> =
         navigator?.ui ?: MutableStateFlow<NavUi?>(null).asStateFlow()
@@ -133,6 +148,7 @@ class NavigateViewModel(
             viewModelScope.launch {
                 motion.updates.collect {
                     walkedM = it.distanceM
+                    if (it.isStep) visualFrame = (motion as? VisualMotionSource)?.drainVisual(it.tNs)
                     nav.onInput(NavInput.Motion(it))
                 }
             }
@@ -316,6 +332,7 @@ class NavigateViewModel(
         // Tell the watch the walk is over, so it does not keep an arrow up.
         runCatching { wearNav(endedWearState()) }
         runCatching { liveUpdates?.dismiss(NAV_LIVE_UPDATE_ID) }
+        detachVisualTap()
         motion.stop()
     }
 }

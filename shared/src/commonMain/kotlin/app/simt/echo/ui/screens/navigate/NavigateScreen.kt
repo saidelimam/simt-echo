@@ -19,6 +19,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -136,6 +137,10 @@ fun NavigateScreen(
     // Navigate graph (plan W10-03): Preview + Analysis with overlay,
     // Analysis-only otherwise — W12-05 decides when analysis runs at all.
     val camera = rememberCameraRecorder(cameraGraphFor(CaptureScreen.NAVIGATE, config.cameraOverlayEnabled))
+    DisposableEffect(camera, viewModel) {
+        viewModel.attachVisualTap(camera.frameTap)
+        onDispose { viewModel.detachVisualTap() }
+    }
     if (nav == null) {
         CosmosEmptyState(
             title = MISSING_ROUTE_ERROR.whatHappened,
@@ -164,7 +169,14 @@ fun NavigateScreen(
 
     // Overlay off: the Analysis-only graph still binds (no visible
     // preview) so the tap runs without a viewfinder.
-    camera.Preview(modifier = Modifier)
+    if (viewModel.visualAssistRequested) {
+        // The opt-in consent surface belongs to W19-01. Until then, a missing
+        // permission silences visual assistance, never the navigation controls.
+        val permission = app.simt.echo.platform.rememberCameraPermissionState()
+        if (permission.status == app.simt.echo.platform.CameraPermissionStatus.GRANTED) camera.Preview(modifier = Modifier)
+    } else {
+        camera.Preview(modifier = Modifier)
+    }
     NavigateBody(
         nav = nav,
         routes = routes,

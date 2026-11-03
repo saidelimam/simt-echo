@@ -58,5 +58,22 @@ Limits: these are controlled static-wall oracle fixtures, not a field result;
 the pinhole model is not a calibrated radial-distortion or rolling-shutter
 model, and corridor seam blocks at 2 Hz are dropped rather than modeled with a
 two-plane warp. No SWAR alternative was introduced without its required
-mid-device evidence. W16-05 owns combined host cost measurement; W19-03 owns
-absolute device timing.
+mid-device evidence. W19-03 owns absolute device timing.
+
+## Combined pipeline host cost & allocation — W16-05
+
+`VisualAllocationHostTest`, `VisualImuHistoryAllocationTest` and
+`VisualCostBenchmarkTest` (`./gradlew :shared:visualCostBenchmark`) measure the
+full `FrameTapMux` → `VisualMotionConsumer` → `VisualImuHistory` /
+`VisualUsability` → `VisualFlow` → `EgoMotionFit` → `VisualEgoRing.publish` /
+`drain` path after warm-up:
+
+- **Allocation:** `0` bytes per frame after warm-up across both the IMU
+  bracketed interpolation/pose-mode history and the full textured consumer
+  dispatch + ring drain path (`ThreadMXBean.getThreadAllocatedBytes`).
+- **Relative host cost (9 paired 512-frame batches after 5,000 warm frames):**
+  flow-only median `439.7 µs/frame` (`439,733.6 ns`), combined pipeline median
+  `491.8 µs/frame` (`491,791.5 ns`), median paired ratio **`1.118×`** (+11.8%
+  for mux dispatch, IMU pose read, usability scoring, ego-motion fit and SPSC
+  ring publish/drain). Host-relative evidence only; the ≤ 0.8 ms median /
+  ≤ 2.0 ms p99 device gate remains owned by W19-03.

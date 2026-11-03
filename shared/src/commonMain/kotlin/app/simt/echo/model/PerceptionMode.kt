@@ -15,4 +15,12 @@ object PerceptionMode {
 
     /** Preview + Video only; no frame ledger (fallback or pre-W10-03). */
     const val LEDGER_OFF = "preview_video"
+
+    /** Same recording graph, with an admitted visual-motion witness (W16-05). */
+    const val LEDGER_VISUAL_ON = "preview_video_analysis_visual"
+
+    fun withVisual(mode: String, used: Boolean): String =
+        if (used && mode == LEDGER_ON) LEDGER_VISUAL_ON else mode
+
+    fun usedVisual(mode: String): Boolean = mode == LEDGER_VISUAL_ON
 }

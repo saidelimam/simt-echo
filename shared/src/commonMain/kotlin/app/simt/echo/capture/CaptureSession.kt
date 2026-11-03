@@ -6,11 +6,14 @@ import app.simt.echo.model.CaptureSample
 import app.simt.echo.model.EchoConfig
 import app.simt.echo.model.Mark
 import app.simt.echo.model.PerceptionMode
+import app.simt.echo.capture.visual.VisualMotionFrame
+import app.simt.echo.capture.visual.VisualMotionSource
 import app.simt.echo.platform.CameraRecorder
 import app.simt.echo.platform.HapticPattern
 import app.simt.echo.platform.Haptics
 import app.simt.echo.platform.MotionSource
 import app.simt.echo.platform.MotionUpdate
+import kotlin.concurrent.Volatile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
@@ -103,6 +106,10 @@ class CaptureSession(
     private var autosaveJob: Job? = null
     private var resumedDraftId: String? = null
     private var ledger: RecordingLedger? = null
+    @Volatile private var visualUsed = false
+    /** Capture-collector-owned drain result; no source image is retained. */
+    var visualFrame: VisualMotionFrame? = null
+        private set
 
     /** Preview is live; [start] may be called. */
     fun ready() {
@@ -126,6 +133,7 @@ class CaptureSession(
             marks += log.marks
         }
         startedAtEpochMs = log.startedAtEpochMs
+        visualUsed = PerceptionMode.usedVisual(log.perceptionMode)
         lastSampleNs = log.samples.lastOrNull()?.tNs ?: Long.MIN_VALUE
         _hud.update {
             it.copy(
@@ -150,19 +158,21 @@ class CaptureSession(
         // Calibrated geometry in, raw sensors out: the configured step K
         // reaches any calibratable source (W4-02); others ignore it.
         (motion as? StepCalibratable)?.stepK = config.stepK
+        (motion as? VisualMotionSource)?.attachVisual(camera.frameTap, config.visualAssist, FrameRateGovernor.RECORD_INTERVAL_NS)
         val recordingLedger = RecordingLedger(drafts, id, camera.frameTap, onOffer = { _ledgerOffers.tryEmit(it) })
         ledger = recordingLedger
         // Subscribe before motion starts so no early step is lost.
         collectJob = scope.launch { motion.updates.collect(::onUpdate) }
-        motion.start()
-        recordingLedger.attach()
         try {
+            motion.start()
+            recordingLedger.attach()
             videoStartNs = camera.startVideo(drafts.draftFilePath(id, VIDEO_FILE))
         } catch (e: Throwable) {
             // A failed start leaves nothing running: the session stays READY
             // and a retry must not stack a second collector or consumer.
             recordingLedger.detach()
             collectJob?.cancel()
+            (motion as? VisualMotionSource)?.detachVisual()
             motion.stop()
             throw e
         }
@@ -217,6 +227,8 @@ class CaptureSession(
         ledger?.detach()
         collectJob?.cancel()
         autosaveJob?.cancel()
+        visualUsed = visualUsed || (motion as? VisualMotionSource)?.visualAssistActive == true
+        (motion as? VisualMotionSource)?.detachVisual()
         motion.stop()
         try {
             camera.stopVideo()
@@ -248,6 +260,8 @@ class CaptureSession(
 
     private fun onUpdate(update: MotionUpdate) {
         ledger?.onMotion(update)
+        if (update.isStep) visualFrame = (motion as? VisualMotionSource)?.drainVisual(update.tNs)
+        visualUsed = visualUsed || (motion as? VisualMotionSource)?.visualAssistActive == true
         motionSourceName = update.source
         if (startElapsedNs == 0L) startElapsedNs = update.tNs
         val isHeartbeat = update.tNs - lastSampleNs >= HEARTBEAT_NS
@@ -287,7 +301,7 @@ class CaptureSession(
             startPhoto = START_PHOTO,
             routeName = routeName,
             destinationLabel = destinationLabel,
-            perceptionMode = perceptionMode(),
+            perceptionMode = PerceptionMode.withVisual(perceptionMode(), visualUsed || (motion as? VisualMotionSource)?.visualAssistActive == true),
         )
     }
 
