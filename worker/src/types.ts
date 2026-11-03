@@ -53,6 +53,20 @@ export const ApproachSampleSchema = z.object({
   d: z.number().nonnegative(),
 });
 
+/**
+ * R10-03 (review 0010, F3): fan-out caps. Every checkpoint costs paid vision
+ * calls, so the schema bounds what one job can fan out to. Each value sits
+ * well above what the app produces today — ≤3 keyframes per checkpoint
+ * (`keyframeTimes`), ≤12 approach samples (`APPROACH_MAX_FRAMES`), one
+ * checkpoint per route node — so a legitimate walk is never rejected; a
+ * hostile or buggy client is.
+ */
+export const MAX_CHECKPOINTS = 40;
+export const MAX_KEYFRAMES_PER_CHECKPOINT = 8;
+export const MAX_APPROACH_SAMPLES = 16;
+export const MAX_DRAFT_ID_LENGTH = 128;
+export const MAX_ROUTE_CONTEXT_LENGTH = 200;
+
 /** One non-START route node with its media refs (plan §5.5 `checkpoints[]`). */
 export const CheckpointSchema = z
   .object({
@@ -62,9 +76,9 @@ export const CheckpointSchema = z
     atDistanceM: z.number().nonnegative(),
     tMs: z.number().int().nonnegative(),
     heroKeyframeId: JobIdSchema,
-    keyframes: z.array(KeyframeRefSchema).min(1),
+    keyframes: z.array(KeyframeRefSchema).min(1).max(MAX_KEYFRAMES_PER_CHECKPOINT),
     clip: ClipRefSchema.optional(),
-    approach: z.array(ApproachSampleSchema),
+    approach: z.array(ApproachSampleSchema).max(MAX_APPROACH_SAMPLES),
   })
   .superRefine((cp, ctx) => {
     if (cp.type === "TURN" && cp.turn === undefined) {
@@ -73,13 +87,67 @@ export const CheckpointSchema = z
   });
 export type Checkpoint = z.infer<typeof CheckpointSchema>;
 
-export const ManifestSchema = z.object({
-  schema: z.literal(1),
-  draftId: z.string().min(1),
-  consent: ConsentSchema,
-  routeContext: z.string().min(1),
-  checkpoints: z.array(CheckpointSchema).min(1),
-});
+export const ManifestSchema = z
+  .object({
+    schema: z.literal(1),
+    draftId: z.string().min(1).max(MAX_DRAFT_ID_LENGTH),
+    consent: ConsentSchema,
+    routeContext: z.string().min(1).max(MAX_ROUTE_CONTEXT_LENGTH),
+    checkpoints: z.array(CheckpointSchema).min(1).max(MAX_CHECKPOINTS),
+  })
+  .superRefine((m, ctx) => {
+    // R10-11 (review 0010, F10): uniqueness and cross-field checks. Duplicate
+    // nodeIds collapse in the Maps scout/ground/assemble build and yield
+    // duplicated result checkpoints; duplicate media ids collide in the
+    // staging move; a hero pointing at no keyframe of its checkpoint breaks
+    // the lens step.
+    const nodeIds = new Set<string>();
+    const mediaIds = new Set<string>();
+    m.checkpoints.forEach((cp, i) => {
+      if (nodeIds.has(cp.nodeId)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["checkpoints", i, "nodeId"],
+          message: "duplicate nodeId",
+        });
+      }
+      nodeIds.add(cp.nodeId);
+      if (!cp.keyframes.some((k) => k.id === cp.heroKeyframeId)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["checkpoints", i, "heroKeyframeId"],
+          message: "heroKeyframeId must reference one of this checkpoint's keyframes",
+        });
+      }
+      for (const k of cp.keyframes) {
+        if (mediaIds.has(k.id)) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["checkpoints", i, "keyframes"],
+            message: `duplicate keyframe id ${k.id}`,
+          });
+        }
+        mediaIds.add(k.id);
+      }
+      if (cp.clip !== undefined) {
+        if (mediaIds.has(cp.clip.id)) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["checkpoints", i, "clip"],
+            message: `duplicate clip id ${cp.clip.id}`,
+          });
+        }
+        mediaIds.add(cp.clip.id);
+        if (cp.clip.endMs < cp.clip.startMs) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["checkpoints", i, "clip", "endMs"],
+            message: "clip endMs must be >= startMs",
+          });
+        }
+      }
+    });
+  });
 export type Manifest = z.infer<typeof ManifestSchema>;
 
 /** One proposed landmark (plan §5.5 `candidates[]`). Nullables are the
@@ -126,8 +194,9 @@ export const JobResultCheckpointSchema = z.object({
  * W3-06 fills them. The object is closed (zod strips extras) so step
  * results stay Rpc.Serializable across the Workflow boundary.
  * W11-06 adds two optional fields (still closed, still serializable):
- * `samFramesBilled` sums only vendor-reported `response.completed` frames
- * (cache hits bill zero) and `budgetExhausted` records the governor
+ * `samFramesBilled` sums vendor-reported `response.completed` frames,
+ * falling back to the sent frames when the vendor omits usage (R10-05;
+ * cache hits bill zero), and `budgetExhausted` records the governor
  * refusing a call. Both are absent when SAM never ran. */
 export const JobUsageSchema = z.object({
   samFrames: z.number().int().nonnegative().optional(),
@@ -246,8 +315,14 @@ export const CreateJobV11RequestSchema = z.object({
   uploadId: UuidSchema.optional(),
   // W11-09 ready-on-arrival: per-window upload sessions staged during the
   // walk; Finish creates the job against all of them. Never alongside
-  // uploadId — one addressing mode per create.
-  uploadIds: z.array(UuidSchema).min(1).max(12).optional(),
+  // uploadId — one addressing mode per create. R10-11 (F10): duplicates
+  // would double-list one session in the move.
+  uploadIds: z
+    .array(UuidSchema)
+    .min(1)
+    .max(12)
+    .refine((ids) => new Set(ids).size === ids.length, { message: "duplicate uploadIds" })
+    .optional(),
   budget: JobBudgetSchema.optional(),
   idempotencyKey: z.string().min(1).max(128).optional(),
   // The id of an earlier job; the server checks it exists before it is

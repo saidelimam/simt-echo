@@ -6,12 +6,20 @@ Evidence: **sim and host unit/allocation only**, not device accuracy or timing.
 
 - An owned 240×180 plane and ping-ponged 120×90 / 60×45 levels never retain
   Frame Tap buffers. Twelve textured 16×16 blocks use plain integer SAD.
-- The search is centred on the pinhole rotational prediction; coarse search
-  is used only when that prediction exceeds three base-level pixels.
+- Each block is inverse-warped by the finite pinhole rotation (`PinholeRotation`,
+  Rodrigues rotation on normalised camera rays) centred on its rotated position.
+  The initial integer SAD search uses a ±3 px fine window. When that window
+  lacks an interior minimum or reaches its inner margin, bounded radial expansion
+  steps (up to seven 4% steps) search along the block's radial ray to cover
+  0.9–1.1 m/s walking at 8 Hz Record and 2 Hz Navigate spacings. It does not
+  claim the later 1 Hz straight-walk duty.
 - Global gain/offset normalisation precedes matching. Squared photometric
   costs provide the parabolic sub-pixel fit, with a final local refinement
-  in the original 240×180 plane. Removing that refinement failed six oracle
-  cases at the unchanged bounds, so it is necessary, not a dead alternative.
+  in the original 240×180 plane that scores both the 32×32 patch and its
+  central 16×16 window (`inset = 8`) from a single warp. Corner blocks with
+  oblique depth variation select the central 16×16 window when the 32×32 mean
+  is biased, and blocks that clip the frame border or straddle a surface
+  crease (`|e32 - e16| > 0.35` base px under expansion) are dropped.
 - Compact output positions and translation-only displacements are divided
   by focal length. Multiply by `BlockFlow.fPx` for 120×90-level pixels.
   Displacements are per frame; `deltaSeconds` converts them to rates.
@@ -32,16 +40,23 @@ of the flow estimator. Geometry, oracle projection and baseline JSON are unchang
 ## Executed gate
 
 ```
-./gradlew :shared:testAndroidHostTest --tests app.simt.echo.capture.visual.VisualFlowTest --tests app.simt.echo.capture.visual.VisualFlowAllocationTest --tests app.simt.echo.sim.SimPixelIntegrationTest --tests app.simt.echo.sim.SimWorldTest --tests app.simt.echo.capture.visual.VisualUsabilityTest :shared:simWorldFastBaseline :shared:compileKotlinIosArm64 :shared:compileKotlinIosSimulatorArm64
+./gradlew --no-configuration-cache :shared:testAndroidHostTest --tests app.simt.echo.capture.visual.VisualFlowTest --tests app.simt.echo.capture.visual.VisualFlowAllocationTest --tests app.simt.echo.sim.SimPixelIntegrationTest --tests app.simt.echo.sim.SimWorldTest --tests app.simt.echo.capture.visual.VisualUsabilityTest :shared:simWorldFastBaseline
 ```
 
-The five focused classes pass 28 tests with no failures or skips. Flow checks
-retain the 0.2 base-pixel per-block bound and 0.15 base-pixel rotational RMS
-bound, including small rotations with ±15% focal approximations. Warm host
-allocation probes pass at zero bytes for normal and large-prior dispatch.
-The fast seeded navigation baseline and both iOS compiles pass.
+The five focused classes pass 31 tests (`VisualFlowTest` 14,
+`VisualFlowAllocationTest` 2, `SimPixelIntegrationTest` 2, `SimWorldTest` 9,
+`VisualUsabilityTest` 4) with no failures or skips. Flow checks retain the
+0.2 base-pixel per-block bound across 8 Hz Record and 2 Hz Navigate walking
+speeds on near and far corridor surfaces, and the 0.15 base-pixel rotational
+RMS bound across the full ±0.15 rad yaw/pitch and combined-rotation domain
+(with explicit bounded residual checks under ±15% focal approximations). Warm
+host allocation probes pass at zero bytes for normal and large-prior dispatch.
+The fast seeded navigation baseline passes with `accuracy-baseline.json`
+unchanged; iOS compilation tasks were out of scope for the Review 0009 repair.
 
 Limits: these are controlled static-wall oracle fixtures, not a field result;
-the small-angle model is not a calibrated lens/rolling-shutter model. No SWAR
-alternative was introduced without its required mid-device evidence. W16-05
-owns combined host cost measurement; W19-03 owns absolute device timing.
+the pinhole model is not a calibrated radial-distortion or rolling-shutter
+model, and corridor seam blocks at 2 Hz are dropped rather than modeled with a
+two-plane warp. No SWAR alternative was introduced without its required
+mid-device evidence. W16-05 owns combined host cost measurement; W19-03 owns
+absolute device timing.

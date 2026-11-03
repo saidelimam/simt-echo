@@ -1,8 +1,10 @@
 import { Hono, type Context } from "hono";
-import type { Env } from "./index";
+import type { AppEnv, Env } from "./index";
+import { reserveDailySpend, spendDisabled } from "./spend";
 import {
   CreateJobV11RequestSchema,
   CreateUploadRequestSchema,
+  MAX_SAM_FRAMES,
   MAX_UPLOAD_BYTES,
   UploadPutParamsSchema,
   UuidSchema,
@@ -11,10 +13,12 @@ import {
 
 // W11-05 intake: content-addressed resumable uploads backing the frozen
 // W10-06 v1.1 contract. R2 layout (additive to the jobs/ tree in jobs.ts):
-//   jobs/staging/<uploadId>/meta.json  {files:[{name,sha256,bytes}], createdAt}
+//   jobs/staging/<uploadId>/meta.json  {files:[{name,sha256,bytes}], owner, createdAt}
 //   jobs/staging/<uploadId>/<name>      staged blob, sha-verified on PUT
 //   jobs/idem/<jobId>.json  {jobId} marking a completed idempotent create;
 //     the job id itself is derived from the idempotency key (see jobIdForKey)
+//   jobs/<jobId>/owner.json  {owner:<deviceId>} — R10-01: the minting
+//     install that created the job; a foreign id reads it as 404
 // The v1 multipart path in jobs.ts is untouched; JSON job creates dispatch here.
 
 export const STAGING_TTL_MS = 3_600_000;
@@ -24,9 +28,13 @@ const stagingMetaKey = (uploadId: string) => `jobs/staging/${uploadId}/meta.json
 const stagingBlobKey = (uploadId: string, name: string) => `jobs/staging/${uploadId}/${name}`;
 export const idemKey = (jobId: string) => `jobs/idem/${jobId}.json`;
 const jobManifestKey = (jobId: string) => `jobs/${jobId}/manifest.json`;
+export const jobOwnerKey = (jobId: string) => `jobs/${jobId}/owner.json`;
 
 interface StoredUploadMeta {
   files: UploadFileRef[];
+  /** R10-01: the install that opened this session; every read/put/delete is
+   *  bound to it. */
+  owner: string;
   createdAt: number;
 }
 
@@ -58,8 +66,20 @@ function isExpired(createdAt: number, now: number): boolean {
 
 function isValidMeta(raw: unknown): raw is StoredUploadMeta {
   if (typeof raw !== "object" || raw === null) return false;
-  const m = raw as { files?: unknown; createdAt?: unknown };
-  return Array.isArray(m.files) && typeof m.createdAt === "number";
+  const m = raw as { files?: unknown; owner?: unknown; createdAt?: unknown };
+  return Array.isArray(m.files) && typeof m.owner === "string" && typeof m.createdAt === "number";
+}
+
+/** R10-01: the install id a job was created by, or null when the job has no
+ * owner record (a pre-R10-01 job, or a swept one). */
+export async function readJobOwner(env: Env, jobId: string): Promise<string | null> {
+  const rec = await readJson<{ owner?: unknown }>(env, jobOwnerKey(jobId));
+  return typeof rec?.owner === "string" ? rec.owner : null;
+}
+
+/** Stamps the job with the creating install (swept with the job prefix). */
+export async function writeJobOwner(env: Env, jobId: string, deviceId: string): Promise<void> {
+  await env.MEDIA.put(jobOwnerKey(jobId), JSON.stringify({ owner: deviceId }));
 }
 
 async function hexSha256Hex(data: Uint8Array | string): Promise<string> {
@@ -84,8 +104,9 @@ async function jobIdForKey(idempotencyKey: string): Promise<string> {
 }
 
 /** Reads a request body, giving up (null) as soon as it exceeds `limit`
- * bytes so an oversized upload is never fully buffered. */
-async function readBodyCapped(
+ * bytes so an oversized upload is never fully buffered. Used by the
+ * upload PUTs and the relay POST (R10-07). */
+export async function readBodyCapped(
   body: ReadableStream<Uint8Array> | null,
   limit: number,
 ): Promise<Uint8Array | null> {
@@ -221,8 +242,82 @@ export async function sweepExpiredUploads(env: Env, now: number = Date.now()): P
   return swept;
 }
 
+// R10-02 (review 0010, F2): indoor photos are the privacy-sensitive payload,
+// so a job's prefix — inputs, events, SAM evidence, results — is retained
+// 24 h after the job reaches a terminal stage, then deleted wholesale. The
+// R2 lifecycle rule in wrangler.jsonc (same window) is the final backstop
+// for whatever an hourly cycle misses.
+export const JOB_RETENTION_MS = 24 * 60 * 60 * 1000;
+const TERMINAL_STAGES = new Set(["complete", "errored"]);
+
+/**
+ * Deletes the prefixes of jobs whose progress record is terminal and older
+ * than 24 h. A job without a readable progress record is left alone: a
+ * mid-write job is not terminal, and the lifecycle rule covers the rest.
+ * Returns the number of job prefixes deleted.
+ */
+export async function sweepExpiredJobs(env: Env, now: number = Date.now()): Promise<number> {
+  const groups = new Map<string, string[]>();
+  let cursor: string | undefined;
+  for (;;) {
+    const page = await env.MEDIA.list({ prefix: "jobs/", cursor });
+    for (const o of page.objects) {
+      const rest = o.key.slice("jobs/".length);
+      const slash = rest.indexOf("/");
+      if (slash < 0) continue;
+      const id = rest.slice(0, slash);
+      if (id === "staging" || id === "idem") continue; // Sibling trees, not jobs.
+      const keys = groups.get(id) ?? [];
+      keys.push(o.key);
+      groups.set(id, keys);
+    }
+    if (!page.truncated) break;
+    cursor = page.cursor;
+  }
+  let swept = 0;
+  for (const [id, keys] of groups) {
+    const progress = await readJson<{ stage?: unknown; updatedAt?: unknown }>(
+      env,
+      `jobs/${id}/progress.json`,
+    );
+    const stage = progress?.stage;
+    const updatedAt = progress?.updatedAt;
+    if (typeof stage !== "string" || !TERMINAL_STAGES.has(stage)) continue;
+    if (typeof updatedAt !== "number" || now - updatedAt < JOB_RETENTION_MS) continue;
+    await env.MEDIA.delete(keys);
+    swept++;
+  }
+  return swept;
+}
+
+/**
+ * R10-02: deletes relay objects whose `expiresAt` has passed even though no
+ * one GETted them — `getRelay` covers the read path, this covers abandoned
+ * codes. Returns the number of objects deleted.
+ */
+export async function sweepExpiredRelayObjects(env: Env, now: number = Date.now()): Promise<number> {
+  const expired: string[] = [];
+  let cursor: string | undefined;
+  for (;;) {
+    const page = await env.MEDIA.list({ prefix: "relay/", cursor });
+    for (const o of page.objects) {
+      const expiresAt = Number(o.customMetadata?.expiresAt ?? NaN);
+      if (Number.isFinite(expiresAt) && expiresAt <= now) expired.push(o.key);
+    }
+    if (!page.truncated) break;
+    cursor = page.cursor;
+  }
+  if (expired.length > 0) await env.MEDIA.delete(expired);
+  return expired.length;
+}
+
 /** POST /v1/jobs with a JSON v1.1 body (jobs.ts dispatches here). */
-export async function handleCreateJobV11(c: Context<{ Bindings: Env }>): Promise<Response> {
+export async function handleCreateJobV11(c: Context<AppEnv>): Promise<Response> {
+  // R10-05 (F4): the kill switch precedes everything, including idempotent
+  // replays — a halted deployment creates nothing, ledger untouched.
+  if (spendDisabled(c.env)) {
+    return c.json({ ok: false, error: "spend_disabled" }, 503);
+  }
   if (!c.env.PIPELINE) {
     return c.json({ ok: false, error: "server_misconfigured" }, 500);
   }
@@ -243,33 +338,69 @@ export async function handleCreateJobV11(c: Context<{ Bindings: Env }>): Promise
   if (uploadId !== undefined && uploadIds !== undefined) {
     return c.json({ ok: false, error: "invalid_request" }, 400);
   }
+  if (uploadId === undefined && uploadIds === undefined) {
+    // R10-11 (review 0010, F10.2): a manifest-only create has no staged
+    // media to move; its scout would burn a paid Workflow instance only to
+    // hit media_missing. Fail at intake.
+    return c.json({ ok: false, error: "upload_reference_required" }, 400);
+  }
+
+  // R10-11 (review 0010, F10.1): the idempotency record binds to the
+  // payload. zod's parsed.data is canonical — declared field order, unknown
+  // keys dropped — so the hash is stable across replays of the same logical
+  // request and differs for a changed one.
+  const payloadHash = await hexSha256Hex(JSON.stringify(parsed.data));
 
   // The id is derived from the idempotency key, so concurrent creates with
   // one key name the same Workflow instance and cannot make two jobs.
   const jobId = idempotencyKey !== undefined ? await jobIdForKey(idempotencyKey) : crypto.randomUUID();
 
-  // Idempotent replay: a completed create returns the original job id
-  // without touching staging, so double-create is safe even after the move
-  // below. A record whose job lost its manifest is stale: discard it and
-  // create afresh.
-  if (idempotencyKey !== undefined && (await readJson(c.env, idemKey(jobId))) !== null) {
-    if ((await c.env.MEDIA.head(jobManifestKey(jobId))) !== null) {
-      return c.json({ ok: true, jobId }, 202);
+  // Idempotent replay: a completed create returns the original job id only
+  // when the payload matches the recorded one — a changed payload under the
+  // same key is 409, not a silent wrong job (R10-11, F10.1). Records written
+  // before this deploy carry no hash and cannot prove a match: 409 as well
+  // (decision: strict). A record whose job lost its manifest is stale:
+  // discard it and create afresh.
+  if (idempotencyKey !== undefined) {
+    const record = await readJson<{ jobId?: string; payloadHash?: string }>(
+      c.env,
+      idemKey(jobId),
+    );
+    if (record !== null) {
+      if ((await c.env.MEDIA.head(jobManifestKey(jobId))) !== null) {
+        // R10-01: the replay hands out the creating install's job id, so only
+        // that install gets it; to every other install the key is unknown.
+        if ((await readJobOwner(c.env, jobId)) !== c.get("deviceId")) {
+          return c.json({ ok: false, error: "job_not_found" }, 404);
+        }
+        if (record.payloadHash !== payloadHash) {
+          return c.json({ ok: false, error: "idempotency_conflict" }, 409);
+        }
+        return c.json({ ok: true, jobId }, 202);
+      }
+      await c.env.MEDIA.delete(idemKey(jobId));
     }
-    await c.env.MEDIA.delete(idemKey(jobId));
   }
 
   // resumeOf later becomes an R2 key prefix for cache adoption, so it must
-  // name a job that exists in this deployment (every job shares one app
-  // token, so existence is the whole ownership check).
-  if (resumeOf !== undefined && (await c.env.MEDIA.head(jobManifestKey(resumeOf))) === null) {
+  // name a job that exists in this deployment AND was created by this
+  // install: a foreign job's SAM cache is not adoptable (R10-01).
+  if (
+    resumeOf !== undefined &&
+    ((await c.env.MEDIA.head(jobManifestKey(resumeOf))) === null ||
+      (await readJobOwner(c.env, resumeOf)) !== c.get("deviceId"))
+  ) {
     return c.json({ ok: false, error: "resume_not_found" }, 404);
   }
 
-  // Staged blobs to move under the job (manifest-only creates skip this).
-  // One session (uploadId) or several per-window sessions (uploadIds,
-  // W11-09): completeness is measured over the union of staged names.
-  let staged: Array<{ name: string; bytes: ArrayBuffer }> = [];
+  // Staged blobs to move under the job. One session (uploadId) or several
+  // per-window sessions (uploadIds, W11-09): completeness is measured over
+  // the union of staged names.
+  // R10-10 (review 0010, F9): the move streams each blob R2→R2, one at a
+  // time — the old path held every staged byte (up to the 80 MB cap) in
+  // memory at once. Caps are measured on the stored sizes, never the
+  // declared ones.
+  const move: Array<{ name: string; source: string }> = [];
   const sessionIds = uploadIds ?? (uploadId !== undefined ? [uploadId] : []);
   // The move consumes every staging area below: single-use uploads cannot
   // seed a second job, and replay arrives via the idempotency map above.
@@ -299,21 +430,24 @@ export async function handleCreateJobV11(c: Context<{ Bindings: Env }>): Promise
     if (missing.length > 0) {
       return c.json({ ok: false, error: "upload_incomplete", missing }, 400);
     }
-    // Caps are measured on actual PUT bytes, never the declared sizes.
+    // Caps are measured on stored sizes (head), so no body is read here.
+    // R10-11 (F10.3): a name staged in two sessions is a client error — the
+    // old first-wins move silently dropped one of the two payloads.
     let totalBytes = 0;
     const seen = new Set<string>();
     for (const { id } of loadedBySession) {
       for (const name of allowed) {
-        if (seen.has(name)) continue;
-        const obj = await c.env.MEDIA.get(stagingBlobKey(id, name));
-        if (!obj) continue;
+        const head = await c.env.MEDIA.head(stagingBlobKey(id, name));
+        if (!head) continue;
+        if (seen.has(name)) {
+          return c.json({ ok: false, error: "duplicate_file", file: name }, 400);
+        }
         seen.add(name);
-        const bytes = await obj.arrayBuffer();
-        totalBytes += bytes.byteLength;
-        staged.push({ name, bytes });
+        move.push({ name, source: stagingBlobKey(id, name) });
+        totalBytes += head.size;
       }
     }
-    if (staged.length > 60) {
+    if (move.length > 60) {
       return c.json({ ok: false, error: "too_many_files" }, 413);
     }
     if (totalBytes > MAX_UPLOAD_BYTES) {
@@ -321,17 +455,32 @@ export async function handleCreateJobV11(c: Context<{ Bindings: Env }>): Promise
     }
   }
 
+  // R10-05 (F4): reserve the declared budget (or the hard ceiling) before
+  // the move consumes staging. A later failure leaves the reservation
+  // standing — over-reserving toward the cap, never under. Over the cap
+  // is 503; a contention storm is 500 — nothing was written.
+  const reserve = await reserveDailySpend(c.env, budget?.maxSamFrames ?? MAX_SAM_FRAMES);
+  if (!reserve.ok) {
+    return reserve.reason === "over_cap"
+      ? c.json({ ok: false, error: "daily_budget_exceeded" }, 503)
+      : c.json({ ok: false, error: "job_create_failed" }, 500);
+  }
+
   // Set once the Workflow instance exists: from then on the job owns its
   // files and a failure must not delete them.
   let instanceCreated = false;
   try {
-    for (const { name, bytes } of staged) {
-      await c.env.MEDIA.put(`jobs/${jobId}/in/${name}`, bytes);
+    for (const { name, source } of move) {
+      const obj = await c.env.MEDIA.get(source);
+      if (!obj?.body) continue; // Vanished since the head: skip, as before.
+      await c.env.MEDIA.put(`jobs/${jobId}/in/${name}`, obj.body);
     }
     await c.env.MEDIA.put(`jobs/${jobId}/manifest.json`, JSON.stringify(manifest));
+    // R10-01: bind the job to the creating install.
+    await writeJobOwner(c.env, jobId, c.get("deviceId"));
     // W11-06: the SAM lens governor reads this (never the request body —
     // the Workflow only gets the job id). An absent file caps at the hard
-    // 240-frame ceiling (v1/manifest-only creates); resumeOf is the only sanctioned
+    // 240-frame ceiling (v1 creates); resumeOf is the only sanctioned
     // cross-job SAM-cache reuse (W10-06 scoping).
     if (budget !== undefined || resumeOf !== undefined) {
       await c.env.MEDIA.put(
@@ -355,7 +504,12 @@ export async function handleCreateJobV11(c: Context<{ Bindings: Env }>): Promise
     }
     instanceCreated = true;
     if (idempotencyKey !== undefined) {
-      await c.env.MEDIA.put(idemKey(jobId), JSON.stringify({ jobId }));
+      // R10-11 (F10.1): record the payload hash the create was made with, so
+      // a later replay can be checked against it (a mismatch is 409).
+      await c.env.MEDIA.put(
+        idemKey(jobId),
+        JSON.stringify({ jobId, payloadHash }),
+      );
     }
     // The move consumes the staging areas: single-use uploads cannot seed
     // a second job, and replay arrives via the idempotency map above.
@@ -380,7 +534,7 @@ export async function handleCreateJobV11(c: Context<{ Bindings: Env }>): Promise
   }
 }
 
-export function registerUploadRoutes(app: Hono<{ Bindings: Env }>): void {
+export function registerUploadRoutes(app: Hono<AppEnv>): void {
   app.post("/v1/uploads", async (c) => {
     let body: unknown;
     try {
@@ -405,14 +559,15 @@ export function registerUploadRoutes(app: Hono<{ Bindings: Env }>): void {
     }
     try {
       const uploadId = crypto.randomUUID();
-      const meta: StoredUploadMeta = { files, createdAt: Date.now() };
+      const meta: StoredUploadMeta = { files, owner: c.get("deviceId"), createdAt: Date.now() };
       await c.env.MEDIA.put(stagingMetaKey(uploadId), JSON.stringify(meta));
-      // Opportunistic expiry sweep; never fails the create itself.
-      try {
-        await sweepExpiredUploads(c.env);
-      } catch {
-        // Stale staging stays until the next sweep; the create succeeded.
-      }
+      // R10-09 (review 0010, F8): no opportunistic sweep here. It cost
+      // O(staging + idem) list/GET/HEAD ops on every create — quadratically
+      // punishing the bursty ready-on-arrival client this endpoint serves.
+      // Cleanup is owned off the request path: the hourly cron runs
+      // sweepExpiredUploads (index.ts), loadUploadMeta lazily expires each
+      // session on its own reads, and the jobs/ lifecycle rule is the
+      // backstop.
       return c.json({ ok: true, uploadId, missing: names });
     } catch {
       return c.json({ ok: false, error: "upload_create_failed" }, 500);
@@ -429,6 +584,10 @@ export function registerUploadRoutes(app: Hono<{ Bindings: Env }>): void {
       return loaded.error === "expired"
         ? c.json({ ok: false, error: "upload_expired" }, 410)
         : c.json({ ok: false, error: "upload_not_found" }, 404);
+    }
+    // R10-01: another install's session is indistinguishable from a missing one.
+    if (loaded.meta.owner !== c.get("deviceId")) {
+      return c.json({ ok: false, error: "upload_not_found" }, 404);
     }
     const missing = missingOf(loaded.meta, await stagedNames(c.env, uploadId));
     return c.json({ ok: true, uploadId, missing });
@@ -448,6 +607,10 @@ export function registerUploadRoutes(app: Hono<{ Bindings: Env }>): void {
       return loaded.error === "expired"
         ? c.json({ ok: false, error: "upload_expired" }, 410)
         : c.json({ ok: false, error: "upload_not_found" }, 404);
+    }
+    // R10-01: a foreign session cannot be written into.
+    if (loaded.meta.owner !== c.get("deviceId")) {
+      return c.json({ ok: false, error: "upload_not_found" }, 404);
     }
     const declared = loaded.meta.files.find((f) => f.name === name);
     if (!declared) {
@@ -482,14 +645,22 @@ export function registerUploadRoutes(app: Hono<{ Bindings: Env }>): void {
 
   // W11-09 ready-on-arrival: cancel/discard deletes staged uploads.
   // Idempotent like the job DELETE — unknown or expired sessions are
-  // already gone, so both answer 204 with nothing to sweep.
+  // already gone, so both answer 204 with nothing to sweep. R10-01: a
+  // session owned by another install is a 404, so the delete cannot be
+  // used to probe or destroy it.
   app.delete("/v1/uploads/:uploadId", async (c) => {
     const uploadId = c.req.param("uploadId");
     // The id becomes an R2 prefix: only a UUID names a staging session.
     if (!UuidSchema.safeParse(uploadId).success) {
       return c.json({ ok: false, error: "invalid_request" }, 400);
     }
-    await deletePrefix(c.env, stagingPrefix(uploadId));
+    const loaded = await loadUploadMeta(c.env, uploadId, Date.now());
+    if ("meta" in loaded) {
+      if (loaded.meta.owner !== c.get("deviceId")) {
+        return c.json({ ok: false, error: "upload_not_found" }, 404);
+      }
+      await deletePrefix(c.env, stagingPrefix(uploadId));
+    }
     return new Response(null, { status: 204 });
   });
 }

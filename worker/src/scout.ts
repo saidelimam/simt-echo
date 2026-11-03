@@ -2,6 +2,7 @@ import { z } from "zod";
 import { NonRetryableError } from "cloudflare:workflows";
 import type { Env } from "./index";
 import { metaResponses } from "./meta";
+import { inlineRunner, type StepRunner } from "./samLens";
 import { JobIdSchema, type Checkpoint, type Manifest } from "./types";
 
 // Scout chain (plan §7, slices W3-04 + W3-09).
@@ -608,15 +609,6 @@ export function cleanCandidates(
     .slice(0, 2);
 }
 
-/**
- * Walk SCOUT_ORDER and propose landmarks for every checkpoint.
- *
- * `jobId` scopes R2: keyframes read from `jobs/<id>/in/`, evidence written
- * to `jobs/<id>/scout.json` plus per-attempt raw outputs under
- * `jobs/<id>/scout/raw/`. Returns the compact validated list; the full
- * `Candidate` rows are W3-05/W3-06's expansion. Throws `ScoutError` with a
- * closed code set — never raw model text.
- */
 /** True for the Meta transport's retryable (429/5xx) signal: a plain
  * Error the Workflow step is supposed to retry, not a typed failure. */
 function isRetryableMetaError(e: unknown): boolean {
@@ -627,7 +619,28 @@ function isRetryableMetaError(e: unknown): boolean {
   );
 }
 
-export async function runScout(env: Env, jobId: string, manifest: Manifest): Promise<ScoutResult> {
+/**
+ * Walk SCOUT_ORDER and propose landmarks for every checkpoint.
+ *
+ * `jobId` scopes R2: keyframes read from `jobs/<id>/in/`, evidence written
+ * to `jobs/<id>/scout.json` plus per-attempt raw outputs under
+ * `jobs/<id>/scout/raw/`. Returns the compact validated list; the full
+ * `Candidate` rows are W3-05/W3-06's expansion. Throws `ScoutError` with a
+ * closed code set — never raw model text.
+ *
+ * R10-04 (review 0010, F3): every paid call runs inside a Workflow step —
+ * one `scout:<provider>:<nodeId>` per checkpoint, one `scout:<provider>`
+ * for whole-job providers — so on a replay a completed step returns its
+ * recorded output and a failed checkpoint re-bills itself, never
+ * checkpoints 1..n-1. Mirrors the lens (`samLens.ts`); `runner` defaults
+ * to `inlineRunner` for callers without a Workflow step.
+ */
+export async function runScout(
+  env: Env,
+  jobId: string,
+  manifest: Manifest,
+  runner: StepRunner = inlineRunner,
+): Promise<ScoutResult> {
   const order = (env.SCOUT_ORDER ?? "workers-ai")
     .split(",")
     .map((s) => s.trim())
@@ -645,7 +658,9 @@ export async function runScout(env: Env, jobId: string, manifest: Manifest): Pro
         continue;
       }
       try {
-        return await batch.proposeAll(env, jobId, manifest);
+        // One step for the whole job: a replay returns the recorded
+        // ScoutResult, so the single paid call is never re-billed (R10-04).
+        return await runner(`scout:${id}`, () => batch.proposeAll(env, jobId, manifest));
       } catch (e) {
         lastError = e;
         if (e instanceof ScoutError && e.code === "media_missing") throw e;
@@ -665,36 +680,57 @@ export async function runScout(env: Env, jobId: string, manifest: Manifest): Pro
       const ranModels: string[] = [];
       const rawAttempts = new Map<string, number>();
       for (const cp of manifest.checkpoints) {
-        // ≤ 3 images per call (plan §7.2).
-        const refs = cp.keyframes.slice(0, 3);
-        const images: ImageInput[] = [];
-        const loaded: Array<{ id: string; tMs: number }> = [];
-        for (const ref of refs) {
-          const obj = await env.MEDIA.get(inputKey(jobId, ref.id));
-          if (!obj) continue;
-          images.push({ id: ref.id, b64: toBase64(new Uint8Array(await obj.arrayBuffer())) });
-          loaded.push({ id: ref.id, tMs: ref.tMs });
-        }
-        if (images.length === 0) {
-          throw new ScoutError(
-            "media_missing",
-            `no keyframe bytes for checkpoint ${cp.nodeId} under jobs/${jobId}/in/`,
-          );
-        }
-        const context = checkpointContext(manifest.routeContext, cp, loaded);
-        const attempt = await provider.propose(env, cp, images, context);
-        const n = rawAttempts.get(cp.nodeId) ?? 0;
-        rawAttempts.set(cp.nodeId, n + 1);
-        await env.MEDIA.put(
-          rawKey(jobId, cp.nodeId, n),
-          JSON.stringify({ model: attempt.model, raw: attempt.raw }),
+        // One step per checkpoint (R10-04), mirroring the lens: a replay
+        // returns the recorded output, so a failed checkpoint re-bills
+        // itself, never checkpoints 1..n-1. The step returns what the
+        // continuation needs; the raw model output is written inside the
+        // step, so a replay skips the write (already persisted).
+        const { model, result, loaded } = await runner(
+          `scout:${id}:${cp.nodeId}`,
+          async () => {
+            // ≤ 3 images per call (plan §7.2).
+            const refs = cp.keyframes.slice(0, 3);
+            const images: ImageInput[] = [];
+            const loaded: Array<{ id: string; tMs: number }> = [];
+            for (const ref of refs) {
+              const obj = await env.MEDIA.get(inputKey(jobId, ref.id));
+              if (!obj) continue;
+              images.push({ id: ref.id, b64: toBase64(new Uint8Array(await obj.arrayBuffer())) });
+              loaded.push({ id: ref.id, tMs: ref.tMs });
+            }
+            if (images.length === 0) {
+              throw new ScoutError(
+                "media_missing",
+                `no keyframe bytes for checkpoint ${cp.nodeId} under jobs/${jobId}/in/`,
+              );
+            }
+            const context = checkpointContext(manifest.routeContext, cp, loaded);
+            try {
+              const attempt = await provider.propose(env, cp, images, context);
+              const n = rawAttempts.get(cp.nodeId) ?? 0;
+              rawAttempts.set(cp.nodeId, n + 1);
+              await env.MEDIA.put(
+                rawKey(jobId, cp.nodeId, n),
+                JSON.stringify({ model: attempt.model, raw: attempt.raw }),
+              );
+              return { model: attempt.model, result: attempt.result, loaded };
+            } catch (e) {
+              // all_models_failed is deterministic: every model for this
+              // checkpoint already failed. Retrying the step would re-bill
+              // the same calls, so the step must not retry (R10-04).
+              if (e instanceof ScoutError && e.code === "all_models_failed") {
+                throw new NonRetryableError(e.message);
+              }
+              throw e;
+            }
+          },
         );
-        ranModels.push(attempt.model);
+        ranModels.push(model);
         checkpoints.push({
           nodeId: cp.nodeId,
           // Only images actually loaded and sent may be boxed: a candidate
           // naming a manifest ref whose bytes never loaded is invented.
-          candidates: cleanCandidates(attempt.result, new Set(loaded.map((l) => l.id))),
+          candidates: cleanCandidates(result, new Set(loaded.map((l) => l.id))),
         });
       }
       // The model(s) that ran, in checkpoint order (plan §7: the ids that ran

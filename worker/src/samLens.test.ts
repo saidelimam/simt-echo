@@ -19,8 +19,12 @@ class FakeR2 {
     const entry = this.store.get(key);
     if (entry === undefined) return null;
     const text = typeof entry === "string" ? entry : new TextDecoder().decode(entry);
+    // R10-10: the lens reloads each step's media inside its callback — serve
+    // the stored bytes as a body stream, mirroring R2.
+    const bytes = typeof entry === "string" ? new TextEncoder().encode(entry) : new Uint8Array(entry);
     return {
-      arrayBuffer: async () => new TextEncoder().encode(text).buffer as ArrayBuffer,
+      body: new Response(bytes).body,
+      arrayBuffer: async () => bytes.buffer as ArrayBuffer,
       json: async <T,>() => JSON.parse(text) as T,
       text: async () => text,
     };
@@ -185,7 +189,9 @@ describe("runGround SAM lens (W11-06)", () => {
     expect(c.trackability).toBeNull();
     expect(c.visibleFromM).toBeNull();
     expect(result.usage.samFrames).toBe(1);
-    expect(result.usage.samFramesBilled).toBe(0);
+    // R10-05: the vendor omitted usage, so the one sent frame stands in
+    // for billed — a call that went out never reports zero.
+    expect(result.usage.samFramesBilled).toBe(1);
     expect(result.usage.budgetExhausted).toBe(false);
   });
 
@@ -246,8 +252,9 @@ describe("runGround SAM lens (W11-06)", () => {
     });
     const result = await runGround(env, "job1", manifest, lensScout());
 
-    // 12 vendor-billed strip frames + the 1 sent hero frame.
-    expect(result.usage.samFramesBilled).toBe(12);
+    // 12 vendor-billed strip frames + the 1 sent hero frame (the image
+    // call's vendor omits usage, so its sent frame stands in — R10-05).
+    expect(result.usage.samFramesBilled).toBe(13);
     expect(result.usage.samFrames).toBe(13);
     expect(result.usage.budgetExhausted).toBe(false);
     expect(typeof result.usage.samMs).toBe("number");
@@ -268,11 +275,12 @@ describe("runGround SAM lens (W11-06)", () => {
   });
 
   it("caps a job with no budget.json at the 240-frame hard ceiling", async () => {
-    // 1 image frame + a 240-frame clip is 241: over the ceiling, refused.
+    // R10-13: the 240-frame clip is reserved before the image, so the
+    // over-ceiling 241 is refused on the 1-frame image, never the video.
     const over = lensSetup({ type: "TURN", clipFrames: 240 });
     const overCalls = stubMeta(STRIP_VIDEO, imgLine(0.9));
     const refused = await runGround(over.env, "job1", over.manifest, lensScout());
-    expect(overCalls).toEqual(["image"]);
+    expect(overCalls).toEqual(["video"]);
     expect(refused.usage.budgetExhausted).toBe(true);
 
     // 1 + 239 lands exactly on the ceiling and is allowed.
@@ -293,7 +301,8 @@ describe("runGround SAM lens (W11-06)", () => {
       const calls = stubMeta(STRIP_VIDEO, imgLine(0.9));
       const result = await runGround(env, "job1", manifest, lensScout());
 
-      expect(calls).toEqual(["image"]);
+      // R10-13: the clip takes the whole 240 ceiling; the image is refused.
+      expect(calls).toEqual(["video"]);
       expect(result.usage.budgetExhausted).toBe(true);
       const notes = await r2.get("jobs/job1/sam/notes.json");
       expect(await notes?.json()).toEqual([{ scope: "budget", reason }]);
@@ -305,7 +314,8 @@ describe("runGround SAM lens (W11-06)", () => {
     await r2.put("jobs/job1/budget.json", JSON.stringify({ maxSamFrames: 100000 }));
     const calls = stubMeta(STRIP_VIDEO, imgLine(0.9));
     await runGround(env, "job1", manifest, lensScout());
-    expect(calls).toEqual(["image"]);
+    // Clamped to 240: the clip fits exactly, the image is refused.
+    expect(calls).toEqual(["video"]);
   });
 
   it("lets cache hits through without consuming budget on a retry", async () => {
@@ -330,7 +340,8 @@ describe("runGround SAM lens (W11-06)", () => {
   });
 
   it("restores the recorded plan on replay instead of re-deciding against a filled cache", async () => {
-    // Budget 12: the 1-frame image fits, the 12-frame strip then does not.
+    // Budget 12: R10-13 reserves the 12-frame strip first, the 1-frame
+    // image is then refused.
     const { r2, manifest, env } = lensSetup({ type: "TURN" });
     await r2.put("jobs/job1/budget.json", JSON.stringify({ maxSamFrames: 12 }));
     const calls = stubMeta(STRIP_VIDEO, imgLine(0.9));
@@ -342,13 +353,14 @@ describe("runGround SAM lens (W11-06)", () => {
       return out;
     };
     const first = await runGround(env, "job1", manifest, lensScout(), workflow);
-    expect(calls).toEqual(["image"]);
+    expect(calls).toEqual(["video"]);
     expect(first.usage.budgetExhausted).toBe(true);
 
-    // Re-planned live, the now-cached image would reserve nothing and let the
-    // strip through: spend the first run never authorised.
+    // Re-planned live against the now-filled cache, the image would be free
+    // and would run: spend the first run never authorised. The recorded
+    // plan refuses it.
     const replay = await runGround(env, "job1", manifest, lensScout(), workflow);
-    expect(calls).toEqual(["image"]);
+    expect(calls).toEqual(["video"]);
     expect(replay).toEqual(first);
   });
 
@@ -510,7 +522,7 @@ describe("runGround SAM lens (W11-06)", () => {
     };
     const first = await runGround(env, "job1", manifest, lensScout(), replaying);
     const eventsAfterFirst = await readJobEvents(env, "job1");
-    expect(first.usage.samFramesBilled).toBe(12);
+    expect(first.usage.samFramesBilled).toBe(13); // 12 vendor-reported + 1 sent hero frame (R10-05 fallback)
     expect(first.checkpoints[0].candidates[0].source).toBe("AI_GROUNDED");
 
     vi.stubGlobal("fetch", async () => {
@@ -574,8 +586,144 @@ describe("runGround SAM lens (W11-06)", () => {
     await runGround(env, "job1", manifest, lensScout());
 
     const events = await readJobEvents(env, "job1");
-    expect(events.map((e) => e.type)).toEqual(["checkpoint", "usage"]);
-    const checkpoint = events[0];
+    // Same-millisecond order is not contract (R10-08); assert the set.
+    expect(events.map((e) => e.type).sort()).toEqual(["checkpoint", "usage"]);
+    const checkpoint = events.find((e) => e.type === "checkpoint");
     expect(checkpoint).toMatchObject({ nodeId: "n2", status: "grounded" });
+  });
+
+  it("fetches a shared hero+phrase once: the second caller dedupes in flight (R10-13)", async () => {
+    // Two checkpoints reuse the same hero frame and phrase: one cache key.
+    // The planning check is metadata-only, so both calls are planned and
+    // both start under LENS_CONCURRENCY — the window F12 billed twice. The
+    // second caller must await the first's fetch, not send a second one.
+    const r2 = new FakeR2();
+    void r2.put("jobs/job1/in/kf_shared", "hero-bytes");
+    const manifest = {
+      schema: 1,
+      draftId: "d1",
+      consent: { sendFramesToCloudAi: true, atEpochMs: 1 },
+      routeContext: "ctx",
+      checkpoints: [
+        {
+          nodeId: "n2",
+          type: "CHECKPOINT",
+          atDistanceM: 10,
+          tMs: 20000,
+          heroKeyframeId: "kf_shared",
+          keyframes: [{ id: "kf_shared", tMs: 20000 }],
+          approach: [],
+        },
+        {
+          nodeId: "n9",
+          type: "CHECKPOINT",
+          atDistanceM: 60,
+          tMs: 60000,
+          heroKeyframeId: "kf_shared",
+          keyframes: [{ id: "kf_shared", tMs: 60000 }],
+          approach: [],
+        },
+      ],
+    } as never;
+    const env = { MEDIA: r2, GROUND_ORDER: "sam31,none", META_API_KEY: "k" } as never;
+    const scout = {
+      model: "scout-model",
+      checkpoints: [
+        { nodeId: "n2", candidates: [scoutCandidate({ imageId: "kf_shared" })] },
+        { nodeId: "n9", candidates: [scoutCandidate({ imageId: "kf_shared" })] },
+      ],
+    } as never;
+
+    // Hold the first fetch open so the second call is guaranteed to arrive
+    // while it is in flight; `releases` doubles as the fetch counter.
+    const releases: Array<() => void> = [];
+    vi.stubGlobal(
+      "fetch",
+      () =>
+        new Promise<Response>((resolve) => {
+          releases.push(() => resolve(sseResponse(imgLine(0.9))));
+        }),
+    );
+    const run = runGround(env, "job1", manifest, scout);
+    await vi.waitFor(() => expect(releases.length).toBe(1));
+    releases.forEach((r) => r());
+    const result = await run;
+
+    expect(releases.length).toBe(1); // exactly one fetch went out
+    const byNode = new Map(result.checkpoints.map((c) => [c.nodeId, c]));
+    expect(byNode.get("n2")?.candidates[0].source).toBe("AI_GROUNDED");
+    expect(byNode.get("n9")?.candidates[0].source).toBe("AI_GROUNDED");
+    expect(result.usage.samFrames).toBe(1); // the deduped caller spent nothing
+    expect(result.usage.samFramesBilled).toBe(1);
+  });
+
+  it("reserves the TURN video before image calls: cheap images cannot refuse it (R10-13)", async () => {
+    // Budget 13: the TURN clip's 12 frames are reserved before any image
+    // call, so the video the ladder exists to protect goes out even though
+    // the remaining image call exhausts the budget. Before F12 the image
+    // phase reserved everything first and the 12-frame video was refused.
+    const r2 = new FakeR2();
+    void r2.put("jobs/job1/in/kf_n9_1", "hero-bytes");
+    void r2.put("jobs/job1/in/kf_n2_1", "hero-bytes");
+    void r2.put("jobs/job1/in/clip_n9", "clip-bytes");
+    await r2.put("jobs/job1/budget.json", JSON.stringify({ maxSamFrames: 13 }));
+    const manifest = {
+      schema: 1,
+      draftId: "d1",
+      consent: { sendFramesToCloudAi: true, atEpochMs: 1 },
+      routeContext: "ctx",
+      checkpoints: [
+        {
+          nodeId: "n2",
+          type: "CHECKPOINT",
+          atDistanceM: 10,
+          tMs: 20000,
+          heroKeyframeId: "kf_n2_1",
+          keyframes: [{ id: "kf_n2_1", tMs: 20000 }],
+          approach: [],
+        },
+        {
+          nodeId: "n9",
+          type: "TURN",
+          turn: "LEFT",
+          atDistanceM: 60,
+          tMs: 39250,
+          heroKeyframeId: "kf_n9_1",
+          keyframes: [{ id: "kf_n9_1", tMs: 39250 }],
+          clip: { ...STRIP_CLIP, id: "clip_n9" },
+          approach: [],
+        },
+      ],
+    } as never;
+    const env = { MEDIA: r2, GROUND_ORDER: "sam31,none", META_API_KEY: "k" } as never;
+    const scout = {
+      model: "scout-model",
+      checkpoints: [
+        { nodeId: "n2", candidates: [scoutCandidate(), scoutCandidate({ title: "Second", distinctiveness: 0.5 })] },
+        { nodeId: "n9", candidates: [scoutCandidate({ imageId: "kf_n9_1", title: "Doors" })] },
+      ],
+    } as never;
+    const calls = stubMeta(STRIP_VIDEO, imgLine(0.9));
+    const result = await runGround(env, "job1", manifest, scout);
+
+    expect(calls).toEqual(["image", "video"]);
+    expect(result.usage.budgetExhausted).toBe(true);
+    expect(result.usage.samFrames).toBe(13); // 1 image + the 12-frame clip
+    const byNode = new Map(result.checkpoints.map((c) => [c.nodeId, c]));
+    // The TURN's video went out and grounded its top candidate…
+    expect(byNode.get("n9")?.candidates[0].source).toBe("AI_GROUNDED");
+    expect(byNode.get("n9")?.candidates[0].trackability).not.toBeNull();
+    // …while the CHECKPOINT's images were refused and kept box-only.
+    expect(byNode.get("n2")?.candidates.every((c) => c.source === "AI_BOX_ONLY")).toBe(true);
+  });
+
+  it("ignores a legacy GROUND_MODE: the lens is the sole ground path (R10-13)", async () => {
+    const { r2, manifest, env } = lensSetup({ type: "CHECKPOINT" });
+    const legacyEnv = { ...(env as Record<string, unknown>), GROUND_MODE: "legacy" } as never;
+    stubMeta("", imgLine(0.92));
+    const result = await runGround(legacyEnv, "job1", manifest, lensScout());
+    expect(result.checkpoints[0].candidates[0].source).toBe("AI_GROUNDED");
+    // The lens ran (content-hash cache written), not the removed legacy path.
+    expect([...r2.store.keys()].some((k) => k.startsWith("jobs/job1/sam/cache/"))).toBe(true);
   });
 });

@@ -21,6 +21,7 @@ class VisualEgo {
         internal set
     var inliers = 0
         internal set
+    /** Direction survived a depth-free consensus. Radial confidence alone does not set this. */
     var hasFoe = false
         internal set
     val travelOffsetRad: Double get() = if (hasFoe) atan(foeX) else Double.NaN

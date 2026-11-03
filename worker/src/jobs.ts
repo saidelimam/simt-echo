@@ -1,10 +1,12 @@
 import { Hono } from "hono";
-import type { Env } from "./index";
-import { deletePrefix, handleCreateJobV11, idemKey } from "./uploads";
+import type { AppEnv, Env } from "./index";
+import { deletePrefix, handleCreateJobV11, idemKey, readJobOwner, writeJobOwner } from "./uploads";
+import { reserveDailySpend, spendDisabled } from "./spend";
 import {
   JobEventSchema,
   JobResultSchema,
   ManifestSchema,
+  MAX_SAM_FRAMES,
   type JobEvent,
   type JobStage,
   type Manifest,
@@ -56,13 +58,14 @@ export async function putError(env: Env, jobId: string, message: string): Promis
 const eventsPrefix = (jobId: string) => `jobs/${jobId}/events/`;
 const eventKey = (jobId: string, id: string) => `jobs/${jobId}/events/${id}.json`;
 
-/** Monotonic-ish event id: time-ordered, unique per emit. The per-isolate
- * sequence keeps same-millisecond emits in emit order under the R2 key
- * sort that [readJobEvents] relies on. */
-let eventSeq = 0;
-export function newEventId(): string {
-  const seq = (eventSeq++).toString(36).padStart(4, "0");
-  return `${Date.now().toString(36)}-${seq}-${crypto.randomUUID().slice(0, 8)}`;
+/** Event id: zero-padded base-36 epoch ms (fixed width) plus the full
+ * UUID as tiebreak. No isolate state (R10-08, review 0010 F7): two emits
+ * in the same millisecond from two isolates share the timestamp part,
+ * and [readJobEvents] orders by that part, so neither can sort before
+ * the other's cursor and be skipped on resume. */
+const EVENT_ID_TS_WIDTH = 11; // 36^11 ms ≈ year 41 000 CE
+export function newEventId(now: number = Date.now()): string {
+  return `${now.toString(36).padStart(EVENT_ID_TS_WIDTH, "0")}-${crypto.randomUUID()}`;
 }
 
 /** Validates against the frozen W10-06 union, then stores the record. */
@@ -71,20 +74,37 @@ export async function emitJobEvent(env: Env, jobId: string, event: JobEvent): Pr
   await env.MEDIA.put(eventKey(jobId, event.id), JSON.stringify(event));
 }
 
-/** Stored events for a job in emit (key) order, only those whose id sorts
- * after `afterId` when given. Skips unreadable rows. */
+/** The timestamp part of an event id: the base-36 epoch ms before the
+ * first "-", compared numerically so padded and legacy unpadded ids
+ * order chronologically. NaN when unparseable. */
+function eventIdTimestamp(id: string): number {
+  const dash = id.indexOf("-");
+  return parseInt(dash === -1 ? id : id.slice(0, dash), 36);
+}
+
+/** Stored events for a job in id (key) order, only those whose timestamp
+ * is at least `afterId`'s when given (R10-08, review 0010 F7). Same-
+ * timestamp events are included even if the client saw them: the
+ * stream's events are additive and the client merges them idempotently,
+ * so an event emitted after the client's cursor can never sort before
+ * it and be skipped. An unparseable id biases toward inclusion. Within
+ * one millisecond the order follows the id's UUID tiebreak (arbitrary);
+ * the client treats same-millisecond events as a set. Skips unreadable
+ * rows. */
 export async function readJobEvents(
   env: Env,
   jobId: string,
   afterId?: string,
 ): Promise<JobEvent[]> {
   const prefix = eventsPrefix(jobId);
+  const after = afterId === undefined ? Number.NaN : eventIdTimestamp(afterId);
   const keys: string[] = [];
   let cursor: string | undefined;
   for (;;) {
     const page = await env.MEDIA.list({ prefix, cursor });
     for (const o of page.objects) {
-      if (afterId === undefined || o.key.slice(prefix.length) > `${afterId}.json`) keys.push(o.key);
+      const ts = eventIdTimestamp(o.key.slice(prefix.length));
+      if (!Number.isFinite(after) || !Number.isFinite(ts) || ts >= after) keys.push(o.key);
     }
     if (!page.truncated) break;
     cursor = page.cursor;
@@ -126,6 +146,12 @@ export function jobEventStream(
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   let cancelled = false;
+  // R10-08: the timestamp filter re-includes the cursor's millisecond
+  // bucket on every poll; within one connection the client has already
+  // seen those ids, so skip re-sending them. A fresh connection with
+  // Last-Event-ID still drains the bucket once — at-least-once across
+  // disconnects, and the client merges events idempotently.
+  const sent = new Set<string>();
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       const startedAt = Date.now();
@@ -135,7 +161,10 @@ export function jobEventStream(
         while (!cancelled) {
           const terminal = TERMINAL_STATUSES.has((await instance.status()).status);
           for (const e of await readJobEvents(env, jobId, cursor)) {
-            controller.enqueue(encoder.encode(`id: ${e.id}\ndata: ${JSON.stringify(e)}\n\n`));
+            if (!sent.has(e.id)) {
+              sent.add(e.id);
+              controller.enqueue(encoder.encode(`id: ${e.id}\ndata: ${JSON.stringify(e)}\n\n`));
+            }
             cursor = e.id;
             lastWrite = Date.now();
           }
@@ -169,7 +198,7 @@ async function readJson<T>(env: Env, key: string): Promise<T | null> {
   }
 }
 
-export function registerJobsRoutes(app: Hono<{ Bindings: Env }>): void {
+export function registerJobsRoutes(app: Hono<AppEnv>): void {
   app.post("/v1/jobs", async (c) => {
     if (!c.env.PIPELINE) {
       return c.json({ ok: false, error: "server_misconfigured" }, 500);
@@ -179,38 +208,65 @@ export function registerJobsRoutes(app: Hono<{ Bindings: Env }>): void {
     if ((c.req.header("content-type") ?? "").includes("application/json")) {
       return handleCreateJobV11(c);
     }
+    // R10-05 (F4): the daily cap precedes storage — a halted deployment
+    // creates nothing, and the ledger is untouched.
+    if (spendDisabled(c.env)) {
+      return c.json({ ok: false, error: "spend_disabled" }, 503);
+    }
+    let form: FormData;
     let manifest: Manifest;
-    let allowed: Set<string>;
     let files: Array<{ name: string; file: File }>;
     let totalBytes: number;
     try {
-      const form = await c.req.formData();
+      form = await c.req.formData();
       manifest = ManifestSchema.parse(JSON.parse(String(form.get("manifest"))));
-      if (!manifest.consent.sendFramesToCloudAi) {
-        return c.json({ ok: false, error: "consent_required" }, 400);
-      }
-      allowed = new Set(
-        manifest.checkpoints.flatMap((k) => [
-          ...k.keyframes.map((f) => f.id),
-          ...(k.clip ? [k.clip.id] : []),
-        ]),
-      );
-      files = [];
-      totalBytes = 0;
-      for (const [name, v] of form.entries()) {
-        if (v instanceof File && allowed.has(name)) {
-          files.push({ name, file: v });
-          totalBytes += v.size;
-        }
-      }
     } catch {
       return c.json({ ok: false, error: "invalid_manifest" }, 400);
+    }
+    if (!manifest.consent.sendFramesToCloudAi) {
+      return c.json({ ok: false, error: "consent_required" }, 400);
+    }
+    // R10-11 (review 0010, F10): part names are validated against the
+    // manifest — the old loop silently dropped unknown and duplicate
+    // parts. These are client errors, not manifest problems, so they sit
+    // outside the parse catch and report their own 400s.
+    const allowed = new Set(
+      manifest.checkpoints.flatMap((k) => [
+        ...k.keyframes.map((f) => f.id),
+        ...(k.clip ? [k.clip.id] : []),
+      ]),
+    );
+    files = [];
+    totalBytes = 0;
+    const partSeen = new Set<string>();
+    for (const [name, v] of form.entries()) {
+      if (v instanceof File) {
+        if (!allowed.has(name)) {
+          return c.json({ ok: false, error: "unknown_file", file: name }, 400);
+        }
+        if (partSeen.has(name)) {
+          return c.json({ ok: false, error: "duplicate_file", file: name }, 400);
+        }
+        partSeen.add(name);
+        files.push({ name, file: v });
+        totalBytes += v.size;
+      }
     }
     if (files.length > MAX_FILES) {
       return c.json({ ok: false, error: "too_many_files" }, 413);
     }
     if (totalBytes > MAX_TOTAL_BYTES) {
       return c.json({ ok: false, error: "payload_too_large" }, 413);
+    }
+    // R10-05 (F4): reserve the job's worst case before any file lands —
+    // v1 carries no budget, so the hard ceiling is what a job can spend.
+    // Over the cap is 503; a contention storm is the handler's 500 —
+    // nothing was written.
+    const reserve = await reserveDailySpend(c.env, MAX_SAM_FRAMES);
+    if (!reserve.ok) {
+      return reserve.reason === "over_cap"
+        ? c.json({ ok: false, error: "daily_budget_exceeded" }, 503)
+        : c.json({ ok: false, error: "job_create_failed" }, 500);
     }
     // Storage/creation failures are 500s: the manifest above was valid,
     // so reporting invalid_manifest here would mask an outage.
@@ -222,6 +278,8 @@ export function registerJobsRoutes(app: Hono<{ Bindings: Env }>): void {
         });
       }
       await c.env.MEDIA.put(manifestKey(jobId), JSON.stringify(manifest));
+      // R10-01: bind the job to the creating install.
+      await writeJobOwner(c.env, jobId, c.get("deviceId"));
       await putProgress(c.env, jobId, "queued");
       await c.env.PIPELINE.create({ id: jobId, params: { jobId } });
       return c.json({ ok: true, jobId }, 202);
@@ -237,11 +295,17 @@ export function registerJobsRoutes(app: Hono<{ Bindings: Env }>): void {
   });
 
   app.get("/v1/jobs/:id", async (c) => {
+    // R10-12 (review 0010, F11): per-user route data — never cached.
+    c.header("Cache-Control", "no-store");
     if (!c.env.PIPELINE) {
       return c.json({ ok: false, error: "server_misconfigured" }, 500);
     }
     const id = c.req.param("id");
     if (!isJobId(id)) return c.json({ ok: false, error: "job_not_found" }, 404);
+    // R10-01: a job of another install is indistinguishable from a missing one.
+    if ((await readJobOwner(c.env, id)) !== c.get("deviceId")) {
+      return c.json({ ok: false, error: "job_not_found" }, 404);
+    }
     let status: string;
     try {
       status = (await (await c.env.PIPELINE.get(id)).status()).status;
@@ -257,15 +321,11 @@ export function registerJobsRoutes(app: Hono<{ Bindings: Env }>): void {
       return c.json({ ok: true, status: "complete", stage: "complete", result: result.data });
     }
     if (status === "errored" || status === "terminated") {
-      const detail = await readJson<{ error?: unknown }>(c.env, errorKey(id));
       const stage = (await readJson<{ stage?: JobStage }>(c.env, progressKey(id)))?.stage ?? "errored";
-      const body: { ok: true; status: "errored"; stage: JobStage; error?: string } = {
-        ok: true,
-        status: "errored",
-        stage,
-      };
-      if (typeof detail?.error === "string" && detail.error !== "") body.error = detail.error;
-      return c.json(body);
+      // R10-12 (review 0010, F11): the stored message can carry vendor
+      // text and internal key layout — it stays in error.json for ops.
+      // Clients get the stable code; the app maps it to fixed copy.
+      return c.json({ ok: true, status: "errored", stage, error: "job_failed" });
     }
     if (status === "queued") {
       const stage = (await readJson<{ stage?: JobStage }>(c.env, progressKey(id)))?.stage ?? "queued";
@@ -281,6 +341,11 @@ export function registerJobsRoutes(app: Hono<{ Bindings: Env }>): void {
     }
     const id = c.req.param("id");
     if (!isJobId(id)) return c.json({ ok: false, error: "job_not_found" }, 404);
+    // R10-01: a foreign install's stream is a missing job, not a 200 with no
+    // data — the events carry the job's route context.
+    if ((await readJobOwner(c.env, id)) !== c.get("deviceId")) {
+      return c.json({ ok: false, error: "job_not_found" }, 404);
+    }
     let instance: WorkflowInstance;
     try {
       instance = await c.env.PIPELINE.get(id);
@@ -305,6 +370,13 @@ export function registerJobsRoutes(app: Hono<{ Bindings: Env }>): void {
     // The id becomes an R2 prefix: `staging` and `idem` are other trees,
     // and an encoded slash would reach into them.
     if (!isJobId(id)) return c.json({ ok: false, error: "invalid_request" }, 400);
+    // R10-01: a job owned by another install is a 404 (no existence leak, no
+    // cross-install sweep). A job with no owner record is the unknown/legacy
+    // case and keeps the idempotent 204.
+    const owner = await readJobOwner(c.env, id);
+    if (owner !== null && owner !== c.get("deviceId")) {
+      return c.json({ ok: false, error: "job_not_found" }, 404);
+    }
     let handle: WorkflowInstance | null = null;
     const pipeline = c.env.PIPELINE;
     if (pipeline) {

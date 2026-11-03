@@ -5,12 +5,12 @@ import kotlin.math.exp
 import kotlin.math.sqrt
 
 /**
- * Radial-flow and residual-yaw fit, one analysis thread. Coefficients
- * are (expansion, -expansion*foeX, -expansion*foeY, residual yaw), all /s.
- * A statistically unresolved yaw nuisance must not amplify FOE noise: that
- * case fits the declared three radial parameters, profiling yaw separately.
- * Three Huber IRLS passes follow the initial weighted least-squares solve.
- * All storage, including the 4x4 augmented solve, is reused between calls.
+ * Radial-flow and residual-yaw fit, one analysis thread. Travel direction
+ * comes from robust intersections of translation-flow lines, so each block
+ * may have its own depth. The shared-depth yaw model is published only when
+ * those scales agree; a low residual from that model is not itself a direction.
+ * Three Huber IRLS passes then run on the supporting blocks. All storage,
+ * including the 4x4 augmented solve, is reused between calls.
  */
 class EgoMotionFit {
     private val result = VisualEgo()
@@ -20,6 +20,7 @@ class EgoMotionFit {
     private val equations = DoubleArray(20)
     private val row = DoubleArray(4)
     private val coefficients = DoubleArray(4)
+    private val consensus = TranslationConsensus()
     private var inverseYawInformation = 0.0
 
     fun fit(flow: BlockFlow, usability01: Double): VisualEgo {
@@ -34,6 +35,16 @@ class EgoMotionFit {
                 flow.texture[i].isFinite() && flow.texture[i] >= VisualUsability.MIN_TEXTURE_EIGENVALUE && flow.quality[i].isFinite()
             baseWeights[i] = if (valid) VisualUsability.textureFactor01(flow.texture[i]) * flow.quality[i].coerceIn(0.0, 1.0) else 0.0
             weights[i] = baseWeights[i]
+        }
+        consensus.evaluate(flow, inverseTime, baseWeights)
+        if (consensus.valid && !consensus.sharedDepth) return publishMixedDepth(flow, inverseTime, usability01)
+        if (consensus.valid) {
+            for (i in 0 until flow.count) {
+                if (consensus.keep[i] == 0.0) {
+                    baseWeights[i] = 0.0
+                    weights[i] = 0.0
+                }
+            }
         }
         var dimensions = 4
         for (pass in 0..IRLS_PASSES) {
@@ -96,7 +107,7 @@ class EgoMotionFit {
         result.inliers = inliers
         result.confidence01 = (countFactor * (inlierWeight / inliers) * usability01.coerceIn(0.0, 1.0) *
             exp(-rmsPixels * rmsPixels / (RMS_SCALE_PIXELS * RMS_SCALE_PIXELS))).coerceIn(0.0, 1.0)
-        if (abs(coefficients[0]) >= MIN_EXPANSION_PER_SEC) {
+        if (consensus.valid && abs(coefficients[0]) >= MIN_EXPANSION_PER_SEC) {
             val foeX = -coefficients[1] / coefficients[0]
             val foeY = -coefficients[2] / coefficients[0]
             if (foeX.isFinite() && foeY.isFinite()) {
@@ -105,6 +116,41 @@ class EgoMotionFit {
                 result.hasFoe = true
             }
         }
+        if (consensus.ambiguous) result.confidence01 = result.confidence01.coerceAtMost(AMBIGUOUS_CONFIDENCE)
+        return result
+    }
+
+    /** Direction is identified; a single depth is not, so yaw stays unresolved. */
+    private fun publishMixedDepth(flow: BlockFlow, inverseTime: Double, usability01: Double): VisualEgo {
+        var residualSquares = 0.0
+        var weight = 0.0
+        var used = 0
+        for (i in 0 until flow.count) {
+            if (consensus.keep[i] == 0.0) continue
+            val radiusX = flow.x[i] - consensus.focusX
+            val radiusY = flow.y[i] - consensus.focusY
+            val radiusSquared = radiusX * radiusX + radiusY * radiusY
+            if (radiusSquared <= 0.0) continue
+            val horizontal = flow.dx[i] * inverseTime - consensus.medianScalePerSec * radiusX
+            val vertical = flow.dy[i] * inverseTime - consensus.medianScalePerSec * radiusY
+            val radial = (horizontal * radiusX + vertical * radiusY) / radiusSquared
+            val tangentX = horizontal - radial * radiusX
+            val tangentY = vertical - radial * radiusY
+            val sampleWeight = baseWeights[i]
+            residualSquares += sampleWeight * (tangentX * tangentX + tangentY * tangentY)
+            weight += sampleWeight
+            used++
+        }
+        if (used == 0 || weight == 0.0) return result
+        val rmsPixels = sqrt(residualSquares / weight) * flow.deltaSeconds * flow.fPx
+        val countFactor = if (used < MIN_INLIERS) 0.49 * used / MIN_INLIERS else (used / 8.0).coerceAtMost(1.0)
+        result.expansionPerSec = consensus.medianScalePerSec
+        result.foeX = consensus.focusX
+        result.foeY = consensus.focusY
+        result.hasFoe = abs(consensus.medianScalePerSec) >= MIN_EXPANSION_PER_SEC
+        result.inliers = used
+        result.confidence01 = (countFactor * (weight / used) * usability01.coerceIn(0.0, 1.0) *
+            exp(-rmsPixels * rmsPixels / (RMS_SCALE_PIXELS * RMS_SCALE_PIXELS))).coerceIn(0.0, 1.0)
         return result
     }
 
@@ -188,5 +234,6 @@ class EgoMotionFit {
         private const val MIN_EXPANSION_PER_SEC = 0.01
         private const val HUBER_PIXELS = 0.25
         private const val RMS_SCALE_PIXELS = 0.3
+        private const val AMBIGUOUS_CONFIDENCE = 0.49
     }
 }

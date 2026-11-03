@@ -331,11 +331,12 @@ describe("EchoPipeline lens phase (W11-06)", () => {
     const pipeline = new EchoPipeline({} as never, env);
     const out = (await pipeline.run({ payload: { jobId: "job1" } } as never, step as never)) as JobResult;
 
-    // One step per SAM call — a retry re-bills one call, never all.
+    // One step per SAM call — a retry re-bills one call, never all. R10-04:
+    // the scout is one step per checkpoint too.
     expect(names.filter((n) => /^ground:n2:\d+:[0-9a-f]{12}/.test(n))).toHaveLength(1);
     expect(names).toEqual([
       "load",
-      "scout",
+      "scout:workers-ai:n2",
       "emit:stage:grounding",
       "ground:plan:image",
       expect.stringMatching(/^ground:n2:0:[0-9a-f]{12}$/),
@@ -348,12 +349,53 @@ describe("EchoPipeline lens phase (W11-06)", () => {
     expect(out.models).toEqual({ scout: expect.any(String), ground: "sam-3.1" });
     expect(out.checkpoints[0].candidates[0].source).toBe("AI_GROUNDED");
     expect(out.usage.samFrames).toBe(1);
-    expect(out.usage.samFramesBilled).toBe(0);
+    // R10-05: the vendor omitted usage, so the one sent frame stands in
+    // for billed — a call that went out never reports zero.
+    expect(out.usage.samFramesBilled).toBe(1);
     expect(out.usage.budgetExhausted).toBe(false);
 
     const events = await readJobEvents(env, "job1");
-    expect(events.map((e) => e.type)).toEqual(["stage", "checkpoint", "usage", "complete"]);
-    const checkpoint = events[1];
+    // One of each event; chronological across milliseconds is contract,
+    // same-millisecond order is not (R10-08: the id's tiebreak is random).
+    expect(events.map((e) => e.type).sort()).toEqual([
+      "checkpoint",
+      "complete",
+      "stage",
+      "usage",
+    ]);
+    const ts = (id: string) => parseInt(id.slice(0, id.indexOf("-")), 36);
+    const byType = Object.fromEntries(events.map((e) => [e.type, e]));
+    expect(ts(byType["stage"].id)).toBeLessThanOrEqual(ts(byType["checkpoint"].id));
+    expect(ts(byType["checkpoint"].id)).toBeLessThanOrEqual(ts(byType["usage"].id));
+    expect(ts(byType["usage"].id)).toBeLessThanOrEqual(ts(byType["complete"].id));
+    const checkpoint = byType["checkpoint"];
     expect(checkpoint).toMatchObject({ type: "checkpoint", nodeId: "n2", status: "grounded" });
+  });
+
+  it("emits a stable error code to the stream and keeps the raw message server-side (R10-12)", async () => {
+    const media = new FakeR2();
+    // No manifest.json: loadManifest throws its raw internal message —
+    // exactly the text F11 keeps off the client.
+    const env = envFor(media, {
+      AI_GATEWAY_ID: "test",
+      SCOUT_ORDER: "workers-ai",
+      GROUND_ORDER: "none",
+    });
+    const step = {
+      do: async (_name: string, _cfg: unknown, fn: () => Promise<unknown>) => fn(),
+    };
+    const pipeline = new EchoPipeline({} as never, env);
+    await expect(
+      pipeline.run({ payload: { jobId: "job1" } } as never, step as never),
+    ).rejects.toThrow("manifest missing for job job1");
+
+    // The SSE error event carries the stable code, never the raw message.
+    const events = await readJobEvents(env, "job1");
+    expect(events.map((e) => e.type)).toEqual(["error"]);
+    expect(events[0]).toMatchObject({ type: "error", error: "job_failed" });
+    // The raw message stays in error.json for ops (the app maps the code
+    // to fixed copy; detail lives in the log and this record).
+    const raw = new TextDecoder().decode(media.store.get("jobs/job1/error.json")!);
+    expect(raw).toContain("manifest missing for job job1");
   });
 });

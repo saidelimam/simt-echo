@@ -5,7 +5,7 @@ import type { Env } from "./index";
 import { JobResultSchema, ManifestSchema, type JobResult, type JobStage, type Manifest } from "./types";
 import { emitJobEvent, newEventId, putError, putProgress } from "./jobs";
 import { runScout, ScoutError, type ScoutResult } from "./scout";
-import { runGround, runGroundLens } from "./ground";
+import { runGroundLens } from "./ground";
 import { emitStep, type StepRunner } from "./samLens";
 
 export interface PipelineParams {
@@ -22,17 +22,20 @@ const STEP_OPTS = {
  * Ground seals ranked candidates to `jobs/<id>/ground.json`; assemble (this
  * slice, W3-06) re-sorts by §6.6 rank, attaches measured usage and seals
  * `jobs/<id>/result.json` for the app to poll.
- * W11-06: the ground phase runs the SAM lens by default — one Workflow
- * step `ground:<nodeId>:<k>:<phraseHash>` per SAM call, so a retry re-bills one
- * call, never all. `GROUND_MODE=legacy` keeps the single W3-05 `ground`
- * step until W11-10. */
+ * W11-06: the ground phase runs the SAM lens — one Workflow step
+ * `ground:<nodeId>:<k>:<phraseHash>` per SAM call, so a retry re-bills one
+ * call, never all. R10-13 (review 0010, F12) removed the `GROUND_MODE=legacy`
+ * W3-05 path; the lens is the sole ground.
+ * R10-04: the scout phase is per-checkpoint steps too — one
+ * `scout:<provider>:<nodeId>` per checkpoint (one `scout:<provider>` for
+ * whole-job providers) — so a replay re-bills the failed checkpoint,
+ * never 1..n-1. */
 export class EchoPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
   override async run(
     event: Readonly<WorkflowEvent<PipelineParams>>,
     step: WorkflowStep,
   ): Promise<unknown> {
     const { jobId } = event.payload;
-    const lensMode = (this.env.GROUND_MODE ?? "lens") !== "legacy";
     const runner: StepRunner = (name, fn) => step.do(name, STEP_OPTS, fn);
     try {
       const manifest = await step.do("load", STEP_OPTS, () => loadManifest(this.env, jobId));
@@ -40,35 +43,35 @@ export class EchoPipeline extends WorkflowEntrypoint<Env, PipelineParams> {
       // around the steps so the numbers are real even though the Workflow
       // scheduler owns the gaps between them.
       const t0 = Date.now();
-      const scout = await step.do("scout", STEP_OPTS, () => runScoutStep(this.env, jobId, manifest));
+      const scout = await runScoutPhase(this.env, jobId, manifest, runner);
       const scoutMs = Date.now() - t0;
-      const ground = lensMode
-        ? await runGroundLensPhase(this.env, jobId, manifest, scout, runner)
-        : await step.do("ground", STEP_OPTS, () => runGroundStep(this.env, jobId, manifest, scout));
+      const ground = await runGroundLensPhase(this.env, jobId, manifest, scout, runner);
       const assembled = await step.do("assemble", STEP_OPTS, () =>
         assembleFromGround(this.env, jobId, manifest, ground, { scoutMs }),
       );
-      if (lensMode) {
-        await emitStep(runner, this.env, jobId, "emit:complete", (id) => ({
-          id,
-          type: "complete",
-          result: assembled,
-        }));
-      }
+      await emitStep(runner, this.env, jobId, "emit:complete", (id) => ({
+        id,
+        type: "complete",
+        result: assembled,
+      }));
       return assembled;
     } catch (e) {
-      if (lensMode) {
-        try {
-          await emitJobEvent(this.env, jobId, {
-            id: newEventId(),
-            type: "error",
-            error: e instanceof Error ? e.message : String(e),
-          });
-        } catch {
-          // Event emission never masks the pipeline failure.
-        }
+      // R10-12 (review 0010, F11): the raw message can carry the vendor
+      // response body and internal key layout — it is the server-side log
+      // site and stays in error.json for ops. The SSE event carries the
+      // stable code the app maps to fixed copy.
+      const raw = e instanceof Error ? e.message : String(e);
+      console.error(`job ${jobId} failed: ${raw}`);
+      try {
+        await emitJobEvent(this.env, jobId, {
+          id: newEventId(),
+          type: "error",
+          error: "job_failed",
+        });
+      } catch {
+        // Event emission never masks the pipeline failure.
       }
-      await putError(this.env, jobId, e instanceof Error ? e.message : String(e));
+      await putError(this.env, jobId, raw);
       throw e;
     }
   }
@@ -82,10 +85,17 @@ async function loadManifest(env: Env, jobId: string): Promise<Manifest> {
   return manifest;
 }
 
-async function runScoutStep(env: Env, jobId: string, manifest: Manifest): Promise<ScoutResult> {
+async function runScoutPhase(
+  env: Env,
+  jobId: string,
+  manifest: Manifest,
+  runner: StepRunner,
+): Promise<ScoutResult> {
   await putProgress(env, jobId, "scouting");
   try {
-    return await runScout(env, jobId, manifest);
+    // R10-04: per-checkpoint steps — a replay re-bills the failed
+    // checkpoint, never 1..n-1.
+    return await runScout(env, jobId, manifest, runner);
   } catch (e) {
     // Scout failures are deterministic (no provider, missing media, every
     // model already fell back and failed): retrying re-bills the same calls.
@@ -130,7 +140,7 @@ export async function assembleFromGround(
       ...(ground.usage.samFrames ? { samFrames: ground.usage.samFrames } : {}),
       scoutMs: Math.max(0, timings.scoutMs),
       ...(ground.usage.samMs !== undefined ? { samMs: ground.usage.samMs } : {}),
-      // W11-06 lens accounting passes through verbatim (absent on legacy).
+      // W11-06 lens accounting passes through verbatim.
       ...(ground.usage.samFramesBilled !== undefined
         ? { samFramesBilled: ground.usage.samFramesBilled }
         : {}),
@@ -142,16 +152,6 @@ export async function assembleFromGround(
   await env.MEDIA.put(`jobs/${jobId}/result.json`, JSON.stringify(result));
   await putProgress(env, jobId, "complete");
   return result;
-}
-
-async function runGroundStep(
-  env: Env,
-  jobId: string,
-  manifest: Manifest,
-  scout: ScoutResult,
-): Promise<JobResult> {
-  await putProgress(env, jobId, "grounding");
-  return runGround(env, jobId, manifest, scout);
 }
 
 /**

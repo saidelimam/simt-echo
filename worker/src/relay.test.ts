@@ -7,9 +7,12 @@ import {
   RELAY_MAX_BYTES,
   RELAY_TTL_MS,
 } from "./relay";
+import { bearer, seedDevice } from "./testkit";
 
-const TOKEN = "test-token-123";
-const AUTH = { Authorization: `Bearer ${TOKEN}` };
+// R10-01: the bearer is a per-install device key. Two fixed installs prove
+// isolation; the minted key in the isolation test proves the entropy path.
+const KEY = "dk_test_install_one";
+const OTHER = "dk_test_install_two";
 
 /** In-memory R2 stand-in with the surface the relay uses. */
 class FakeBucket {
@@ -24,11 +27,25 @@ class FakeBucket {
 
   async put(
     key: string,
-    value: ArrayBuffer | Uint8Array,
-    options?: { customMetadata?: Record<string, string> },
+    value: ArrayBuffer | Uint8Array | string | ReadableStream<Uint8Array>,
+    options?: {
+      customMetadata?: Record<string, string>;
+      onlyIf?: { etagDoesNotMatch?: string };
+    },
   ) {
+    // R10-07: honor R2's create-if-absent guard — the put fails when the
+    // object exists, which is what the allocation relies on.
+    if (options?.onlyIf?.etagDoesNotMatch !== undefined && this.objects.has(key)) {
+      throw new Error("R2ConditionalPutFailed");
+    }
     const body =
-      value instanceof Uint8Array ? value : new Uint8Array(value);
+      value instanceof Uint8Array
+        ? value
+        : value instanceof ReadableStream
+          ? new Uint8Array(0)
+          : value instanceof ArrayBuffer
+            ? new Uint8Array(value)
+            : new TextEncoder().encode(value);
     this.objects.set(key, { body, customMetadata: options?.customMetadata });
     return { key };
   }
@@ -36,7 +53,12 @@ class FakeBucket {
   async get(key: string) {
     const found = this.objects.get(key);
     if (!found) return null;
-    return { body: found.body, customMetadata: found.customMetadata };
+    return {
+      body: found.body,
+      customMetadata: found.customMetadata,
+      // The auth gate reads device records through .json().
+      json: async <T,>() => JSON.parse(new TextDecoder().decode(found.body)) as T,
+    };
   }
 
   async delete(key: string) {
@@ -44,8 +66,9 @@ class FakeBucket {
   }
 }
 
-function env(bucket: FakeBucket) {
-  return { ECHO_APP_TOKEN: TOKEN, MEDIA: bucket } as never;
+async function env(bucket: FakeBucket) {
+  await seedDevice(bucket, KEY);
+  return { ECHO_APP_TOKEN: "retired", MEDIA: bucket } as never;
 }
 
 /** Fake sealed bundle: ECX1 magic + bytes that are not route JSON. */
@@ -56,34 +79,42 @@ function ciphertext(): Uint8Array {
   return bytes;
 }
 
-async function upload(bucket: FakeBucket, body: Uint8Array) {
+async function upload(bucket: FakeBucket, body: Uint8Array, headers = bearer(KEY)) {
+  const testEnv = await env(bucket);
   return app.request(
     "/v1/relay",
-    { method: "POST", headers: AUTH, body },
-    env(bucket),
+    { method: "POST", headers, body },
+    testEnv,
   );
 }
 
 describe("W4-05 relay codes", () => {
-  it("generates 6-char codes without ambiguous glyphs", () => {
+  it("generates 8-char codes without ambiguous glyphs (R10-07)", () => {
     let n = 0;
     const code = generateRelayCode(() => (n += 29));
-    expect(code).toHaveLength(6);
+    expect(code).toHaveLength(8);
     for (const ch of code) expect(RELAY_CODE_ALPHABET).toContain(ch);
     expect(code).not.toMatch(/[01IOL]/);
   });
 
-  it("retries allocation on collision and gives up after 5", async () => {
-    const taken = new Set(["AAAAAA", "BBBBBB"]);
-    const sequence = ["AAAAAA", "BBBBBB", "CCCCCC"];
+  it("retries allocation on a thrown collision and gives up after 5 (R10-07)", async () => {
+    const taken = new Set(["AAAAAAAA", "BBBBBBBB"]);
+    const sequence = ["AAAAAAAA", "BBBBBBBB", "CCCCCCCC"];
     let i = 0;
     const code = await allocateRelayCode(
-      async (candidate) => taken.has(candidate),
+      async (candidate) => {
+        if (taken.has(candidate)) throw new Error("collision");
+      },
       () => sequence[i++],
     );
-    expect(code).toBe("CCCCCC");
+    expect(code).toBe("CCCCCCCC");
 
-    const exhausted = await allocateRelayCode(async () => true, () => "AAAAAA");
+    const exhausted = await allocateRelayCode(
+      async () => {
+        throw new Error("collision");
+      },
+      () => "AAAAAAAA",
+    );
     expect(exhausted).toBeNull();
   });
 });
@@ -96,7 +127,7 @@ describe("W4-05 relay endpoints", () => {
     const res = await upload(bucket, sealed);
     expect(res.status).toBe(200);
     const json = (await res.json()) as { code: string; expiresAt: number };
-    expect(json.code).toMatch(/^[A-HJ-NP-Z2-9]{6}$/);
+    expect(json.code).toMatch(/^[A-HJ-NP-Z2-9]{8}$/);
     expect(json.expiresAt).toBeGreaterThanOrEqual(before + RELAY_TTL_MS - 1000);
     expect(json.expiresAt).toBeLessThanOrEqual(Date.now() + RELAY_TTL_MS + 1000);
 
@@ -106,6 +137,9 @@ describe("W4-05 relay endpoints", () => {
     expect(stored!.body).toEqual(sealed);
     expect(new TextDecoder().decode(stored!.body)).not.toContain("routeId");
     expect(stored!.customMetadata?.expiresAt).toBe(String(json.expiresAt));
+    // R10-01: the code is stamped with the minting install's id.
+    const id = await seedDevice(bucket, KEY);
+    expect(stored!.customMetadata?.owner).toBe(id);
   });
 
   it("serves an unexpired code back byte-for-byte", async () => {
@@ -115,8 +149,8 @@ describe("W4-05 relay endpoints", () => {
     const { code } = (await up.json()) as { code: string };
     const res = await app.request(
       `/v1/relay/${code}`,
-      { headers: AUTH },
-      env(bucket),
+      { headers: bearer(KEY) },
+      await env(bucket),
     );
     expect(res.status).toBe(200);
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(sealed);
@@ -124,30 +158,66 @@ describe("W4-05 relay endpoints", () => {
 
   it("404s unknown, malformed, and expired codes (deleting expired)", async () => {
     const bucket = new FakeBucket();
+    const testEnv = await env(bucket);
     const unknown = await app.request(
       "/v1/relay/ZZZZZZ",
-      { headers: AUTH },
-      env(bucket),
+      { headers: bearer(KEY) },
+      testEnv,
     );
     expect(unknown.status).toBe(404);
 
     const malformed = await app.request(
       "/v1/relay/not-a-code!",
-      { headers: AUTH },
-      env(bucket),
+      { headers: bearer(KEY) },
+      testEnv,
     );
     expect(malformed.status).toBe(404);
 
-    await bucket.put("relay/ABCDEF", ciphertext(), {
+    await bucket.put("relay/ABCDEFGH", ciphertext(), {
       customMetadata: { expiresAt: String(Date.now() - 1) },
     });
     const expired = await app.request(
-      "/v1/relay/ABCDEF",
-      { headers: AUTH },
-      env(bucket),
+      "/v1/relay/ABCDEFGH",
+      { headers: bearer(KEY) },
+      testEnv,
     );
     expect(expired.status).toBe(404);
-    expect(bucket.objects.has("relay/ABCDEF")).toBe(false);
+    expect(bucket.objects.has("relay/ABCDEFGH")).toBe(false);
+  });
+
+  it("never overwrites a bundle when two POSTs race the same code (R10-07)", async () => {
+    const bucket = new FakeBucket();
+    const testEnv = await env(bucket);
+    const rival = new Uint8Array(64);
+    rival.set(new TextEncoder().encode("ECX1"), 0);
+    rival.fill(200, 4);
+    // A rival POST claims the code our allocation will draw first.
+    bucket.objects.set("relay/HHHHHHHH", {
+      body: rival,
+      customMetadata: { expiresAt: String(Date.now() + RELAY_TTL_MS), owner: "dev_rival" },
+    });
+    // Simulate the race window: the guard fires on the contested key, so
+    // the allocation must draw a fresh code instead of overwriting.
+    const originalPut = bucket.put.bind(bucket);
+    bucket.put = async (...args: Parameters<typeof originalPut>) => {
+      const [key] = args;
+      if (key === "relay/HHHHHHHH") throw new Error("R2ConditionalPutFailed");
+      return originalPut(...args);
+    };
+    const mine = new Uint8Array(64);
+    mine.set(new TextEncoder().encode("ECX1"), 0);
+    mine.fill(7, 4);
+    const res = await app.request(
+      "/v1/relay",
+      { method: "POST", headers: bearer(KEY), body: mine },
+      testEnv,
+    );
+    expect(res.status).toBe(200);
+    const { code } = (await res.json()) as { code: string };
+    expect(code).not.toBe("HHHHHHHH");
+    // The rival's bundle is intact; ours lives under its own code.
+    expect(bucket.objects.get("relay/HHHHHHHH")!.body).toEqual(rival);
+    expect(bucket.objects.get(`relay/${code}`)!.body).toEqual(mine);
   });
 
   it("rejects empty and oversized uploads", async () => {
@@ -157,17 +227,49 @@ describe("W4-05 relay endpoints", () => {
 
     const big = await upload(bucket, new Uint8Array(RELAY_MAX_BYTES + 1));
     expect(big.status).toBe(413);
-    expect(bucket.objects.size).toBe(0);
+    // No relay object was stored (the seeded device record is not a relay).
+    expect([...bucket.objects.keys()].filter((k) => k.startsWith("relay/"))).toEqual([]);
   });
 
-  it("requires the app token like every /v1 route", async () => {
+  it("requires a device key like every /v1 route", async () => {
     const bucket = new FakeBucket();
     const res = await app.request(
       "/v1/relay",
       { method: "POST", body: ciphertext() },
-      env(bucket),
+      await env(bucket),
     );
     expect(res.status).toBe(401);
-    expect(bucket.objects.size).toBe(0);
+    expect([...bucket.objects.keys()].filter((k) => k.startsWith("relay/"))).toEqual([]);
+  });
+
+  it("keeps a code unreadable to every other install (R10-01)", async () => {
+    const bucket = new FakeBucket();
+    await seedDevice(bucket, OTHER);
+    const testEnv = await env(bucket);
+    const sealed = ciphertext();
+    const up = await upload(bucket, sealed);
+    const { code } = (await up.json()) as { code: string };
+
+    // The other install sees a plain 404: no existence leak, no delete.
+    const foreign = await app.request(
+      `/v1/relay/${code}`,
+      { headers: bearer(OTHER) },
+      testEnv,
+    );
+    expect(foreign.status).toBe(404);
+    expect(bucket.objects.has(`relay/${code}`)).toBe(true);
+
+    // The owner still reads it byte-for-byte.
+    const own = await app.request(`/v1/relay/${code}`, { headers: bearer(KEY) }, testEnv);
+    expect(own.status).toBe(200);
+    expect(new Uint8Array(await own.arrayBuffer())).toEqual(sealed);
+
+    // A freshly minted install is foreign too (the entropy path).
+    const minted = await app.request("/v1/device", { method: "POST" }, testEnv);
+    expect(minted.status).toBe(200);
+    const { device } = (await minted.json()) as { device: string };
+    const stranger = await app.request(`/v1/relay/${code}`, { headers: bearer(device) }, testEnv);
+    expect(stranger.status).toBe(404);
+    expect(bucket.objects.has(`relay/${code}`)).toBe(true);
   });
 });
