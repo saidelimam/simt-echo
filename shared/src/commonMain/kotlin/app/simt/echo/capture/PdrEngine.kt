@@ -1,5 +1,6 @@
 package app.simt.echo.capture
 
+import app.simt.echo.capture.visual.VisualEgo
 import app.simt.echo.platform.MotionSource
 import app.simt.echo.platform.MotionUpdate
 import kotlinx.coroutines.flow.Flow
@@ -11,6 +12,9 @@ import kotlin.math.sqrt
 
 /** Raw accelerometer sample, m/s² per axis. */
 data class ImuSample(val tNs: Long, val ax: Double, val ay: Double, val az: Double)
+
+/** Raw gyroscope sample, rad/s per device axis (W16-03). */
+data class GyroSample(val tNs: Long, val wx: Double, val wy: Double, val wz: Double)
 
 /** Rotation-vector sample: timestamp + 9-element row-major matrix. */
 data class RotSample(val tNs: Long, val r: FloatArray)
@@ -34,6 +38,8 @@ data class PressureSample(val tNs: Long, val hPa: Double)
 class PdrEngine(
     /** Weinberg step-length constant, calibratable (W4-02). */
     k: Double = 0.48,
+    /** When true (W16-03), applies [HeadingQuality.correctedYaw] and FOE travel offset. */
+    @Volatile var visualAssist: Boolean = false,
 ) : MotionSource, StepCalibratable {
     @Volatile
     override var stepK: Double = k
@@ -127,9 +133,30 @@ class PdrEngine(
         val axisSwitched = camera != cameraAxis
         cameraAxis = camera
         val origin = yaw0 ?: heading.also { yaw0 = it }
-        yawRad = wrapPi(heading - origin)
-        headingQuality.onYaw(yawRad, tNs, axisSwitched)
+        val rawYaw = wrapPi(heading - origin)
+        headingQuality.onYaw(rawYaw, tNs, axisSwitched)
+        yawRad = if (visualAssist) headingQuality.correctedYaw(rawYaw) else rawYaw
         _updates.tryEmit(snapshot(tNs, isStep = false))
+    }
+
+    /** Device-frame gyroscope feed (W16-03); projected onto world-up once rotation is known. */
+    fun onGyro(sample: GyroSample, wallNowNs: Long = sample.tNs) {
+        if (!running) return
+        val r = lastRotMatrix ?: return
+        val tNs = correctNs(sample.tNs, wallNowNs)
+        headingQuality.onGyro(gyroYawRateRadPerSec(sample.wx, sample.wy, sample.wz, r), tNs)
+    }
+
+    /** Direct world-up clockwise-positive gyroscope yaw rate feed (rad/s, W16-03). */
+    fun onGyroYawRate(yawRateRadPerSec: Double, tNs: Long, wallNowNs: Long = tNs) {
+        if (!running) return
+        headingQuality.onGyro(yawRateRadPerSec, correctNs(tNs, wallNowNs))
+    }
+
+    /** Visual ego-motion feed (W16-03); active only when [visualAssist] is enabled. */
+    fun onVisualEgo(ego: VisualEgo, tNs: Long, wallNowNs: Long = tNs) {
+        if (!running || !visualAssist) return
+        headingQuality.onVisualEgo(ego, correctNs(tNs, wallNowNs))
     }
 
     fun onPressure(sample: PressureSample) {
@@ -138,17 +165,20 @@ class PdrEngine(
     }
 
     /**
-     * Magnetometer feed (W12-04): `TYPE_MAGNETIC_FIELD` at GAME rate.
+     * Magnetometer feed (W12-04, W16-03): `TYPE_MAGNETIC_FIELD` at GAME rate.
      * Reduced immediately to |B| and the gravity-aligned vertical via the
      * latest game-rotation matrix — raw axes never persist. Samples before
      * the first rotation matrix are dropped (no honest vertical yet).
-     * Step detection, yaw and pressure above are untouched.
      */
     fun onMagnetic(sample: MagSample) {
         if (!running) return
         val r = lastRotMatrix ?: return
-        magMag = magneticMagnitude(sample.bx, sample.by, sample.bz)
-        magVert = magneticVertical(sample.bx, sample.by, sample.bz, r)
+        val tNs = correctNs(sample.tNs, sample.tNs)
+        val mag = magneticMagnitude(sample.bx, sample.by, sample.bz)
+        val vert = magneticVertical(sample.bx, sample.by, sample.bz, r)
+        magMag = mag
+        magVert = vert
+        headingQuality.onMagnetic(mag, vert, tNs)
     }
 
     fun onAccelerometer(sample: ImuSample, wallNowNs: Long = sample.tNs) {
@@ -203,6 +233,7 @@ class PdrEngine(
         headingQuality = headingQuality.quality,
         magMag = magMag,
         magVert = magVert,
+        travelOffsetRad = if (visualAssist) headingQuality.travelOffsetRad else 0.0,
     )
 
     private companion object {

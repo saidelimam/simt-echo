@@ -122,6 +122,10 @@ class Navigator(
     /** Added to raw yaw so the current leg heading reads as arrow 0. */
     private var yawOffset: Double = 0.0
 
+    /** Slowly-varying camera-to-travel offset from visual FOE (rad, W16-03). */
+    var travelOffsetRad: Double = 0.0
+        private set
+
     private var tickedLegIndex: Int = -1
     private var confirmEntryDist: Double = 0.0
     private var confirmAutoAdvanceProgress: Double? = null
@@ -216,7 +220,10 @@ class Navigator(
         get() = ghost?.sigma
             ?: (config.navUncertaintyBaseM + config.navUncertaintyPerMetre * (dist - lastAnchorDist))
     private val arrow: Double
-        get() = leg?.let { wrapPi(degToRad(it.headingRelDeg) - (yaw + yawOffset)) } ?: 0.0
+        get() {
+            val offset = if (config.visualAssist) yawOffset + travelOffsetRad else yawOffset
+            return leg?.let { wrapPi(degToRad(it.headingRelDeg) - (yaw + offset)) } ?: 0.0
+        }
     private val isLastLeg: Boolean get() = legIndex >= route.legs.lastIndex
 
     private fun landmarkFor(node: RouteNode?): Landmark? =
@@ -230,6 +237,7 @@ class Navigator(
         legOdoValid = true
         lastAnchorLegIndex = 0
         yawOffset = wrapPi(degToRad(leg?.headingRelDeg ?: 0.0) - yaw)
+        travelOffsetRad = 0.0
         turnDetector.reset()
         yawTrail.clear()
         legYaws.clear()
@@ -249,6 +257,9 @@ class Navigator(
         dist = update.distanceM
         yaw = update.yawRad
         lastMotionTNs = update.tNs
+        if (config.visualAssist && update.travelOffsetRad.isFinite() && update.travelOffsetRad != 0.0) {
+            travelOffsetRad = update.travelOffsetRad
+        }
         if (phase != NavPhase.WALK && phase != NavPhase.APPROACH &&
             phase != NavPhase.TURNING && phase != NavPhase.CONFIRM &&
             phase != NavPhase.RELOCKING
@@ -266,7 +277,8 @@ class Navigator(
             // resample on every one.
             if (dist - lastHeadingObsOdo >= HEADING_OBS_STEP_M) {
                 lastHeadingObsOdo = dist
-                it.observe(Observation.Heading(yaw + yawOffset, update.headingQuality))
+                val alignedYaw = if (config.visualAssist) yaw + yawOffset + travelOffsetRad else yaw + yawOffset
+                it.observe(Observation.Heading(alignedYaw, update.headingQuality))
             }
         }
         if (foundAtS.isFinite() && absoluteS - foundAtS >= FOUND_COPY_EXPIRE_M) {
@@ -405,6 +417,27 @@ class Navigator(
      * reweight per window, not one per frame — and the TICK fires once per
      * prompt, not once per hit.
      */
+    /**
+     * Visual ego-motion feed (W16-03): updates the slowly-varying FOE
+     * travel-direction offset when [EchoConfig.visualAssist] is enabled and
+     * the frame clears the confidence gate. Confidence 0 is a no-op.
+     */
+    fun onVisualEgo(ego: app.simt.echo.capture.visual.VisualEgo) {
+        if (!config.visualAssist || config.baselineMode) return
+        if (!ego.confidence01.isFinite() || ego.confidence01 < 0.5 || !ego.hasFoe) return
+        val offset = ego.travelOffsetRad
+        if (!offset.isFinite()) return
+        val clamped = offset.coerceIn(-MAX_TRAVEL_OFFSET_RAD, MAX_TRAVEL_OFFSET_RAD)
+        travelOffsetRad = if (travelOffsetRad == 0.0) {
+            clamped
+        } else {
+            val alpha = (0.2 * ego.confidence01).coerceIn(0.02, 0.35)
+            wrapPi(travelOffsetRad + alpha * wrapPi(clamped - travelOffsetRad))
+                .coerceIn(-MAX_TRAVEL_OFFSET_RAD, MAX_TRAVEL_OFFSET_RAD)
+        }
+        refresh()
+    }
+
     fun onFingerprintHit(hit: FingerprintHit) {
         if (phase == NavPhase.ALIGN || phase == NavPhase.ARRIVED) return
         if (!hitDebounce.accept(hit.nodeS, lastMotionTNs, dist)) return
@@ -940,5 +973,7 @@ class Navigator(
 
         /** "Found you" cue expires after 5 m of further walking. */
         const val FOUND_COPY_EXPIRE_M = 5.0
+
+        private val MAX_TRAVEL_OFFSET_RAD = 30.0 * kotlin.math.PI / 180.0
     }
 }

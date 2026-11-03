@@ -30,6 +30,13 @@ data class MotionUpdate(
      */
     val magMag: Double? = null,
     val magVert: Double? = null,
+    /**
+     * Slowly-varying camera-to-travel heading offset (rad, W16-03) estimated
+     * from the visual Focus of Expansion (`travelYaw - cameraYaw`). Zero when
+     * visual assist is off or no FOE has been observed, so existing callers
+     * and baseline behaviour are bit-identical.
+     */
+    val travelOffsetRad: Double = 0.0,
 )
 
 /**

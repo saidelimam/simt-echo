@@ -148,7 +148,11 @@ class NavigateViewModel(
             viewModelScope.launch {
                 motion.updates.collect {
                     walkedM = it.distanceM
-                    if (it.isStep) visualFrame = (motion as? VisualMotionSource)?.drainVisual(it.tNs)
+                    if (it.isStep) {
+                        val drained = (motion as? VisualMotionSource)?.drainVisual(it.tNs)
+                        visualFrame = drained
+                        if (drained != null) nav.onVisualEgo(drained.ego)
+                    }
                     nav.onInput(NavInput.Motion(it))
                 }
             }

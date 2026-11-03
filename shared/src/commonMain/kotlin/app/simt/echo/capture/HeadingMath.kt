@@ -50,3 +50,12 @@ fun headingRad(r: FloatArray, prevCamera: Boolean): Pair<Double, Boolean> {
     }
     return heading to camera
 }
+
+/**
+ * Clockwise-positive world yaw rate (rad/s, W16-03) from device-frame
+ * gyroscope [wx], [wy], [wz] projected onto the world-up row of [r].
+ */
+fun gyroYawRateRadPerSec(wx: Double, wy: Double, wz: Double, r: FloatArray): Double {
+    require(r.size >= 9) { "rotation matrix needs 9 elements, got ${r.size}" }
+    return -(r[6] * wx + r[7] * wy + r[8] * wz)
+}

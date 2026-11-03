@@ -8,6 +8,7 @@ import android.hardware.SensorManager
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.SystemClock
+import app.simt.echo.capture.GyroSample
 import app.simt.echo.capture.ImuSample
 import app.simt.echo.capture.MagSample
 import app.simt.echo.capture.PdrEngine
@@ -80,10 +81,14 @@ class BuiltInPdrMotionSource internal constructor(
 
     override fun attachVisual(tap: FrameTap, enabled: Boolean, intervalNs: Long): Boolean {
         detachVisual()
+        engine.visualAssist = enabled
         if (!enabled) return false
         val input = VisualImuHistory()
         val consumer = VisualMotionConsumer(tap, input, intervalNs = intervalNs)
-        if (!consumer.start()) return false
+        if (!consumer.start()) {
+            engine.visualAssist = false
+            return false
+        }
         visualSession = VisualSession(input, consumer)
         return true
     }
@@ -91,10 +96,14 @@ class BuiltInPdrMotionSource internal constructor(
     override fun detachVisual() {
         val session = visualSession
         visualSession = null
+        engine.visualAssist = false
         session?.consumer?.stop()
     }
 
-    override fun drainVisual(tNs: Long): VisualMotionFrame? = visualSession?.consumer?.drain(tNs)
+    override fun drainVisual(tNs: Long): VisualMotionFrame? =
+        visualSession?.consumer?.drain(tNs)?.also { frame ->
+            engine.onVisualEgo(frame.ego, frame.tNs)
+        }
 
     /** Calibration reaches the engine it wraps (W4-02): without this
      * forward, `CaptureSession`'s step-K push silently no-ops on the
@@ -131,6 +140,16 @@ class BuiltInPdrMotionSource internal constructor(
                     visualSession?.input?.onRotation(event.timestamp, matrix)
                 }
 
+                Sensor.TYPE_GYROSCOPE -> engine.onGyro(
+                    GyroSample(
+                        tNs = event.timestamp,
+                        wx = event.values[0].toDouble(),
+                        wy = event.values[1].toDouble(),
+                        wz = event.values[2].toDouble(),
+                    ),
+                    wallNowNs = nowNs,
+                )
+
                 Sensor.TYPE_PRESSURE -> engine.onPressure(
                     PressureSample(tNs = event.timestamp, hPa = event.values[0].toDouble()),
                 )
@@ -163,6 +182,7 @@ class BuiltInPdrMotionSource internal constructor(
         imuThread = thread
         val handler = Handler(thread.looper)
         register(Sensor.TYPE_ACCELEROMETER, SensorManager.SENSOR_DELAY_GAME, handler)
+        register(Sensor.TYPE_GYROSCOPE, SensorManager.SENSOR_DELAY_GAME, handler)
         headingSensorType { sensorManager.getDefaultSensor(it) != null }
             ?.let { register(it, SensorManager.SENSOR_DELAY_GAME, handler) }
         register(Sensor.TYPE_MAGNETIC_FIELD, SensorManager.SENSOR_DELAY_GAME, handler)
