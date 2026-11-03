@@ -129,6 +129,13 @@ fun ReviewScreen(
                     CosmosBadge(text = "${ui.nodes.size} spots")
                     CosmosBadge(text = "$totalLandmarks landmarks")
                 }
+                ui.polishSummary?.let { summary ->
+                    Text(
+                        text = summary,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
 

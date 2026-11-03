@@ -87,6 +87,8 @@ data class ReviewUiState(
     val inspectorNodeId: String? = null,
     /** Route Health score + nudges over the current draft (pure). */
     val health: HealthResult? = null,
+    /** Measured Route Polish summary (plan W18-01), e.g. "polished: heading drift −1.8°". */
+    val polishSummary: String? = null,
 )
 
 /**
@@ -143,8 +145,18 @@ class ReviewViewModel(
                     return@launch
                 }
                 ensureKeyframes(drafts, media, draftId, loaded, ioDispatcher = ioDispatcher)
-                route = loaded
-                publish(loaded)
+                val polished = if (loaded.perception?.parallax != null &&
+                    loaded.perception.parallax.legSigmaRad.isEmpty()
+                ) {
+                    app.simt.echo.capture.visual.RoutePolish.polish(loaded).also { res ->
+                        if (res.route != loaded) drafts.saveDraftRoute(res.route)
+                        _ui.update { it.copy(polishSummary = res.summaryCopy) }
+                    }.route
+                } else {
+                    loaded
+                }
+                route = polished
+                publish(polished)
                 loadSuggestions()
             } catch (e: Exception) {
                 _ui.update { it.copy(loading = false, error = reviewLoadErrorCopy()) }

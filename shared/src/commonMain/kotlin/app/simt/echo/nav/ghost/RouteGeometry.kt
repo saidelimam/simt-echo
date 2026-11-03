@@ -26,6 +26,15 @@ class RouteGeometry(route: EchoRoute) {
     private val legHeadingRad: DoubleArray =
         DoubleArray(route.legs.size) { i -> degToRad(route.legs[i].headingRelDeg) }
 
+    private val legSigmaRad: DoubleArray = run {
+        val stored = route.perception?.parallax?.legSigmaRad.orEmpty()
+        if (stored.size == route.legs.size) {
+            DoubleArray(route.legs.size) { i -> stored[i] }
+        } else {
+            DoubleArray(0)
+        }
+    }
+
     private val turnS: DoubleArray
     private val turnDirs: Array<TurnDir?>
 
@@ -43,6 +52,16 @@ class RouteGeometry(route: EchoRoute) {
             if (s >= legStartS[i]) idx = i
         }
         return legHeadingRad[idx]
+    }
+
+    /** Per-leg route heading uncertainty σ (rad, W18-01) at along-route [s], or `Double.NaN` when unmeasured. */
+    fun legSigmaAt(s: Double): Double {
+        if (legSigmaRad.isEmpty()) return Double.NaN
+        var idx = 0
+        for (i in legStartS.indices) {
+            if (s >= legStartS[i]) idx = i
+        }
+        return legSigmaRad[idx]
     }
 
     /** Along-route position of the start of leg [legIndex], metres. */

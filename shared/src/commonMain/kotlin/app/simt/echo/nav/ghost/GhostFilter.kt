@@ -189,10 +189,17 @@ class GhostFilter(
      * instead of wrong information).
      */
     fun observeHeading(yawPlusOffsetRad: Double, quality01: Double) {
-        val kappa = KAPPA_MAX * quality01.coerceIn(0.0, 1.0)
-        if (kappa <= 0.0) return
+        val baseKappa = KAPPA_MAX * quality01.coerceIn(0.0, 1.0)
+        if (baseKappa <= 0.0) return
         headingObservationCount++
         for (i in 0 until PARTICLE_COUNT) {
+            val legSigma = geometry.legSigmaAt(sA[i])
+            val kappa = if (legSigma.isFinite() && legSigma > 0.0) {
+                val routeCap = 1.0 / (legSigma * legSigma + 1.0 / KAPPA_MAX)
+                minOf(baseKappa, routeCap)
+            } else {
+                baseKappa
+            }
             val err = wrapPi(yawPlusOffsetRad + bA[i] - geometry.headingAt(sA[i]))
             wA[i] *= exp(kappa * (cos(err) - 1.0))
         }
