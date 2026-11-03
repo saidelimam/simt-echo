@@ -198,19 +198,21 @@ async function isCached(env: Env, jobId: string, key: string, resumeOf: string |
  * Cache first, then reserve: a cache hit consumes no budget, so a resume or
  * retry cannot report a false `budgetExhausted`. Misses reserve in the order
  * given (node priority). Pure in the governor state it is handed, so a
- * retried step cannot double-reserve.
+ * retried step cannot double-reserve. A keyless item (the R10-13 video
+ * headroom, whose cache key is unknown until the image phase runs) skips
+ * the cache check and always reserves.
  */
 async function planCalls(
   env: Env,
   jobId: string,
   resumeOf: string | undefined,
   start: Governor,
-  items: Array<{ key: string; estimate: number }>,
+  items: Array<{ key?: string; estimate: number }>,
 ): Promise<PlanResult> {
   const gov = new Governor(start.max, start.reserved, start.exhausted);
   const decisions: PlanDecision[] = [];
   for (const { key, estimate } of items) {
-    if (await isCached(env, jobId, key, resumeOf)) decisions.push("hit");
+    if (key !== undefined && (await isCached(env, jobId, key, resumeOf))) decisions.push("hit");
     else decisions.push(gov.reserve(estimate) ? "call" : "refused");
   }
   return { decisions, reserved: gov.reserved, exhausted: gov.exhausted };
@@ -299,28 +301,48 @@ async function samCall(
   resumeOf: string | undefined,
   mustHit: boolean,
   lensOpts: LensOptions,
+  inFlight: Map<string, Promise<SamCall>>,
 ): Promise<SamCall> {
   const ownKey = cachePath(jobId, key);
-  const own = await env.MEDIA.get(ownKey);
-  const ownText = own ? await own.text() : "";
-  if (ownText !== "") return { text: ownText, cached: true, samMs: 0 };
-  if (resumeOf !== undefined) {
-    const prior = await env.MEDIA.get(cachePath(resumeOf, key));
-    const text = prior ? await prior.text() : "";
-    if (text !== "") {
-      await env.MEDIA.put(ownKey, text);
-      return { text, cached: true, samMs: 0 };
-    }
+  // R10-13 (review 0010, F12): the planning cache check is metadata-only, so
+  // two misses for one key (the same hero frame + phrase at two checkpoints)
+  // are both planned, both reserved, and — under LENS_CONCURRENCY — both
+  // fetched and both billed. The second caller awaits the first's fetch and
+  // reports the shared text at zero spend: the fetcher's frames are the only
+  // ones sent.
+  const pending = inFlight.get(ownKey);
+  if (pending) {
+    const first = await pending;
+    return first.cached ? first : { text: first.text, cached: true, samMs: 0 };
   }
-  if (mustHit) throw new NonRetryableError("sam cache entry vanished after planning");
-  const callStart = Date.now();
-  const detailed = await metaResponsesDetailed(env, buildBody(toBase64(media)), {
-    ...(lensOpts.samTimeoutMs !== undefined ? { timeoutMs: lensOpts.samTimeoutMs } : {}),
-    ...(lensOpts.samIdleMs !== undefined ? { idleMs: lensOpts.samIdleMs } : {}),
-  });
-  const samMs = Date.now() - callStart;
-  if (detailed.text.trim() !== "") await env.MEDIA.put(ownKey, detailed.text);
-  return { text: detailed.text, reported: detailed.videoFramesProcessed, cached: false, samMs };
+  const self = (async () => {
+    const own = await env.MEDIA.get(ownKey);
+    const ownText = own ? await own.text() : "";
+    if (ownText !== "") return { text: ownText, cached: true, samMs: 0 };
+    if (resumeOf !== undefined) {
+      const prior = await env.MEDIA.get(cachePath(resumeOf, key));
+      const text = prior ? await prior.text() : "";
+      if (text !== "") {
+        await env.MEDIA.put(ownKey, text);
+        return { text, cached: true, samMs: 0 };
+      }
+    }
+    if (mustHit) throw new NonRetryableError("sam cache entry vanished after planning");
+    const callStart = Date.now();
+    const detailed = await metaResponsesDetailed(env, buildBody(toBase64(media)), {
+      ...(lensOpts.samTimeoutMs !== undefined ? { timeoutMs: lensOpts.samTimeoutMs } : {}),
+      ...(lensOpts.samIdleMs !== undefined ? { idleMs: lensOpts.samIdleMs } : {}),
+    });
+    const samMs = Date.now() - callStart;
+    if (detailed.text.trim() !== "") await env.MEDIA.put(ownKey, detailed.text);
+    return { text: detailed.text, reported: detailed.videoFramesProcessed, cached: false, samMs };
+  })();
+  inFlight.set(ownKey, self);
+  try {
+    return await self;
+  } finally {
+    inFlight.delete(ownKey);
+  }
 }
 
 function imageBody(phrase: string, b64: string): object {
@@ -497,6 +519,10 @@ export async function runGroundLens(
 
   const budget = await readLensBudget(env, jobId);
   let gov = new Governor(budget.maxSamFrames);
+  // R10-13 (review 0010, F12): the in-flight dedupe for `samCall`. A
+  // Workflow replay returns completed steps' recorded output without
+  // running their callbacks, so the map only needs to live for one run.
+  const inFlight = new Map<string, Promise<SamCall>>();
   const notes: LensNote[] = budget.note ? [{ scope: "budget", reason: budget.note }] : [];
   const perCall = phrasesPerCall(env);
 
@@ -583,13 +609,31 @@ export async function runGroundLens(
    * been filled. */
   const planPhase = async (
     name: string,
-    items: Array<{ key: string; estimate: number }>,
+    items: Array<{ key?: string; estimate: number }>,
   ): Promise<PlanDecision[]> => {
     if (items.length === 0) return [];
     const plan = await runner(name, () => planCalls(env, jobId, budget.resumeOf, gov, items));
     gov = new Governor(gov.max, plan.reserved, plan.exhausted);
     return plan.decisions;
   };
+
+  // R10-13 (review 0010, F12): video-first reservation. TURN/DESTINATION
+  // clips are the calls the escalation ladder exists to protect, so their
+  // estimates are reserved before any image call — cheap image frames at
+  // low-priority checkpoints can no longer exhaust the budget and refuse a
+  // destination video. The clip's cache key needs the top survivor's
+  // phrase, unknown until the image phase runs, so the reservation is per
+  // checkpoint, not per key: a resume that finds its clip cached still pays
+  // the reservation (conservative, and the ladder stays protected).
+  const headroom = byPriority.filter(
+    (p) => p.hasClip && (p.cp.type === "TURN" || p.cp.type === "DESTINATION"),
+  );
+  const headroomDecisions = await planPhase(
+    "ground:plan:video",
+    headroom.map((p) => ({ estimate: p.cp.clip ? clipFrameEstimate(p.cp.clip) : 0 })),
+  );
+  const headroomDecision = new Map<number, PlanDecision>();
+  headroom.forEach((p, i) => headroomDecision.set(p.index, headroomDecisions[i]));
 
   // Image phase: 1 frame per hero call, planned before any call is sent.
   const imageCalls: Array<{ p: Planned; k: number; key: string }> = [];
@@ -625,7 +669,21 @@ export async function runGroundLens(
           const media = new Uint8Array(await obj.arrayBuffer());
           return {
             k,
-            ...(await imageCall(env, jobId, p.cp, sc, k, media, key, decision === "hit", fallback, evidenceKey, budget.resumeOf, lensOpts)),
+            ...(await imageCall(
+              env,
+              jobId,
+              p.cp,
+              sc,
+              k,
+              media,
+              key,
+              decision === "hit",
+              fallback,
+              evidenceKey,
+              budget.resumeOf,
+              lensOpts,
+              inFlight,
+            )),
           };
         }),
     });
@@ -669,14 +727,26 @@ export async function runGroundLens(
     const key = await cacheKeyHex(clipMedia, p.kept[topK].samPhrase, VIDEO_PARAMS);
     videoCalls.push({ p, perCp, topK, top, key });
   }
-  const videoDecisions = await planPhase(
-    "ground:plan:video",
-    videoCalls.map(({ p, key }) => ({ key, estimate: p.cp.clip ? clipFrameEstimate(p.cp.clip) : 0 })),
+  // R10-13 (review 0010, F12): TURN/DESTINATION calls consume the
+  // headroom reserved before the image phase; the confidence-band
+  // escalations (other checkpoint types) plan against whatever budget is
+  // left after headroom and images.
+  const bandCalls = videoCalls.filter(
+    ({ p }) => p.cp.type !== "TURN" && p.cp.type !== "DESTINATION",
   );
+  const bandDecisions = await planPhase(
+    "ground:plan:video:band",
+    bandCalls.map(({ p, key }) => ({ key, estimate: p.cp.clip ? clipFrameEstimate(p.cp.clip) : 0 })),
+  );
+  const bandDecision = new Map<number, PlanDecision>();
+  bandCalls.forEach((v, i) => bandDecision.set(v.p.index, bandDecisions[i]));
   const videoTasks: Array<{ name: string; perCp: Map<number, Candidate>; run: () => Promise<VideoStepResult> }> = [];
   for (const [i, { p, perCp, topK, top, key }] of videoCalls.entries()) {
-    const decision = videoDecisions[i];
-    if (decision === "refused") continue;
+    const decision =
+      p.cp.type === "TURN" || p.cp.type === "DESTINATION"
+        ? headroomDecision.get(p.index)
+        : bandDecision.get(p.index);
+    if (decision === undefined || decision === "refused") continue;
     const sc = p.kept[topK];
     const name = videoStepName(p.cp.nodeId, topK, await phraseHash(sc.samPhrase));
     const evidenceKey = `jobs/${jobId}/sam/${p.cp.nodeId}_${topK}.txt`;
@@ -696,7 +766,23 @@ export async function runGroundLens(
           const clipBytes = new Uint8Array(await clipObj.arrayBuffer());
           const out: VideoStepResult = { k: topK, candidate: null, ...NO_SPEND };
           for (const phrase of phrases) {
-            const call = await videoCall(env, jobId, p.cp, sc, topK, clipBytes, phrase, key, decision === "hit", evidenceKey, clip, top, budget.resumeOf, lensOpts);
+            const call = await videoCall(
+              env,
+              jobId,
+              p.cp,
+              sc,
+              topK,
+              clipBytes,
+              phrase,
+              key,
+              decision === "hit",
+              evidenceKey,
+              clip,
+              top,
+              budget.resumeOf,
+              lensOpts,
+              inFlight,
+            );
             out.sentFrames += call.sentFrames;
             out.billedFrames += call.billedFrames;
             out.ms += call.ms;
@@ -761,9 +847,20 @@ async function imageCall(
   evidenceKey: string,
   resumeOf: string | undefined,
   lensOpts: LensOptions,
+  inFlight: Map<string, Promise<SamCall>>,
 ): Promise<{ candidate: Candidate; reason?: string } & CallSpend> {
   try {
-    const call = await samCall(env, jobId, media, key, (b64) => imageBody(sc.samPhrase, b64), resumeOf, mustHit, lensOpts);
+    const call = await samCall(
+      env,
+      jobId,
+      media,
+      key,
+      (b64) => imageBody(sc.samPhrase, b64),
+      resumeOf,
+      mustHit,
+      lensOpts,
+      inFlight,
+    );
     // Single hero frame sent; when the vendor omits usage the sent frame
     // stands in for billed (R10-05) — a call that went out must never
     // report zero cost. Vendor-reported usage wins when present.
@@ -804,9 +901,20 @@ async function videoCall(
   standIn: Candidate,
   resumeOf: string | undefined,
   lensOpts: LensOptions,
+  inFlight: Map<string, Promise<SamCall>>,
 ): Promise<{ candidate: Candidate | null; reason?: string } & CallSpend> {
   try {
-    const call = await samCall(env, jobId, media, key, (b64) => videoBody(phrase, b64), resumeOf, mustHit, lensOpts);
+    const call = await samCall(
+      env,
+      jobId,
+      media,
+      key,
+      (b64) => videoBody(phrase, b64),
+      resumeOf,
+      mustHit,
+      lensOpts,
+      inFlight,
+    );
     // Vendor-reported usage wins; when it is omitted the clip estimate
     // stands in for billed (R10-05) — the same basis as sentFrames, never
     // zero for a call that went out.
