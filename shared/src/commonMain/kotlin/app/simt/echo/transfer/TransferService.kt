@@ -60,6 +60,12 @@ class TransferService(
      * producer contract and a two-install integration test enable it.
      */
     private val peerRelayQualified: Boolean = false,
+    /**
+     * Where the heavy bundle work runs (plan 0005 §4.5: never Main).
+     * Injectable so a host test can keep preparation on its own dispatcher
+     * and observe the ordered result deterministically.
+     */
+    private val ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = platformIoDispatcher,
 ) {
 
     private val session = OfferSession(
@@ -110,7 +116,7 @@ class TransferService(
         }
         val published = session.replace { generation ->
             // Heavy bundle preparation off Main (plan 0005 §4.5).
-            val prepared = withContext(platformIoDispatcher) {
+            val prepared = withContext(ioDispatcher) {
                 prepareBundle(routeId, route, selection)
             }
             if (!session.isCurrent(generation)) return@replace null
@@ -272,7 +278,7 @@ class TransferService(
         val route = routes.get(routeId)
             ?: error("exportFile: no route $routeId")
         checkNotExpired(route)
-        return withContext(platformIoDispatcher) {
+        return withContext(ioDispatcher) {
             val filtered = selection?.let { applySelection(route, it, nowMs()) } ?: route
             val exportRoute = if (includePerception) filtered else filtered.withoutPerception()
             val assets = collectAssets(routeId, exportRoute)

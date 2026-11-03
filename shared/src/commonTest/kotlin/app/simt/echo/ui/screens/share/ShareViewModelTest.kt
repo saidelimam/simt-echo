@@ -65,6 +65,14 @@ class ShareViewModelTest {
         var offerFails = false
         val progressFlow = MutableSharedFlow<TransferProgress>(extraBufferCapacity = 64)
 
+        /**
+         * Downloads are attributed to their offer (plan 0005 §4.5): the VM
+         * only counts a completion for the generation it is showing.
+         */
+        val downloadGenerations = MutableSharedFlow<Long>(extraBufferCapacity = 8)
+
+        override val servedOffers: Flow<Long> get() = downloadGenerations
+
         override val progress: Flow<TransferProgress> get() = progressFlow
 
         override suspend fun offer(payload: ByteArray, token: String): Endpoint {
@@ -110,6 +118,10 @@ class ShareViewModelTest {
             store = store,
             randomBytes = { size -> ByteArray(size) { (it + 1).toByte() } },
             nowMs = { 1_762_000_000_000L },
+            // Preparation runs on the caller's dispatcher here, so the
+            // ViewModel's advanceUntilIdle() still observes the ordered
+            // offer instead of racing a real IO thread.
+            ioDispatcher = Dispatchers.Unconfined,
         )
         return Triple(service, transport, store)
     }
@@ -133,7 +145,7 @@ class ShareViewModelTest {
         val vm = ShareViewModel(Fixtures.L_ROUTE.routeId, service, haptics, FakeFileSharing())
         advanceUntilIdle()
 
-        transport.downloads.emit(Unit)
+        transport.downloadGenerations.emit(service.offerGeneration)
         advanceUntilIdle()
 
         assertTrue(vm.ui.value.sent)
@@ -153,7 +165,7 @@ class ShareViewModelTest {
         val routes = RouteRepository(FileStore(fileSystem, "/relay".toPath()))
         routes.save(Fixtures.L_ROUTE)
         val relay = object : RelayClient {
-            override suspend fun upload(sealed: ByteArray): String = "XYZ789"
+            override suspend fun upload(sealed: ByteArray): String = "XYZ23456"
             override suspend fun download(code: String): ByteArray = error("unused")
         }
         val service = TransferService(
@@ -163,6 +175,10 @@ class ShareViewModelTest {
             randomBytes = { size -> ByteArray(size) { (it + 1).toByte() } },
             nowMs = { 1_762_000_000_000L },
             relay = relay,
+            // Peer relay delivery is only reachable when the backend is
+            // qualified for it (plan 0005 §1).
+            peerRelayQualified = true,
+            ioDispatcher = Dispatchers.Unconfined,
         )
         val vm = ShareViewModel(Fixtures.L_ROUTE.routeId, service, FakeHaptics(), FakeFileSharing())
         advanceUntilIdle()
@@ -173,7 +189,7 @@ class ShareViewModelTest {
         advanceUntilIdle()
         assertTrue(vm.ui.value.relayOffered)
         assertEquals(
-            "XYZ789",
+            "XYZ23456",
             QrPayload.parse(vm.ui.value.qrUri ?: error("no QR yet")).getOrThrow().relayCode,
         )
     }
@@ -278,7 +294,7 @@ class ShareViewModelTest {
         val (service, transport) = serviceWithRoute()
         val vm = ShareViewModel(Fixtures.L_ROUTE.routeId, service, FakeHaptics(), FakeFileSharing())
         advanceUntilIdle()
-        transport.downloads.emit(Unit)
+        transport.downloadGenerations.emit(service.offerGeneration)
         advanceUntilIdle()
         assertTrue(vm.ui.value.sent)
         assertNotNull(vm.ui.value.qrUri)
