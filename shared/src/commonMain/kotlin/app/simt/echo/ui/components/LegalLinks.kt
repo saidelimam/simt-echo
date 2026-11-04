@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
@@ -48,18 +47,22 @@ internal fun LegalLinks(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(
-                onClick = { if (onOpen != null) onOpen(PrivacyPolicyUrl) else uriHandler.openUri(PrivacyPolicyUrl) },
+            // The design system's text-only command, not a raw Material button:
+            // it carries the touch-target floor and the Cosmos focus ring.
+            CosmosTertiaryButton(
+                label = "Privacy Policy",
+                onClick = {
+                    if (onOpen != null) onOpen(PrivacyPolicyUrl) else uriHandler.openUri(PrivacyPolicyUrl)
+                },
                 modifier = Modifier.testTag(PrivacyLinkTag),
-            ) {
-                Text("Privacy Policy")
-            }
-            TextButton(
-                onClick = { if (onOpen != null) onOpen(TermsOfUseUrl) else uriHandler.openUri(TermsOfUseUrl) },
+            )
+            CosmosTertiaryButton(
+                label = "Terms of Use",
+                onClick = {
+                    if (onOpen != null) onOpen(TermsOfUseUrl) else uriHandler.openUri(TermsOfUseUrl)
+                },
                 modifier = Modifier.testTag(TermsLinkTag),
-            ) {
-                Text("Terms of Use")
-            }
+            )
         }
     }
 }
