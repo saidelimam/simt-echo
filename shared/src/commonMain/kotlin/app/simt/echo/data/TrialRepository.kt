@@ -89,6 +89,10 @@ class TrialRepository(private val store: FileStore) {
             { it.mistakenConfirmations },
             { it.uncertainEpisodes },
             { it.offRouteEpisodes },
+            { it.visualGateAccepted },
+            { it.visualGateRejected },
+            { it.visualGateUnwitnessed },
+            { it.visualGateSuspects },
             { it.lighting },
             { it.holdingStyle },
             { it.notes },
@@ -123,6 +127,7 @@ class TrialRepository(private val store: FileStore) {
             "trialId", "routeId", "mode", "device", "startedAtEpochMs",
             "durationS", "distanceM", "arrived", "anchors", "confirmations",
             "mistakenConfirmations", "uncertainEpisodes", "offRouteEpisodes",
+            "visualGateAccepted", "visualGateRejected", "visualGateUnwitnessed", "visualGateSuspects",
             "lighting", "holdingStyle", "notes",
             "markerCount", "meanAbsDriftM", "maxAbsDriftM",
         )

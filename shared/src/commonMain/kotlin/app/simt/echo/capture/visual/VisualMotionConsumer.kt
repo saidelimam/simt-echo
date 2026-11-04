@@ -54,6 +54,8 @@ class VisualMotionConsumer(
         private set
     @Volatile var hasUsableFrame = false
         private set
+    @Volatile var lastUsableFrameNs = Long.MIN_VALUE
+        private set
     @Volatile var usabilityRejectedCount = 0L
         private set
     @Volatile var measuredPairCount = 0L
@@ -68,6 +70,7 @@ class VisualMotionConsumer(
         if (running) return true
         if (!tap.addConsumer(this)) return false
         running = true
+        lastUsableFrameNs = Long.MIN_VALUE
         tap.setBaseInterval(interval)
         return true
     }
@@ -134,7 +137,10 @@ class VisualMotionConsumer(
         previousW = pose.qw; previousX = pose.qx; previousY = pose.qy; previousZ = pose.qz
         hasPose = true
         val ego = if (measured) fit.fit(flow.flow, usable) else unavailable
-        if (ego.confidence01 >= 0.5) hasUsableFrame = true
+        if (ego.confidence01 >= 0.5) {
+            hasUsableFrame = true
+            lastUsableFrameNs = sample.tNs
+        }
         ring.publish(sample.tNs, ego, usable, usability.reason)
         onEgo?.invoke(ego, sample.tNs, usability.reason)
     }
@@ -161,7 +167,14 @@ class VisualMotionConsumer(
         return drained
     }
 
+    /** A confident frame within [windowNs] of [nowNs]; never a session latch. */
+    fun isLockedAt(nowNs: Long, windowNs: Long = LOCK_WINDOW_NS): Boolean {
+        val last = lastUsableFrameNs
+        return last != Long.MIN_VALUE && nowNs >= last && nowNs - last <= windowNs
+    }
+
     companion object {
         private const val MAX_AGE_NS = 2_000_000_000L
+        const val LOCK_WINDOW_NS = 2_000_000_000L
     }
 }

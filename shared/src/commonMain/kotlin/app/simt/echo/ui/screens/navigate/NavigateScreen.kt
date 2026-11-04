@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import app.simt.echo.data.ConfigRepository
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.data.TrialRepository
+import app.simt.echo.capture.visual.VisualGateCounters
 import app.simt.echo.model.EchoConfig
 import app.simt.echo.model.EchoRoute as SavedRoute
 import app.simt.echo.model.shouldShowLandmarkCards
@@ -72,6 +73,7 @@ import app.simt.echo.ui.theme.EchoSpace24
 
 const val NavigateReticleTag = "NavigateReticle"
 const val NavigateProgressDotsTag = "NavigateProgressDots"
+const val NavigateResearchTelemetryTag = "NavigateResearchTelemetry"
 
 /**
  * Navigate screen (plan §8.3 / W2-06, Cosmos W8-10): reticle-framed arrow,
@@ -266,6 +268,7 @@ private fun NavigateBody(
                 if (!online) StatusChip(text = "⚠ Offline · sensors only")
                 StatusChip(text = instrument.sigmaLabel)
             }
+            if (researchMode) ResearchGateTelemetry(viewModel.visualGateCounters)
             if (presentation.bannerKind != null) {
                 CosmosBanner(message = nav.instruction, kind = presentation.bannerKind)
             }
@@ -343,6 +346,20 @@ private fun NavigateBody(
             )
         }
     }
+}
+
+/** Research-only gate telemetry: the counters the trial record persists. */
+@Composable
+internal fun ResearchGateTelemetry(
+    counters: VisualGateCounters,
+    modifier: Modifier = Modifier,
+) {
+    Text(
+        text = "Visual gate: ${counters.accepted} accepted · ${counters.rejected} rejected · " +
+            "${counters.unwitnessed} unwitnessed · ${counters.suspects} suspects",
+        style = MaterialTheme.typography.labelSmall,
+        modifier = modifier.testTag(NavigateResearchTelemetryTag),
+    )
 }
 
 /**
