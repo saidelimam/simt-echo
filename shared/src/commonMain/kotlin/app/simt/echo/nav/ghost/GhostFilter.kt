@@ -255,6 +255,13 @@ class GhostFilter(
                 .coerceIn(0.0, total)
             bA[i] += z2 * B_RW_RAD
         }
+        // Fixed-capacity RNG burn: resizes change [activeN], so without this
+        // the seeded stream desyncs between filters of different sizes
+        // (s-process + b-walk draw per particle → 2 per slot).
+        for (i in baseCount until PARTICLE_COUNT) {
+            gauss()
+            gauss()
+        }
         updateStats()
     }
 

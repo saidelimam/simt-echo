@@ -345,7 +345,7 @@ class Navigator(
                 val alignedYaw = if (config.visualAssist) yaw + yawOffset + travelOffsetRad else yaw + yawOffset
                 it.observe(Observation.Heading(alignedYaw, update.headingQuality))
             }
-            if (config.visualAssist) {
+            if (config.visualAssist && isVisualLocked) {
                 it.stepAdaptiveBudget(0.05, update.headingQuality, inRelock = phase == NavPhase.RELOCKING)
             }
         }
@@ -1043,6 +1043,20 @@ class Navigator(
         _ui.value = buildUi()
     }
 
+    /**
+     * Visual assist is actively contributing: a high-confidence observation
+     * within [VISUAL_LOCK_WINDOW_NS]. While false (pocket, blank wall, dark)
+     * the ghost must stay bit-identical to the baseline engine — which also
+     * excludes stepping the adaptive particle budget (W18-03), since a
+     * resized ensemble can never be bit-identical to the 256-particle one.
+     */
+    private val isVisualLocked: Boolean
+        get() = config.visualAssist && !config.baselineMode &&
+            lastVisualConfidence01 >= 0.5 &&
+            lastVisualObsTNs != Long.MIN_VALUE &&
+            lastMotionTNs >= lastVisualObsTNs &&
+            lastMotionTNs - lastVisualObsTNs <= VISUAL_LOCK_WINDOW_NS
+
     private fun buildUi(): NavUi {
         val target = targetNode
         val currentLeg = leg
@@ -1054,11 +1068,7 @@ class Navigator(
                     config.navLandmarkVisibleMinM,
                 )
             )
-        val lockActive = config.visualAssist && !config.baselineMode &&
-            lastVisualConfidence01 >= 0.5 &&
-            lastVisualObsTNs != Long.MIN_VALUE &&
-            lastMotionTNs >= lastVisualObsTNs &&
-            lastMotionTNs - lastVisualObsTNs <= VISUAL_LOCK_WINDOW_NS
+        val lockActive = isVisualLocked
         return NavUi(
             phase = phase,
             legIndex = legIndex,
