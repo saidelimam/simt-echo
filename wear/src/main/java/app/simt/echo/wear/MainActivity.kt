@@ -5,8 +5,15 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
+import android.view.View
+import android.view.WindowInsets
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
+import kotlin.math.roundToInt
+
+/** Base padding around the watch content, in dp (never raw pixels). */
+internal const val WEAR_PADDING_DP = 16
 
 /**
  * Watch guidance screen (plan W13-12): the latest `/echo/nav` snapshot —
@@ -20,8 +27,14 @@ import android.widget.TextView
  *
  * Plain Views by module policy (no Compose runtime on this classpath):
  * the arrow is a rotated glyph, so the heading survives at a glance, and
- * the cue + distance carry the information in text. The glyph is marked
- * decorative for accessibility — the adjacent text says the same thing.
+ * the cue + distance carry the information in text. The glyph is excluded
+ * from accessibility with `importantForAccessibility = NO`: a TextView's
+ * null contentDescription still falls back to its text, so TalkBack would
+ * otherwise announce "Upwards arrow" at every heading.
+ *
+ * The content sits in a [ScrollView] with dp padding plus system-bar and
+ * chin (display-cutout) insets, so a round watch or large font never clips
+ * the cue.
  *
  * Owed and NOT claimed here: a Compose for Wear ongoing activity, an
  * active-route tile, and the on-watch run itself (no paired watch in
@@ -45,29 +58,54 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         arrowView = TextView(this).apply {
+            id = R.id.wear_arrow
             textSize = 56f
             gravity = Gravity.CENTER
             // Decorative by policy: cueView + distanceView carry the same
-            // information as text for TalkBack.
-            contentDescription = null
+            // information as text. A rotated TextView is still a text node,
+            // so null contentDescription is not enough (review 0013 F6).
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
         distanceView = TextView(this).apply {
+            id = R.id.wear_distance
             textSize = 16f
             gravity = Gravity.CENTER
         }
         cueView = TextView(this).apply {
+            id = R.id.wear_cue
             textSize = 18f
             gravity = Gravity.CENTER
         }
         val layout = LinearLayout(this).apply {
+            id = R.id.wear_content
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(24, 24, 24, 24)
+            gravity = Gravity.CENTER_HORIZONTAL
             addView(arrowView)
             addView(distanceView)
             addView(cueView)
         }
-        setContentView(layout)
+        val pad = (WEAR_PADDING_DP * resources.displayMetrics.density).roundToInt()
+        val scroll = ScrollView(this).apply {
+            id = R.id.wear_scroll
+            isFillViewport = true
+            setPadding(pad, pad, pad, pad)
+            addView(layout)
+        }
+        // Chin-safe: a round display cuts the bottom; bars + cutout are the
+        // only insets a watch reports.
+        scroll.setOnApplyWindowInsetsListener { view, insets ->
+            val bars = insets.getInsets(
+                WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout(),
+            )
+            view.setPadding(
+                bars.left + pad,
+                bars.top + pad,
+                bars.right + pad,
+                bars.bottom + pad,
+            )
+            insets
+        }
+        setContentView(scroll)
     }
 
     override fun onStart() {

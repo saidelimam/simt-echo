@@ -32,10 +32,17 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
+
+    testOptions {
+        // The accessibility gate inflates the real View tree and needs the
+        // module's resources (ids + strings) on the unit-test classpath.
+        unitTests.isIncludeAndroidResources = true
+    }
 }
 
 dependencies {
     implementation(libs.play.services.wearable)
 
     testImplementation(libs.junit.junit)
+    testImplementation(libs.robolectric)
 }
