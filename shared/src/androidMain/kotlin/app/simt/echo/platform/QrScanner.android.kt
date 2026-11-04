@@ -130,7 +130,10 @@ actual fun QrScannerView(
             scanner.close()
             executor.shutdown()
             try {
-                if (providerFuture.isDone) providerFuture.get().unbindAll()
+                // Only this scanner's own use cases. The provider is a process
+                // singleton, so unbindAll() detached whatever the next screen
+                // had just bound, leaving its viewfinder stuck on one frame.
+                if (providerFuture.isDone) providerFuture.get().unbind(preview, analysis)
             } catch (e: Exception) {
                 Log.d(TAG, "QR scanner unbind failed", e)
             }
