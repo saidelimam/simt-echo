@@ -869,6 +869,110 @@ describe("upload PUT and id hardening", () => {
 });
 
 describe("per-install isolation (R10-01)", () => {
+  const postJobAs = (env: never, headers: Record<string, string>, payload: unknown) =>
+    app.request(
+      "/v1/jobs",
+      { method: "POST", headers, body: JSON.stringify(payload) },
+      env,
+    );
+
+  const stagedKeys = (media: FakeR2, uploadId: string) =>
+    [...media.store.keys()].filter((k) => k.startsWith(`jobs/staging/${uploadId}/`)).sort();
+
+  const jobKeys = (media: FakeR2) =>
+    [...media.store.keys()].filter(
+      (k) =>
+        k.startsWith("jobs/") && !k.startsWith("jobs/staging/") && !k.startsWith("jobs/idem/"),
+    );
+
+  it("refuses to create a job from another install's uploadId (R12-01)", async () => {
+    const media = new FakeR2();
+    const pipeline = new FakePipeline();
+    const env = await envFor(media, pipeline);
+    const uploadId = await stageFullUpload(env);
+    const intact = stagedKeys(media, uploadId);
+    expect(intact).toHaveLength(4); // meta.json + two keyframes + clip
+
+    await seedDevice(media, OTHER);
+    const res = await postJobAs(
+      env,
+      { ...bearer(OTHER), "Content-Type": "application/json" },
+      { manifest: validManifest(), uploadId },
+    );
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ ok: false, error: "upload_not_found" });
+
+    // No job was created, nothing was reserved, and the owner's staged
+    // media is untouched — the foreign request only leaked "not found".
+    expect(pipeline.instances.size).toBe(0);
+    expect(jobKeys(media)).toEqual([]);
+    expect(stagedKeys(media, uploadId)).toEqual(intact);
+    expect([...media.store.keys()].filter((k) => k.startsWith("spend/"))).toEqual([]);
+  });
+
+  it("refuses a multi-session create naming any foreign uploadIds (R12-01)", async () => {
+    const media = new FakeR2();
+    const pipeline = new FakePipeline();
+    const env = await envFor(media, pipeline);
+    const own = await createUploadFor(env, [{ name: "kf_n2_0", data: [1, 2, 3] }]);
+    expect((await putBlob(env, own, "kf_n2_0", [1, 2, 3])).status).toBe(200);
+
+    // Another install stages the rest of the manifest's media.
+    await seedDevice(media, OTHER);
+    const foreignAuth = bearer(OTHER);
+    const foreignFiles = [
+      { name: "kf_n2_1", data: [4, 5, 6] },
+      { name: "clip_n2", data: [7, 8, 9] },
+    ];
+    const foreignRefs = await Promise.all(
+      foreignFiles.map(async (f) => ({
+        name: f.name,
+        sha256: await shaHexOf(f.data),
+        bytes: f.data.length,
+      })),
+    );
+    const created = await app.request(
+      "/v1/uploads",
+      {
+        method: "POST",
+        headers: { ...foreignAuth, "Content-Type": "application/json" },
+        body: JSON.stringify({ files: foreignRefs }),
+      },
+      env,
+    );
+    expect(created.status).toBe(200);
+    const foreign = ((await created.json()) as { uploadId: string }).uploadId;
+    for (const [name, data] of [
+      ["kf_n2_1", [4, 5, 6]],
+      ["clip_n2", [7, 8, 9]],
+    ] as Array<[string, number[]]>) {
+      const put = await app.request(
+        `/v1/uploads/${foreign}/${name}`,
+        {
+          method: "PUT",
+          headers: { ...foreignAuth, "Content-Type": "application/octet-stream" },
+          body: new Blob([new Uint8Array(data)]),
+        },
+        env,
+      );
+      expect(put.status).toBe(200);
+    }
+
+    const res = await postJobAs(env, jsonAuth, {
+      manifest: validManifest(),
+      uploadIds: [own, foreign],
+    });
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ ok: false, error: "upload_not_found" });
+
+    // Both sessions survive: the victim's media is not copied and neither
+    // staging area is consumed by the failed create.
+    expect(pipeline.instances.size).toBe(0);
+    expect(jobKeys(media)).toEqual([]);
+    expect(stagedKeys(media, own)).toHaveLength(2);
+    expect(stagedKeys(media, foreign)).toHaveLength(3);
+  });
+
   it("keeps one install's staged session unreadable, unwritable, and undeletable by another", async () => {
     const media = new FakeR2();
     const env = await envFor(media, new FakePipeline());
