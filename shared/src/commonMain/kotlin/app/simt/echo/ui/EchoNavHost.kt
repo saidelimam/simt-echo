@@ -335,6 +335,10 @@ fun EchoNavHost(
                             onPhoneModelName = graph.onPhoneModelPath
                                 ?.substringAfterLast('/'),
                             cloudAiConfigured = graph.cloudAiConfigured,
+                            // R12-09: without these, Delete all erases only the
+                            // phone and leaves the cloud copies it names behind.
+                            api = graph.apiClient,
+                            credentials = graph.deviceCredentials,
                         )
                     }
                 },
