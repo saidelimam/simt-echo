@@ -163,7 +163,11 @@ fun ReviewInstrumentMap(
             .clip(MaterialTheme.shapes.large)
             .testTag(ReviewMapTag)
             .semantics {
-                contentDescription = if (points.isEmpty()) "Route map unavailable" else "Route map"
+                contentDescription = when {
+                    points.isEmpty() -> "Route map unavailable"
+                    selectedPositionLabel != null -> "Route map, selected $selectedPositionLabel"
+                    else -> "Route map"
+                }
             },
     ) {
         Column(

@@ -22,6 +22,9 @@ import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -46,6 +49,9 @@ import kotlin.math.roundToInt
  */
 fun statChipParts(statLine: String): List<String> =
     statLine.split(" · ").map { it.trim() }.filter { it.isNotEmpty() }
+
+/** Semantics tag for the tappable hero image. */
+const val HeroImageTag = "HeroImage"
 
 /** Human node-kind word for timeline records ("turn", "destination", …). */
 fun nodeKindWord(typeName: String): String = typeName.lowercase().replace('_', ' ')
@@ -328,7 +334,13 @@ fun HeroImage(
     onInspect: (() -> Unit)? = null,
 ) {
     val clickableModifier = if (bytes != null && onInspect != null) {
-        Modifier.clickable(onClick = onInspect)
+        // The action names itself for TalkBack; the pill below is
+        // decoration, not the label (review 0013 F3).
+        Modifier.clickable(
+            onClickLabel = "Zoom photo",
+            role = Role.Button,
+            onClick = onInspect,
+        )
     } else {
         Modifier
     }
@@ -338,6 +350,7 @@ fun HeroImage(
             .height(184.dp)
             .clip(MaterialTheme.shapes.medium)
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.medium)
+            .testTag(HeroImageTag)
             .then(clickableModifier),
     ) {
         CropImage(
@@ -373,6 +386,7 @@ fun HeroImage(
                     text = "Tap to zoom",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.clearAndSetSemantics {},
                 )
             }
         }
