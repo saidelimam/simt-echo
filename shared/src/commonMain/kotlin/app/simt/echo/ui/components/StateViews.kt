@@ -172,6 +172,9 @@ fun CosmosDeniedState(
     onAction: () -> Unit,
     modifier: Modifier = Modifier,
     body: String? = null,
+    /** Optional retry beside the primary fix (e.g. Open settings → Try again). */
+    secondaryLabel: String? = null,
+    onSecondary: () -> Unit = {},
 ) {
     CosmosStateScaffold(
         kind = CosmosStateKind.Denied,
@@ -184,6 +187,13 @@ fun CosmosDeniedState(
                 onClick = onAction,
                 modifier = Modifier.fillMaxWidth(),
             )
+            if (secondaryLabel != null) {
+                CosmosSecondaryButton(
+                    label = secondaryLabel,
+                    onClick = onSecondary,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         },
     )
 }

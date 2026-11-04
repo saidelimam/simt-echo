@@ -2,6 +2,7 @@ package app.simt.echo.ui.screens.record
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,11 +28,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.role
@@ -65,6 +69,7 @@ import app.simt.echo.ui.components.CosmosTextField
 import app.simt.echo.ui.components.StatusChip
 import app.simt.echo.ui.components.oneDecimal
 import app.simt.echo.ui.icons.EchoIcons
+import app.simt.echo.ui.theme.EchoExtras
 import app.simt.echo.ui.theme.EchoTouchOther
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -81,9 +86,6 @@ private val TrailPanelWidth = 150.dp
 
 /** Compact panel height: a corner instrument, well clear of the action row. */
 private val TrailPanelHeight = 112.dp
-
-/** Top inset: 8 dp below the "Great view captured" banner, clear of the chips row. */
-private val TrailPanelTop = 112.dp
 
 /** End inset: the same 20 dp breathing room the panel keeps from the corner. */
 private val TrailPanelEnd = 20.dp
@@ -249,23 +251,6 @@ internal fun RecordInstrument(
         // action zone stays on top; none consume input or semantics beyond
         // their documented tags.
         StepRipples(ripples = walk.ripples)
-        // Live path (W13-04): a compact top-end panel over the preview. It
-        // used to sit bottom-centre, directly behind the Mark spot/Finish
-        // row, so the trail was the one thing a walk never showed. The wash
-        // carries it over the camera in both schemes — no outline anywhere,
-        // matching the rest of the surface grammar.
-        TrailRibbon(
-            trail = walk.trail,
-            headYaw = headingRad,
-            height = TrailPanelHeight,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = TrailPanelTop, end = TrailPanelEnd)
-                .width(TrailPanelWidth)
-                .clip(MaterialTheme.shapes.large)
-                .background(MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.55f))
-                .padding(horizontal = 6.dp, vertical = 4.dp),
-        )
         LedgerBrackets(highlight = walk.highlight, onExpired = onHighlightExpired)
         Column(
             modifier = Modifier
@@ -273,10 +258,33 @@ internal fun RecordInstrument(
                 .padding(24.dp),
             verticalArrangement = Arrangement.SpaceBetween,
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                StatusChip(text = formatElapsed(hud.elapsedMs))
-                StatusChip(text = "${hud.steps} steps")
-                StatusChip(text = "${hud.marks} spots")
+            // Top HUD group: chips, then the live path only while recording.
+            // The panel used to float over the preview at a fixed 112 dp
+            // inset, so at fontScale 2.0 it collided with the chips and the
+            // banner (review 0013 F5).
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StatusChip(text = formatElapsed(hud.elapsedMs))
+                    StatusChip(text = "${hud.steps} steps")
+                    StatusChip(text = "${hud.marks} spots")
+                }
+                if (state == CaptureState.RECORDING) {
+                    TrailRibbon(
+                        trail = walk.trail,
+                        headYaw = headingRad,
+                        height = TrailPanelHeight,
+                        modifier = Modifier
+                            .align(Alignment.End)
+                            .padding(end = TrailPanelEnd)
+                            .width(TrailPanelWidth)
+                            .clip(MaterialTheme.shapes.large)
+                            .background(MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.55f))
+                            .padding(horizontal = 6.dp, vertical = 4.dp),
+                    )
+                }
             }
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -513,12 +521,26 @@ private fun FinishButton(
     onFinish: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var pressed by remember { mutableStateOf(false) }
+    var focused by remember { mutableStateOf(false) }
+    // A normal tap used to do nothing at all. It now says what the gesture
+    // is, while the long press remains the action (review 0013 F5).
+    var hint by remember { mutableStateOf(false) }
     Surface(
         shape = MaterialTheme.shapes.small,
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.error),
+        color = if (pressed) {
+            MaterialTheme.colorScheme.primaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant
+        },
+        border = BorderStroke(
+            width = if (focused) 2.dp else 1.5.dp,
+            color = if (focused) EchoExtras.gold else MaterialTheme.colorScheme.error,
+        ),
         modifier = modifier
             .sizeIn(minWidth = EchoTouchOther, minHeight = EchoTouchOther)
+            .onFocusChanged { focused = it.isFocused }
+            .focusable()
             .semantics(mergeDescendants = true) {
                 role = Role.Button
                 contentDescription = "Hold to finish"
@@ -526,11 +548,22 @@ private fun FinishButton(
                 onLongClick { onFinish(); true }
             }
             .pointerInput(Unit) {
-                detectTapGestures(onLongPress = { onFinish() })
+                detectTapGestures(
+                    onPress = {
+                        pressed = true
+                        tryAwaitRelease()
+                        pressed = false
+                    },
+                    onTap = { hint = true },
+                    onLongPress = {
+                        pressed = false
+                        onFinish()
+                    },
+                )
             },
     ) {
-        Box(
-            contentAlignment = Alignment.Center,
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
         ) {
             Text(
@@ -538,6 +571,14 @@ private fun FinishButton(
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.error,
             )
+            if (hint) {
+                Text(
+                    text = "Hold for a second to finish",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                )
+            }
         }
     }
 }
