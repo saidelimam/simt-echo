@@ -75,6 +75,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlin.math.PI
 import kotlin.random.Random
+import app.simt.echo.ui.components.LegalLinks
 
 const val RecordInstrumentTag = "RecordInstrument"
 const val RecordPrestartTag = "RecordPrestart"
@@ -426,6 +427,9 @@ internal fun ReadyConsentSheet(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            // R12-09: walk-time uploads collect data, so the notice is one tap
+            // away before Allow.
+            LegalLinks(modifier = Modifier.fillMaxWidth())
             CosmosSecondaryButton(label = "Not now", onClick = onDecline)
         },
     )

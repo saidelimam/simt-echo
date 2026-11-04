@@ -8,7 +8,7 @@
 
 ## 1. Acceptance of Terms and Service Overview
 
-Welcome to SIMT ECHO ("the Platform"), an offline-first mobile application platform created by Said Elimam that converts personal indoor walkthroughs into shareable, portable spatial route memories. By installing, accessing, or utilizing the SIMT ECHO mobile application, scanning SIMT ECHO QR codes, receiving route bundles via Near Field Communication (NFC) or local network transfers, or utilizing associated Cloudflare and Meta AI enrichment services, you agree to be bound by these Terms of Use ("Terms").
+Welcome to SIMT ECHO ("the Platform"), an offline-first mobile application platform created by Simt Space, a company of Quazar Media that converts personal indoor walkthroughs into shareable, portable spatial route memories. By installing, accessing, or utilizing the SIMT ECHO mobile application, scanning SIMT ECHO QR codes, receiving route bundles via Near Field Communication (NFC) or local network transfers, or utilizing associated Cloudflare and Meta AI enrichment services, you agree to be bound by these Terms of Use ("Terms").
 
 If you do not agree to all provisions contained within these Terms, you must immediately cease accessing the Platform and uninstall the application software.
 
@@ -23,7 +23,7 @@ Subject to your continuous compliance with these Terms, SIMT ECHO grants you a l
 
 ### 2.2 Intellectual Property & Route Ownership
 * **User Ownership of Route Memories:** You retain full ownership of all spatial routes, walk logs, custom landmark annotations, and photographs recorded by your device. SIMT ECHO does not claim ownership over your recorded physical walkthroughs or custom route bundles.
-* **Platform Intellectual Property:** The SIMT ECHO software name, source code, KMP core architecture, Cosmos design system, Luminous motion interface, logo, sigil generation algorithms, and underlying documentation are the exclusive intellectual property of Said Elimam and platform licensors.
+* **Platform Intellectual Property:** The SIMT ECHO software name, source code, KMP core architecture, Cosmos design system, Luminous motion interface, logo, sigil generation algorithms, and underlying documentation are the exclusive intellectual property of Simt Space, a company of Quazar Media and platform licensors.
 
 ---
 

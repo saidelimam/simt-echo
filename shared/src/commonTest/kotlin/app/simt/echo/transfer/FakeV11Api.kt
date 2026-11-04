@@ -10,6 +10,10 @@ internal class FakeV11Api : V11CloudApi {
     val uploadDeletes = mutableListOf<String>()
     val stagedCreates = mutableListOf<Triple<String, List<String>, String>>()
     var deleteError: EchoApiError? = null
+    var deviceDeletes = 0
+    val jobDeletes = mutableListOf<String>()
+    var jobDeleteError: EchoApiError? = null
+    var deviceDeleteError: EchoApiError? = null
     var putError: EchoApiError? = null
     var staleOnCreate: EchoApiError? = null
     private var nextUpload = 0
@@ -18,7 +22,10 @@ internal class FakeV11Api : V11CloudApi {
 
     override suspend fun get(jobId: String): JobPoll = JobPoll("complete", JobStage.COMPLETE)
 
-    override suspend fun delete(jobId: String) = Unit
+    override suspend fun delete(jobId: String) {
+        jobDeleteError?.let { throw it }
+        jobDeletes += jobId
+    }
 
     override suspend fun samEnabled(): Boolean = false
 
@@ -51,6 +58,11 @@ internal class FakeV11Api : V11CloudApi {
         staleOnCreate?.let { throw it }
         stagedCreates += Triple(manifestJson, uploadIds, idempotencyKey)
         return "job-1"
+    }
+
+    override suspend fun deleteDevice() {
+        deviceDeleteError?.let { throw it }
+        deviceDeletes++
     }
 
     override fun watchEvents(jobId: String, lastEventId: String?): Flow<JobEvent> = emptyFlow()

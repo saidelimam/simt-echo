@@ -26,7 +26,14 @@
       "lifecycle_rules": [
         { "id": "expire-jobs", "prefix": "jobs/", "expiration": { "days": 1 } },
         { "id": "expire-relay", "prefix": "relay/", "expiration": { "days": 1 } },
-        { "id": "expire-spend", "prefix": "spend/", "expiration": { "days": 2 } }
+        { "id": "expire-spend", "prefix": "spend/", "expiration": { "days": 2 } },
+        // R12-09 (review 0012, F9): a device record is a credential tied to one
+        // install, not a user account — nothing it belongs to survives a year
+        // of idleness, so the record should not either. `DELETE /v1/device`
+        // erases it immediately; this is the backstop for an uninstall that
+        // never ran. A returning install re-mints on its next request, because
+        // a missing record is a 401 and the client forgets a key it cannot use.
+        { "id": "expire-devices", "prefix": "devices/", "expiration": { "days": 365 } }
       ]
     }
   ],

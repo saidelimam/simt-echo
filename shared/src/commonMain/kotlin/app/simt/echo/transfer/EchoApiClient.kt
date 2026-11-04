@@ -386,6 +386,29 @@ class EchoApiClient(
      * Deletes a walk-staged upload session (`DELETE /v1/uploads/:id`,
      * plan W11-09 discard). 204 and 404 both mean gone.
      */
+    /**
+     * Erases this install's device record (`DELETE /v1/device`, review 0012
+     * R12-09 / GDPR Art. 17). The record is the credential's registration, so
+     * erasing it ends the install's access; the caller forgets the local key in
+     * the same pass. 204 and 404 both mean gone — a record already aged out by
+     * the `expire-devices` lifecycle rule is not an error.
+     */
+    override suspend fun deleteDevice() {
+        val token = configured()
+        val response = try {
+            http.delete("$baseUrl/v1/device") {
+                headers.append(HttpHeaders.Authorization, "Bearer $token")
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            throw EchoApiError.Network(e)
+        }
+        if (response.status.value != 204 && response.status.value != 404) {
+            throw EchoApiError.Server(response.status.value, "")
+        }
+    }
+
     override suspend fun deleteUpload(uploadId: String) {
         val token = configured()
         val response = try {

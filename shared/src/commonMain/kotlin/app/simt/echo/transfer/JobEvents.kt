@@ -118,6 +118,13 @@ interface V11CloudApi : CloudApi {
      */
     suspend fun createJobFromStaged(manifestJson: String, uploadIds: List<String>, idempotencyKey: String): String
 
+    /**
+     * Erases this install's server record (`DELETE /v1/device`, review 0012
+     * R12-09). 204 and 404 both mean gone; the caller forgets the local key
+     * either way.
+     */
+    suspend fun deleteDevice()
+
     /** Cold SSE stream of job events from `lastEventId` (null = from head). */
     fun watchEvents(jobId: String, lastEventId: String?): Flow<JobEvent>
 }

@@ -10,8 +10,11 @@ import app.simt.echo.data.TrialRepository
 import app.simt.echo.model.EchoConfig
 import app.simt.echo.platform.CSV_MIME
 import app.simt.echo.platform.FileSharing
+import app.simt.echo.transfer.DeviceCredentials
+import app.simt.echo.transfer.V11CloudApi
 import app.simt.echo.ui.copy.settingsExportErrorCopy
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -91,6 +94,13 @@ class SettingsViewModel(
      */
     private val routes: RouteRepository? = null,
     private val drafts: DraftRepository? = null,
+    /**
+     * Cloud seam and this install's credential (review 0012, R12-09). Both
+     * optional so older call sites keep compiling: without them Delete all
+     * erases only what is on the phone and says exactly that.
+     */
+    private val api: V11CloudApi? = null,
+    private val credentials: DeviceCredentials? = null,
 ) : ViewModel() {
 
     private val _ui = MutableStateFlow(
@@ -221,23 +231,94 @@ class SettingsViewModel(
     }
 
     /**
-     * Deletes every route, draft, trial and exported file (W8-11 Privacy
-     * & data). The canopy confirm lives in the screen; this reports what
-     * was removed so the note never claims more than happened.
+     * Deletes every route, draft, trial and exported file (W8-11 Privacy &
+     * data) — and, since R12-09 (review 0012, F9), the cloud copies the drafts
+     * still name: a finished or running job, a resumable upload session, the
+     * walk-staged sessions, and finally this install's device record and key.
+     *
+     * The server pass runs first and best-effort: wiping `drafts/` first would
+     * destroy the jobId/uploadId handles the privacy policy promises an
+     * immediate delete on, leaving indoor photos in R2 until the retention
+     * window expires. The note reports what actually happened, never more.
      */
     fun deleteAll() {
-        val routesRemoved = routes?.deleteAll() ?: 0
-        val draftsRemoved = drafts?.deleteAll() ?: 0
-        val trialsRemoved = trials.deleteAll()
-        val exportsRemoved = trials.clearExports()
-        val note =
-            if (routesRemoved == 0 && draftsRemoved == 0 && trialsRemoved == 0 && exportsRemoved == 0) {
-                "Nothing to delete."
-            } else {
-                "Removed ${plural(routesRemoved, "route")}, ${plural(draftsRemoved, "draft")}, " +
-                    "${plural(trialsRemoved, "trial")} and ${plural(exportsRemoved, "exported file")}."
+        viewModelScope.launch {
+            val cloud = deleteCloudCopies()
+            val routesRemoved = routes?.deleteAll() ?: 0
+            val draftsRemoved = drafts?.deleteAll() ?: 0
+            val trialsRemoved = trials.deleteAll()
+            val exportsRemoved = trials.clearExports()
+            val localRemoved = routesRemoved + draftsRemoved + trialsRemoved + exportsRemoved
+            val note = when {
+                localRemoved == 0 && cloud == null -> "Nothing to delete."
+                else -> buildString {
+                    if (localRemoved > 0) {
+                        append(
+                            "Removed ${plural(routesRemoved, "route")}, " +
+                                "${plural(draftsRemoved, "draft")}, " +
+                                "${plural(trialsRemoved, "trial")} and " +
+                                "${plural(exportsRemoved, "exported file")}.",
+                        )
+                    }
+                    when (cloud) {
+                        true -> append(
+                            if (localRemoved > 0) " Cloud copies and this install's device record are deleted."
+                            else "Deleted this install's cloud copies and device record.",
+                        )
+                        false -> append(
+                            " Some cloud copies could not be deleted; they expire within 24 hours.",
+                        )
+                        null -> Unit
+                    }
+                }
             }
-        _ui.update { it.copy(deleteNote = note, deletableItems = deletableCount()) }
+            _ui.update { it.copy(deleteNote = note, deletableItems = deletableCount()) }
+        }
+    }
+
+    /**
+     * Erases the server side of Delete all. Returns true when every named
+     * object is gone (204 and 404 both mean gone), false when any call failed,
+     * and null when this ViewModel has no cloud seam to speak of.
+     */
+    private suspend fun deleteCloudCopies(): Boolean? {
+        val cloud = api ?: return null
+        var complete = true
+        for (draftId in drafts?.listDraftIds().orEmpty()) {
+            drafts?.loadJobRecord(draftId)?.let { record ->
+                complete = deleteQuietly { cloud.delete(record.jobId) } && complete
+            }
+            drafts?.loadUploadRecord(draftId)?.let { record ->
+                complete = deleteQuietly { cloud.deleteUpload(record.uploadId) } && complete
+            }
+            drafts?.loadReadyStagedRecord(draftId)?.uploadIds?.forEach { uploadId ->
+                complete = deleteQuietly { cloud.deleteUpload(uploadId) } && complete
+            }
+        }
+        complete = deleteQuietly { cloud.deleteDevice() } && complete
+        // The key goes even when the record delete failed: a retained key
+        // would keep the orphan usable, while the record itself expires on its
+        // own. A failure here must not abort the local erase.
+        credentials?.let { creds ->
+            try {
+                creds.forget()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Best effort; the next mint overwrites the stored key.
+            }
+        }
+        return complete
+    }
+
+    /** Runs one erasure call, reporting failure instead of throwing it. */
+    private suspend fun deleteQuietly(block: suspend () -> Unit): Boolean = try {
+        block()
+        true
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        false
     }
 
     /** Saved routes, drafts and trial/export files Delete all would erase. */
