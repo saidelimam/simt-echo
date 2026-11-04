@@ -25,6 +25,10 @@ import {
 // The v1 multipart path in jobs.ts is untouched; JSON job creates dispatch here.
 
 export const STAGING_TTL_MS = 3_600_000;
+/** R12-10 (review 0012, F10): the largest JSON body a route will
+ *  buffer. Manifests and session declarations are small; anything larger is
+ *  an attempt to exhaust the isolate, not a request. */
+export const MAX_JSON_BODY_BYTES = 256 * 1024;
 /** R12-06 (F6.2): sessions one install may hold at once. Staging is
  * otherwise uncapped: 80 MB per session with only a per-IP rate limit. */
 export const MAX_ACTIVE_STAGING_SESSIONS = 12;
@@ -381,9 +385,14 @@ export async function handleCreateJobV11(c: Context<AppEnv>): Promise<Response> 
   if (!c.env.PIPELINE) {
     return c.json({ ok: false, error: "server_misconfigured" }, 500);
   }
+  const raw = await readBodyCapped(c.req.raw.body, MAX_JSON_BODY_BYTES);
+  if (raw === null) {
+    // R12-10: read capped, never buffered first.
+    return c.json({ ok: false, error: "payload_too_large" }, 413);
+  }
   let body: unknown;
   try {
-    body = await c.req.json();
+    body = JSON.parse(new TextDecoder().decode(raw));
   } catch {
     return c.json({ ok: false, error: "invalid_request" }, 400);
   }
@@ -637,6 +646,40 @@ async function activeStagingSessions(
   return count;
 }
 
+
+/** R12-10 (review 0012, F10): the bytes decide the type, never the header.
+ * JPEG opens `FF D8 FF`; MP4 carries an `ftyp` box starting at offset 4. */
+export function mediaTypeOf(bytes: Uint8Array): "image/jpeg" | "video/mp4" | null {
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (
+    bytes.length >= 8 &&
+    bytes[4] === 0x66 &&
+    bytes[5] === 0x74 &&
+    bytes[6] === 0x79 &&
+    bytes[7] === 0x70
+  ) {
+    return "video/mp4";
+  }
+  return null;
+}
+
+/** The media type a caller may store: the sniffed one, and only when any
+ * declared type agrees with it. `null` means the payload was refused. */
+export function acceptedMediaType(
+  bytes: Uint8Array,
+  declared: string | null | undefined,
+): "image/jpeg" | "video/mp4" | null {
+  const sniffed = mediaTypeOf(bytes);
+  if (sniffed === null) return null;
+  const header = (declared ?? "").split(";")[0].trim().toLowerCase();
+  if (header !== "" && header !== "application/octet-stream" && header !== sniffed) {
+    return null;
+  }
+  return sniffed;
+}
+
 export function registerUploadRoutes(app: Hono<AppEnv>): void {
   app.post("/v1/uploads", async (c) => {
     // R12-06 (F6.2): the kill switch is account-wide, so it stops staging
@@ -651,9 +694,14 @@ export function registerUploadRoutes(app: Hono<AppEnv>): void {
     if (active >= MAX_ACTIVE_STAGING_SESSIONS) {
       return c.json({ ok: false, error: "staging_quota_exceeded" }, 429);
     }
+    const raw = await readBodyCapped(c.req.raw.body, MAX_JSON_BODY_BYTES);
+    if (raw === null) {
+      // R12-10: read capped, never buffered first.
+      return c.json({ ok: false, error: "payload_too_large" }, 413);
+    }
     let body: unknown;
     try {
-      body = await c.req.json();
+      body = JSON.parse(new TextDecoder().decode(raw));
     } catch {
       return c.json({ ok: false, error: "invalid_request" }, 400);
     }
@@ -750,11 +798,16 @@ export function registerUploadRoutes(app: Hono<AppEnv>): void {
     if (actual !== declared.sha256) {
       return c.json({ ok: false, error: "sha_mismatch" }, 400);
     }
+    // R12-10: a staged blob is media, not an opaque stream — the stored type
+    // comes from the bytes, and a declared type that contradicts them is a
+    // client error rather than something to preserve.
+    const mediaType = acceptedMediaType(body, c.req.header("content-type"));
+    if (mediaType === null) {
+      return c.json({ ok: false, error: "unsupported_media_type" }, 415);
+    }
     try {
       await c.env.MEDIA.put(stagingBlobKey(uploadId, name), bytes, {
-        httpMetadata: {
-          contentType: c.req.header("content-type") || "application/octet-stream",
-        },
+        httpMetadata: { contentType: mediaType },
       });
     } catch {
       return c.json({ ok: false, error: "upload_failed" }, 500);

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { app, type Env } from "./index";
 import { MAX_UPLOAD_BYTES, MIN_FRAMES_PER_CHECKPOINT } from "./types";
 import { MAX_ACTIVE_STAGING_SESSIONS, sweepExpiredUploads } from "./uploads";
+import { cappedBody } from "./jobs";
 import { bearer, seedDevice } from "./testkit";
 
 // W11-09 ready-on-arrival: per-window staged sessions, multi-session job
@@ -146,6 +147,22 @@ async function shaHexOf(data: number[]): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+// R12-10: staged blobs must be real media, so fixtures carry the container
+// header the server sniffs. `clip_` parts are MP4, everything else JPEG.
+const JPEG_MAGIC = [0xff, 0xd8, 0xff];
+const MP4_MAGIC = [0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70];
+function mediaOf(name: string, data: readonly number[] | Uint8Array): Uint8Array {
+  const body = data instanceof Uint8Array ? data : new Uint8Array(data);
+  const magic = name.startsWith("clip") ? MP4_MAGIC : JPEG_MAGIC;
+  // Already-sniffable payloads pass through unchanged, so a blob that went
+  // through the helper once is not prefixed twice.
+  if (magic.every((byte, i) => body[i] === byte)) return body;
+  const out = new Uint8Array(magic.length + body.length);
+  out.set(magic, 0);
+  out.set(body, magic.length);
+  return out;
+}
+
 function validManifest() {
   return {
     schema: 1,
@@ -212,7 +229,10 @@ async function createUpload(
 
 async function createUploadFor(env: never, files: Array<{ name: string; data: number[] }>) {
   const refs = await Promise.all(
-    files.map(async (f) => ({ name: f.name, sha256: await shaHexOf(f.data), bytes: f.data.length })),
+    files.map(async (f) => {
+      const data = mediaOf(f.name, f.data);
+      return { name: f.name, sha256: await shaHexOf([...data]), bytes: data.length };
+    }),
   );
   const res = await createUpload(env, refs);
   expect(res.status).toBe(200);
@@ -225,7 +245,7 @@ function putBlob(env: never, uploadId: string, name: string, data: number[] | Ui
     {
       method: "PUT",
       headers: { ...auth, "Content-Type": "application/octet-stream" },
-      body: new Blob([data instanceof Uint8Array ? data : new Uint8Array(data)]),
+      body: new Blob([mediaOf(name, data)]),
     },
     env,
   );
@@ -248,6 +268,7 @@ async function stageFullUpload(env: never): Promise<string> {
 async function randomBlobWithSha(size: number): Promise<{ data: Uint8Array; sha256: string }> {
   const data = new Uint8Array(size);
   crypto.getRandomValues(data.subarray(0, 65536));
+  data.set(JPEG_MAGIC, 0);
   for (let off = 65536; off < size; off += 65536) {
     crypto.getRandomValues(data.subarray(off, off + 65536));
   }
@@ -333,7 +354,7 @@ describe("W11-09 ready-on-arrival uploads", () => {
     ] as const) {
       const stored = media.store.get(`jobs/${jobId}/in/${name}`);
       expect(stored).toBeDefined();
-      expect([...new Uint8Array(stored!.body)]).toEqual(data);
+      expect([...new Uint8Array(stored!.body)]).toEqual([...mediaOf(name, data)]);
     }
     expect([...media.store.keys()].filter((k) => k.startsWith("jobs/staging/"))).toEqual([]);
   });
@@ -770,7 +791,12 @@ describe("upload PUT and id hardening", () => {
   const putRaw = (env: never, uploadId: string, init: RequestInit & { duplex?: "half" }) =>
     app.request(
       `/v1/uploads/${uploadId}/kf_n2_0`,
-      { method: "PUT", ...init, headers: { ...auth, ...(init.headers as Record<string, string>) } },
+      {
+        ...init,
+        method: "PUT",
+        ...(init.body instanceof Uint8Array ? { body: mediaOf("kf_n2_0", init.body) } : {}),
+        headers: { ...auth, ...(init.headers as Record<string, string>) },
+      },
       env,
     );
 
@@ -925,11 +951,10 @@ describe("per-install isolation (R10-01)", () => {
       { name: "clip_n2", data: [7, 8, 9] },
     ];
     const foreignRefs = await Promise.all(
-      foreignFiles.map(async (f) => ({
-        name: f.name,
-        sha256: await shaHexOf(f.data),
-        bytes: f.data.length,
-      })),
+      foreignFiles.map(async (f) => {
+        const data = mediaOf(f.name, f.data);
+        return { name: f.name, sha256: await shaHexOf([...data]), bytes: data.length };
+      }),
     );
     const created = await app.request(
       "/v1/uploads",
@@ -951,7 +976,7 @@ describe("per-install isolation (R10-01)", () => {
         {
           method: "PUT",
           headers: { ...foreignAuth, "Content-Type": "application/octet-stream" },
-          body: new Blob([new Uint8Array(data)]),
+          body: new Blob([mediaOf(name, data)]),
         },
         env,
       );
@@ -1141,5 +1166,128 @@ describe("R12-06 spend guards and staging quota", () => {
       .reserved;
     expect(reserved).toBeGreaterThanOrEqual(MIN_FRAMES_PER_CHECKPOINT);
     expect(reserved % MIN_FRAMES_PER_CHECKPOINT).toBe(0);
+  });
+});
+
+describe("R12-10 request body caps", () => {
+  it("rejects an oversized JSON body before buffering it", async () => {
+    const media = new FakeR2();
+    const env = await envFor(media, new FakePipeline());
+    const res = await app.request(
+      "/v1/uploads",
+      { method: "POST", headers: jsonAuth, body: JSON.stringify({ pad: "x".repeat(300 * 1024) }) },
+      env,
+    );
+    expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({ ok: false, error: "payload_too_large" });
+    expect([...media.store.keys()].filter((k) => k.startsWith("jobs/staging/"))).toEqual([]);
+  });
+
+  it("refuses a declared length past the multipart ceiling", async () => {
+    const media = new FakeR2();
+    const env = await envFor(media, new FakePipeline());
+    const res = await app.request(
+      "/v1/jobs",
+      {
+        method: "POST",
+        headers: { ...bearer(KEY), "content-length": String(200 * 1024 * 1024) },
+        body: "x",
+      },
+      env,
+    );
+    expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({ ok: false, error: "payload_too_large" });
+  });
+
+  it("stops an unlabelled stream at the cap instead of buffering it", async () => {
+    // The multipart parser reads through `cappedBody`, so the bound holds
+    // without a Content-Length header. Exercised at a small limit: production
+    // uses the same function with MAX_TOTAL_BYTES + 1 MiB.
+    let exceeded = false;
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let i = 0; i < 4; i++) controller.enqueue(new Uint8Array(4));
+        controller.close();
+      },
+    });
+    const reader = cappedBody(source, 10, () => {
+      exceeded = true;
+    }).getReader();
+    let read = 0;
+    for (;;) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) break;
+        read += value.byteLength;
+      } catch {
+        break;
+      }
+    }
+    expect(exceeded).toBe(true);
+    expect(read).toBe(8);
+  });
+
+  it("stores the sniffed media type and refuses mislabelled bytes", async () => {
+    const media = new FakeR2();
+    const env = await envFor(media, new FakePipeline());
+    const uploadId = await createUploadFor(env, [{ name: "kf_n2_0", data: [1, 2, 3] }]);
+    const put = (id: string, name: string, type: string, body: Blob) =>
+      app.request(
+        `/v1/uploads/${id}/${name}`,
+        { method: "PUT", headers: { ...auth, "Content-Type": type }, body },
+        env,
+      );
+
+    // A declared type that contradicts the bytes never reaches storage.
+    const mismatch = await put(
+      uploadId,
+      "kf_n2_0",
+      "video/mp4",
+      new Blob([mediaOf("kf_n2_0", [1, 2, 3])]),
+    );
+    expect(mismatch.status).toBe(415);
+    expect(await mismatch.json()).toEqual({ ok: false, error: "unsupported_media_type" });
+    expect(media.store.has(`jobs/staging/${uploadId}/kf_n2_0`)).toBe(false);
+
+    // Bytes in neither container are not media, whatever the header says.
+    const raw = [1, 2, 3];
+    const rawSession = await createUpload(env, [
+      { name: "kf_n2_1", sha256: await shaHexOf(raw), bytes: raw.length },
+    ]);
+    const rawId = ((await rawSession.json()) as { uploadId: string }).uploadId;
+    const notMedia = await put(rawId, "kf_n2_1", "image/jpeg", new Blob([new Uint8Array(raw)]));
+    expect(notMedia.status).toBe(415);
+    expect(media.store.has(`jobs/staging/${rawId}/kf_n2_1`)).toBe(false);
+
+    // The accepted path stores the sniffed type, not the caller's string.
+    const ok = await put(
+      uploadId,
+      "kf_n2_0",
+      "image/jpeg; charset=binary",
+      new Blob([mediaOf("kf_n2_0", [1, 2, 3])]),
+    );
+    expect(ok.status).toBe(200);
+    expect(media.store.get(`jobs/staging/${uploadId}/kf_n2_0`)!.contentType).toBe("image/jpeg");
+  });
+
+  it("refuses a multipart part whose bytes are not the declared media", async () => {
+    const env = await envFor(new FakeR2(), new FakePipeline());
+    const form = new FormData();
+    form.append("manifest", JSON.stringify(validManifest()));
+    form.append(
+      "kf_n2_0",
+      new File([new Uint8Array([1, 2, 3])], "kf_n2_0", { type: "image/jpeg" }),
+    );
+    const res = await app.request(
+      "/v1/jobs",
+      { method: "POST", headers: bearer(KEY), body: form },
+      env,
+    );
+    expect(res.status).toBe(415);
+    expect(await res.json()).toEqual({
+      ok: false,
+      error: "unsupported_media_type",
+      file: "kf_n2_0",
+    });
   });
 });
