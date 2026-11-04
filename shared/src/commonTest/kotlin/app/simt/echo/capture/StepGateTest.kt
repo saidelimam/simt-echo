@@ -35,6 +35,46 @@ import kotlin.test.assertTrue
 class StepGateTest {
 
     @Test
+    fun oneNoisyFrameAmongStillFramesDoesNotCreateMotion() {
+        val gate = VisualStepGate()
+        gate.onVisual(0.0, 0.9, 1_000_000_000L, 0.001)
+        gate.onVisual(0.0, 0.9, 1_200_000_000L, 0.001)
+        gate.onVisual(0.5, 0.9, 1_400_000_000L, 0.001)
+        gate.onVisual(0.0, 0.9, 1_600_000_000L, 0.001)
+        assertEquals(VisualMotionEvidence.STILL, gate.evidenceAt(1_500_000_000L))
+        assertEquals(StepGateVerdict.REJECTED_PHANTOM, gate.evaluateStepCandidate(1_500_000_000L))
+    }
+
+    @Test
+    fun sustainedContractionIsNeverMoving() {
+        val gate = VisualStepGate()
+        for (i in 0..2) gate.onVisual(-0.12, 0.9, 1_000_000_000L + i * 200_000_000L, 0.002)
+        assertEquals(VisualMotionEvidence.UNKNOWN, gate.evidenceAt(1_400_000_000L))
+        gate.evaluateStepCandidate(1_400_000_000L)
+        assertTrue(gate.lastEvidence != VisualMotionEvidence.MOVING)
+    }
+
+    @Test
+    fun meanBetweenStillCeilingAndMovingFloorIsUnknownNotStill() {
+        val gate = VisualStepGate()
+        gate.onVisual(0.0, 0.9, 1_000_000_000L, 0.001)
+        gate.onVisual(0.06, 0.9, 1_200_000_000L, 0.001)
+        gate.onVisual(0.0, 0.9, 1_400_000_000L, 0.001)
+        gate.onVisual(0.06, 0.9, 1_600_000_000L, 0.001)
+        assertEquals(VisualMotionEvidence.UNKNOWN, gate.evidenceAt(1_300_000_000L))
+        assertEquals(StepGateVerdict.ACCEPTED, gate.evaluateStepCandidate(1_300_000_000L))
+    }
+
+    @Test
+    fun excessiveSigmaIsUnknownNotStill() {
+        val gate = VisualStepGate()
+        gate.onVisual(0.0, 0.9, 1_000_000_000L, 0.05)
+        gate.onVisual(0.0, 0.9, 1_200_000_000L, 0.05)
+        assertEquals(VisualMotionEvidence.UNKNOWN, gate.evidenceAt(1_100_000_000L))
+        assertEquals(StepGateVerdict.ACCEPTED, gate.evaluateStepCandidate(1_100_000_000L))
+    }
+
+    @Test
     fun shakeInPlaceRejectsNinetyFivePercentPhantomStepsAndWalkingFalseRejectsUnderOnePercent() = runTest {
         val world = SimWorld(SimEnvironment.CORRIDOR, seed = SEED, pixelSamplesPerAxis = 2)
         val intrinsics = CameraIntrinsics(
@@ -54,7 +94,7 @@ class StepGateTest {
         }
         val stillEgo = EgoMotionFit().fit(stillFlow.flow, uStill)
         assertTrue(stillEgo.confidence01 >= 0.5, "textured corridor still frame must be confident")
-        assertTrue(kotlin.math.abs(stillEgo.expansionPerSec) < VisualStepGate.MOTION_EXPANSION_FLOOR_PER_SEC)
+        assertTrue(kotlin.math.abs(stillEgo.expansionPerSec) < VisualStepGate.MOVING_FLOOR_PER_SEC)
 
         // 1. Shake-in-place scenario (60 s at 50 Hz, 2 Hz shake).
         val unguardedShake = PdrEngine(visualAssist = false)
@@ -97,7 +137,7 @@ class StepGateTest {
         }
         val walkEgo = EgoMotionFit().fit(walkFlow.flow, uWalk)
         assertTrue(walkEgo.confidence01 >= 0.5)
-        assertTrue(walkEgo.expansionPerSec >= VisualStepGate.MOTION_EXPANSION_FLOOR_PER_SEC)
+        assertTrue(walkEgo.expansionPerSec >= VisualStepGate.MOVING_FLOOR_PER_SEC)
 
         val guardedWalk = PdrEngine(visualAssist = true)
         guardedWalk.start()
