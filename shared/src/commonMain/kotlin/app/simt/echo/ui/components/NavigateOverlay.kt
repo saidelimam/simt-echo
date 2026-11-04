@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -21,12 +23,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import app.simt.echo.ai.MaskPath
 import app.simt.echo.platform.decodeImage
+import app.simt.echo.ui.theme.EchoExtras
 import kotlin.math.roundToInt
 
 /**
@@ -107,7 +111,7 @@ fun CameraNavigateOverlay(
     arrow: @Composable () -> Unit = {
         DirectionArrow(
             angleRad = arrowRad,
-            color = Color(0xFFC6F432).copy(alpha = 0.92f),
+            color = EchoExtras.ember.copy(alpha = 0.92f),
         )
     },
     distance: @Composable () -> Unit = {
@@ -145,23 +149,38 @@ fun CameraNavigateOverlay(
             verticalArrangement = Arrangement.spacedBy(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (offline) StatusChip(text = "Offline ✓")
-                StatusChip(text = uncertaintyText)
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (offline) StatusChip(text = "Offline ✓")
+                    StatusChip(text = uncertaintyText)
+                }
+                arrow()
+                // Light text over a dark scrim in BOTH schemes: the scrim is
+                // black, so scheme text colours (near-black in light theme)
+                // would vanish (review 0004 R4).
+                Text(
+                    text = instruction,
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Color.White,
+                    modifier = Modifier.semantics { heading() },
+                )
+                distance()
+                belowDistance()
+                landmarkCard()
+                LinearProgressIndicator(
+                    progress = { progress01 },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(text = legText, style = MaterialTheme.typography.bodyMedium, color = Color.White)
             }
-            arrow()
-            // Light text over a dark scrim in BOTH schemes: the scrim is
-            // black, so scheme text colours (near-black in light theme)
-            // would vanish (review 0004 R4).
-            Text(text = instruction, style = MaterialTheme.typography.titleLarge, color = Color.White)
-            distance()
-            belowDistance()
-            landmarkCard()
-            LinearProgressIndicator(
-                progress = { progress01 },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Text(text = legText, style = MaterialTheme.typography.bodyMedium, color = Color.White)
+            // Pinned: the actions stay reachable at any font scale.
             actions()
         }
     }
@@ -206,6 +225,7 @@ fun DefaultOverlayLandmarkCard(
                 title = landmarkTitle,
                 cue = landmarkCue,
                 stats = landmarkStats,
+                showImageSlot = !shouldShowLandmarkCrop(cropBytes),
             )
         }
     }

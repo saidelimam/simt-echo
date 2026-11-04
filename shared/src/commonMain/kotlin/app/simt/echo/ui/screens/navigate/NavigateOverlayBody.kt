@@ -13,6 +13,7 @@ import app.simt.echo.ui.components.CameraNavigateOverlay
 import app.simt.echo.ui.components.oneDecimal
 import app.simt.echo.ui.components.overlayScrimAlpha
 import app.simt.echo.ui.screens.record.RollingDistance
+import app.simt.echo.ui.theme.EchoExtras
 
 @Composable
 internal fun NavigateOverlayBody(
@@ -43,7 +44,7 @@ internal fun NavigateOverlayBody(
     // W13-08 instrument over the camera HUD (same pure mapping as the
     // non-camera body; light text over the dark scrim in BOTH schemes).
     val instrument = navigateInstrumentFor(nav, landmark != null)
-    val lime = androidx.compose.ui.graphics.Color(0xFFC6F432).copy(alpha = 0.92f)
+    val accent = EchoExtras.ember.copy(alpha = 0.92f)
     val white = androidx.compose.ui.graphics.Color.White
     Box(modifier = modifier.fillMaxSize()) {
         CameraNavigateOverlay(
@@ -74,7 +75,7 @@ internal fun NavigateOverlayBody(
             },
             actions = { NavigateActions(presentation = presentation, viewModel = viewModel) },
             arrow = {
-                InstrumentArrow(instrument = instrument, arrowRad = nav.arrowRad, color = lime)
+                InstrumentArrow(instrument = instrument, arrowRad = nav.arrowRad, color = accent)
             },
             distance = {
                 RollingDistance(text = "${oneDecimal(distanceM)} m", color = white)
@@ -110,7 +111,7 @@ internal fun NavigateOverlayBody(
             NavigatePeripheryGlow(
                 side = instrument.glowSide,
                 intensity01 = instrument.glowIntensity01,
-                color = lime,
+                color = accent,
                 modifier = Modifier.fillMaxSize(),
             )
         }

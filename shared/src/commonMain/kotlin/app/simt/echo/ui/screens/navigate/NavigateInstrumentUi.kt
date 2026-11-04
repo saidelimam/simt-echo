@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -229,10 +230,12 @@ fun RelockRing(
 ) {
     if (state == null) return
     val progress = state.progress01.toFloat().coerceIn(0f, 1f)
+    val percent = (progress * 100f).roundToInt()
     Canvas(
         modifier = modifier
             .size(48.dp)
-            .testTag(NavigateRelockRingTag),
+            .testTag(NavigateRelockRingTag)
+            .semantics { contentDescription = "Relocking, $percent percent" },
     ) {
         drawArc(
             color = color.copy(alpha = 0.25f),
@@ -286,7 +289,8 @@ fun LookForThisCard(
             frameW = frameW,
             frameH = frameH,
         )
-        LandmarkCard(title = title, cue = cue, stats = stats)
+        // The crop above already occupies the image slot.
+        LandmarkCard(title = title, cue = cue, stats = stats, showImageSlot = false)
     }
 }
 

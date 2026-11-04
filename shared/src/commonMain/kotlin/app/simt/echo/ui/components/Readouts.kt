@@ -11,6 +11,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.simt.echo.ui.theme.EchoCardRadius
@@ -38,16 +39,24 @@ fun DistanceReadout(
     )
 }
 
+/** Semantics tag for a landmark card's own image placeholder. */
+const val LandmarkImageSlotTag = "LandmarkImageSlot"
+
 /**
  * Landmark card (plan Review / Navigate screens): keyframe slot, title,
  * cue and stat chips. The image painter arrives with W2-01/W3-07; until
  * then the slot is a tinted placeholder, never a broken image.
+ *
+ * @param showImageSlot false when the caller already renders the crop
+ * above this card (review 0013 F4: two empty slots stacked read as a
+ * broken image).
  */
 @Composable
 fun LandmarkCard(
     title: String,
     cue: String,
     stats: String?,
+    showImageSlot: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -56,14 +65,17 @@ fun LandmarkCard(
         modifier = modifier.fillMaxWidth(),
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surface,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(120.dp),
-            ) {}
-            Spacer(modifier = Modifier.height(8.dp))
+            if (showImageSlot) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(120.dp)
+                        .testTag(LandmarkImageSlotTag),
+                ) {}
+                Spacer(modifier = Modifier.height(8.dp))
+            }
             Text(text = title, style = MaterialTheme.typography.titleLarge)
             Text(
                 text = cue,
