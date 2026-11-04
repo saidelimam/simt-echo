@@ -214,6 +214,87 @@ class NavigatorTest {
     }
 
     @Test
+    fun stillWalkerNeverGoesUncertain() = runTest {
+        for (engine in engines()) {
+            val nav = Navigator(
+                Fixtures.L_ROUTE,
+                EchoConfig(navigatorEngine = engine, visualAssist = true),
+            )
+            nav.onInput(NavInput.Aligned)
+            val initialRemaining = nav.ui.value.distanceToNextM
+            repeat(60) { i ->
+                nav.onInput(
+                    NavInput.Motion(
+                        MotionUpdate(
+                            tNs = (i + 1) * 1_000_000_000L,
+                            distanceM = 0.0,
+                            yawRad = 0.0,
+                            stepCount = 0,
+                            isStep = false,
+                            pressureHpa = null,
+                            source = "test",
+                            missedStepSuspect = true,
+                        ),
+                    ),
+                )
+                runCurrent()
+            }
+            assertEquals(NavPhase.WALK, nav.ui.value.phase, "engine $engine")
+            assertTrue(
+                abs(nav.ui.value.distanceToNextM - initialRemaining) < 0.5,
+                "engine $engine must not invent progress",
+            )
+        }
+    }
+
+    @Test
+    fun anchorClearsSuspectBonus() = runTest {
+        for (engine in engines()) {
+            val nav = Navigator(
+                Fixtures.L_ROUTE,
+                EchoConfig(navigatorEngine = engine, visualAssist = true),
+            )
+            nav.onInput(NavInput.Aligned)
+            repeat(5) { i ->
+                nav.onInput(
+                    NavInput.Motion(
+                        MotionUpdate(
+                            tNs = (i + 1) * 1_000_000_000L,
+                            distanceM = 0.0,
+                            yawRad = 0.0,
+                            stepCount = 0,
+                            isStep = false,
+                            pressureHpa = null,
+                            source = "test",
+                            missedStepSuspect = true,
+                        ),
+                    ),
+                )
+            }
+            val inflated = nav.ui.value.uncertaintyM
+            nav.onInput(
+                NavInput.Motion(
+                    MotionUpdate(
+                        tNs = 6_000_000_000L,
+                        distanceM = 12.0,
+                        yawRad = 0.0,
+                        stepCount = 10,
+                        isStep = true,
+                        pressureHpa = null,
+                        source = "test",
+                    ),
+                ),
+            )
+            nav.onInput(NavInput.SeeLandmark)
+            runCurrent()
+            assertTrue(
+                nav.ui.value.uncertaintyM < inflated,
+                "engine $engine: anchor must clear the suspect bonus (${nav.ui.value.uncertaintyM} < $inflated)",
+            )
+        }
+    }
+
+    @Test
     fun wrongStartGoesOffRoute() = runTest {
         for (engine in engines()) {
             // Aligned facing 0°, then walks the first leg 70° off heading.

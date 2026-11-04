@@ -2,7 +2,6 @@ package app.simt.echo.capture.visual
 
 import app.simt.echo.sim.SimEnvironment
 import app.simt.echo.sim.SimMotion
-import kotlin.test.Ignore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -46,7 +45,6 @@ class StationaryGateAcceptanceTest {
         }
     }
 
-    @Ignore("R15-01: red until R15-07 — HEAD 38e1baf has no evidence-based suspect rule")
     @Test
     fun at5StillInHandForSixtySecondsProducesNoStepsAndNoSuspects() {
         for (environment in ENVIRONMENTS) {

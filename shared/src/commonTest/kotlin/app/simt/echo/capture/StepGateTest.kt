@@ -46,6 +46,16 @@ class StepGateTest {
     }
 
     @Test
+    fun swayIsNotASuspect() {
+        val gate = VisualStepGate()
+        for (i in 0..9) {
+            gate.onVisual(0.02, 0.9, 1_000_000_000L + i * 200_000_000L, 0.001)
+        }
+        assertEquals(0, gate.missedStepSuspectCount)
+        assertEquals(VisualMotionEvidence.STILL, gate.lastEvidence)
+    }
+
+    @Test
     fun sustainedContractionIsNeverMoving() {
         val gate = VisualStepGate()
         for (i in 0..2) gate.onVisual(-0.12, 0.9, 1_000_000_000L + i * 200_000_000L, 0.002)
