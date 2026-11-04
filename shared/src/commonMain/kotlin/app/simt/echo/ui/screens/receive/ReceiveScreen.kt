@@ -27,6 +27,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -180,7 +181,9 @@ fun ReceiveScreen(
                     )
                 }
                 if (ui.fetching) {
-                    CircularProgressIndicator()
+                    // The live-region text below already announces fetching;
+                    // an unlabelled spinner would only add an empty node.
+                    CircularProgressIndicator(modifier = Modifier.clearAndSetSemantics {})
                     Text(
                         text = PairingCopy.RECEIVE_FETCHING,
                         style = MaterialTheme.typography.bodyLarge,
@@ -237,7 +240,6 @@ private fun MethodIndicator(method: PairingMethod) {
         text = if (method == PairingMethod.NFC) PairingCopy.NFC_LABEL else PairingCopy.QR_SCAN_LABEL,
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.semantics { heading() },
     )
 }
 

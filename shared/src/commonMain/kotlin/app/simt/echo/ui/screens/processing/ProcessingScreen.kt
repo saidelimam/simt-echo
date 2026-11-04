@@ -87,9 +87,20 @@ fun ProcessingScreen(
             )
             ProcessingPhase.Uploading -> {
                 // The upload itself reports no byte progress: honest
-                // indeterminate bar above the stage list.
+                // indeterminate bar above the stage list. Leaving does not
+                // cancel the upload; cancelling AI is a separate, named
+                // choice (review 0013 F8).
                 StageInstrument(current = -1, determinate = false)
-                CosmosPrimaryButton(label = "Cancel", onClick = onDone, modifier = Modifier.fillMaxWidth())
+                CosmosPrimaryButton(
+                    label = "Leave in background",
+                    onClick = onDone,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                CosmosSecondaryButton(
+                    label = "Cancel & continue without AI",
+                    onClick = { viewModel.decline(onDone) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
             is ProcessingPhase.Working -> {
                 val constellation by viewModel.constellation.collectAsState()
