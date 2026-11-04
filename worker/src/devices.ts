@@ -133,3 +133,20 @@ export async function postDevice(c: Context<AppEnv>): Promise<Response> {
   res.headers.set("Cache-Control", "no-store");
   return res;
 }
+
+/** `DELETE /v1/device` — erasure of this install's record (review 0012,
+ * R12-09 / GDPR Art. 17). Authenticated, so only the holder of the key can
+ * remove the record it identifies; the media a device created is deleted by
+ * the client through the job and upload routes first, because those deletes
+ * carry the same ownership check. Deleting an absent record is not an error,
+ * so the route answers 204; a repeated call with the forgotten key is a 401,
+ * which the client treats as already erased. */
+export async function deleteDevice(c: Context<AppEnv>): Promise<Response> {
+  const id = c.get("deviceId");
+  try {
+    await c.env.MEDIA.delete(deviceKeyForId(id));
+  } catch {
+    return c.json({ ok: false, error: "device_delete_failed" }, 500);
+  }
+  return new Response(null, { status: 204 });
+}

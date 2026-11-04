@@ -181,6 +181,8 @@ class ProcessingViewModelTest {
             return "job-1"
         }
 
+        override suspend fun deleteDevice() = Unit
+
         override suspend fun deleteUpload(uploadId: String) {
             uploadDeleteError?.let { throw it }
             deletes += uploadId

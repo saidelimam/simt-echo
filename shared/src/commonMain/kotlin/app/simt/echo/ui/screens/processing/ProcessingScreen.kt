@@ -35,6 +35,7 @@ import app.simt.echo.ui.copy.aiUnavailableCopy
 import app.simt.echo.ui.theme.EchoSpace12
 import app.simt.echo.ui.theme.EchoSpace16
 import app.simt.echo.ui.theme.EchoSpace24
+import app.simt.echo.ui.components.LegalLinks
 
 const val ProcessingConsentSheetTag = "ProcessingConsentSheet"
 const val ProcessingStageInstrumentTag = "ProcessingStageInstrument"
@@ -175,6 +176,8 @@ private fun ConsentSheet(
                 modifier = Modifier.semantics { heading() },
             )
             Text(text = consentCopy(info), style = MaterialTheme.typography.bodyLarge)
+            // R12-09: the notice the consent describes, at the point of collection.
+            LegalLinks(modifier = Modifier.fillMaxWidth())
             CosmosPrimaryButton(
                 label = "Send",
                 onClick = onSend,

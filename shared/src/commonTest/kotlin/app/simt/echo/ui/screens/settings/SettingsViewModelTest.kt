@@ -31,6 +31,11 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import app.simt.echo.transfer.DeviceCredentials
+import app.simt.echo.transfer.EchoApiError
+import app.simt.echo.transfer.FakeV11Api
+import app.simt.echo.transfer.JobRecord
+import app.simt.echo.transfer.ReadyStagedRecord
 
 /**
  * Settings state: the W5-02 camera toggle persists, and the W6-01 trials
@@ -48,6 +53,8 @@ class SettingsViewModelTest {
     private val drafts = DraftRepository(store)
     private val sharing = FakeFileSharing()
     private val dispatcher = StandardTestDispatcher()
+    private val api = FakeV11Api()
+    private val credentials = FakeCredentials()
 
     @BeforeTest
     fun setUp() {
@@ -61,7 +68,18 @@ class SettingsViewModelTest {
 
     private fun vm() = SettingsViewModel(configs, trials, sharing)
 
-    private fun fullVm() = SettingsViewModel(configs, trials, sharing, routes = routes, drafts = drafts)
+    private fun fullVm() = SettingsViewModel(
+        configs,
+        trials,
+        sharing,
+        routes = routes,
+        drafts = drafts,
+        api = api,
+        credentials = credentials,
+    )
+
+    /** No cloud seam: the pre-R12-09 shape, local storage only. */
+    private fun localVm() = SettingsViewModel(configs, trials, sharing, routes = routes, drafts = drafts)
 
     private fun trial(id: String) = Trial(
         trialId = id,
@@ -264,22 +282,96 @@ class SettingsViewModelTest {
         val vm = fullVm()
 
         vm.deleteAll()
+        dispatcher.scheduler.advanceUntilIdle()
 
         assertTrue(routes.list().isEmpty())
         assertTrue(drafts.listDraftIds().isEmpty())
         assertTrue(trials.list().isEmpty())
         assertTrue(store.list("exports").isEmpty())
         assertEquals(
-            "Removed 2 routes, 1 draft, 2 trials and 2 exported files.",
+            "Removed 2 routes, 1 draft, 2 trials and 2 exported files. " +
+                "Cloud copies and this install's device record are deleted.",
+            vm.ui.value.deleteNote,
+        )
+    }
+
+
+    /**
+     * R12-09 (review 0012, F9): Delete all erases the server side first — the
+     * job, the upload session and the walk-staged sessions the drafts name, then
+     * the device record and its key — because wiping `drafts/` first would
+     * destroy the only handles those deletes need.
+     */
+    @Test
+    fun deleteAllDeletesCloudCopiesAndTheDeviceRecordBeforeWipingDrafts() = runTest {
+        drafts.saveCapture(
+            CaptureLog(
+                draftId = "d1",
+                startedAtEpochMs = 1L,
+                motionSource = "echo_builtin_pdr",
+                videoStartNs = 2L,
+                samples = emptyList(),
+                marks = emptyList(),
+                startPhoto = "start.jpg",
+            ),
+        )
+        drafts.saveJobRecord("d1", JobRecord(jobId = "job-1", status = "complete", updatedAtMs = 5L))
+        drafts.saveReadyStagedRecord(
+            "d1",
+            ReadyStagedRecord(uploadIds = listOf("upload-a", "upload-b"), updatedAtMs = 6L),
+        )
+        val vm = fullVm()
+
+        vm.deleteAll()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(listOf("job-1"), api.jobDeletes)
+        assertEquals(listOf("upload-a", "upload-b"), api.uploadDeletes)
+        assertEquals(1, api.deviceDeletes)
+        assertTrue(credentials.forgotten, "the local key goes with the record")
+        assertTrue(drafts.listDraftIds().isEmpty())
+        assertEquals(
+            "Removed 0 routes, 1 draft, 0 trials and 0 exported files. " +
+                "Cloud copies and this install's device record are deleted.",
+            vm.ui.value.deleteNote,
+        )
+    }
+
+    /** A failed server delete never blocks the local erase, and the note says so. */
+    @Test
+    fun deleteAllReportsCloudFailuresWithoutStoppingTheLocalErase() = runTest {
+        drafts.saveCapture(
+            CaptureLog(
+                draftId = "d1",
+                startedAtEpochMs = 1L,
+                motionSource = "echo_builtin_pdr",
+                videoStartNs = 2L,
+                samples = emptyList(),
+                marks = emptyList(),
+                startPhoto = "start.jpg",
+            ),
+        )
+        drafts.saveJobRecord("d1", JobRecord(jobId = "job-1", status = "complete", updatedAtMs = 5L))
+        api.jobDeleteError = EchoApiError.Server(500, "")
+        val vm = fullVm()
+
+        vm.deleteAll()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertTrue(drafts.listDraftIds().isEmpty(), "local erase still happens")
+        assertEquals(
+            "Removed 0 routes, 1 draft, 0 trials and 0 exported files. " +
+                "Some cloud copies could not be deleted; they expire within 24 hours.",
             vm.ui.value.deleteNote,
         )
     }
 
     @Test
     fun deleteAllOnEmptyStoreIsAnHonestNoOp() {
-        val vm = fullVm()
+        val vm = localVm()
 
         vm.deleteAll()
+        dispatcher.scheduler.advanceUntilIdle()
 
         assertEquals("Nothing to delete.", vm.ui.value.deleteNote)
     }
@@ -310,6 +402,7 @@ class SettingsViewModelTest {
         assertTrue(vm.ui.value.canDeleteAll, "a saved draft is something to delete")
 
         vm.deleteAll()
+        dispatcher.scheduler.advanceUntilIdle()
 
         assertEquals(0, vm.ui.value.deletableItems)
         assertFalse(vm.ui.value.canDeleteAll, "nothing is left, so nothing may be offered")
@@ -354,5 +447,18 @@ class SettingsViewModelTest {
         }
 
         override suspend fun pickDocument(): ByteArray? = null
+    }
+}
+
+/** Records erasure of the local key (review 0012, R12-09). */
+private class FakeCredentials : DeviceCredentials {
+    var forgotten = false
+
+    override suspend fun bearer(): String = "dk_" + "a".repeat(43)
+
+    override suspend fun rotate(): String = bearer()
+
+    override suspend fun forget() {
+        forgotten = true
     }
 }

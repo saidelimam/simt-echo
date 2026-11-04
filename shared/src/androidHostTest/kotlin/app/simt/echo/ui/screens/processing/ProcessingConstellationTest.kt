@@ -121,6 +121,8 @@ class ProcessingConstellationTest {
         override suspend fun createJob(manifestJson: String, uploadId: String, idempotencyKey: String, resumeOf: String?): String =
             "job-1"
 
+        override suspend fun deleteDevice() = Unit
+
         override suspend fun deleteUpload(uploadId: String) = Unit
 
         override suspend fun createJobFromStaged(

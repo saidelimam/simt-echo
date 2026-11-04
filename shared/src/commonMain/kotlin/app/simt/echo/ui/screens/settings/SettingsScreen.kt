@@ -44,6 +44,7 @@ import app.simt.echo.ui.components.threeDecimals
 import app.simt.echo.ui.copy.cloudAiStatusCopy
 import app.simt.echo.ui.theme.EchoExtras
 import app.simt.echo.ui.theme.EchoSpace20
+import app.simt.echo.ui.components.LegalLinks
 
 /**
  * Settings in Cosmos (plan W8-11, freeze §5/§7): sectioned rows on the
@@ -201,6 +202,10 @@ fun SettingsScreen(
         SettingsSection(title = "Privacy & data") {
             CosmosRecordRows(
                 rows = listOf(
+                    // R12-09 (review 0012, F9): both stores require the policy
+                    // to be reachable in-app, and GDPR Art. 13 requires the
+                    // notice at the point of collection.
+                    { LegalLinks() },
                     {
                         CosmosToggleRow(
                             title = "Mobile data for landmarks",

@@ -14,6 +14,12 @@ As established in the system's foundational specifications, the Platform's core 
 
 This Privacy Policy details the precise mechanisms governing data collection, on-device spatial processing, consented cloud AI enrichment, local peer-to-peer route transfers, and user-controlled data erasure.
 
+### 1.1 Who is the controller, and how to reach us
+
+The controller responsible for the processing described in this policy is **Simt Space, a company of Quazar Media** ("we", "us"), the maker of SIMT ECHO; its founder is Said Elimam. Privacy contact: **privacy@simt.app**. That mailbox answers every request listed in §5.4 and is the address to use for anything in this policy.
+
+You do not need an account to use SIMT ECHO. We hold no profile, address book, e-mail address or payment record, and nothing here is sold or used to train a model.
+
 ---
 
 ## 2. On-Device Data Collection and Local Processing
@@ -60,7 +66,8 @@ Users retain the absolute right to decline cloud enrichment ("Not now"), in whic
 When cloud enrichment is authorized, data is processed in accordance with strict operational boundaries:
 * **Temporary Cloud Storage:** Uploaded assets land in a Cloudflare R2 storage bucket under short-lived job directories (`jobs/<jobId>/in/`).
 * **Automated Expiration:** All temporary cloud media and processing job directories are governed by an automated 24-hour Time-To-Live (TTL) lifecycle rule, after which they are permanently purged from server memory.
-* **Immediate Deletion API:** Upon reviewing and approving generated landmarks, the route creator can trigger an immediate deletion command (`DELETE /v1/jobs/:id`), which instantly wipes all uploaded media and processing outputs from R2 storage.
+* **Immediate Deletion API:** Upon reviewing and approving generated landmarks, the route creator can trigger an immediate deletion command (`DELETE /v1/jobs/:id`), which instantly wipes all uploaded media and processing outputs from R2 storage. A staged walk-time session can be discarded the same way (`DELETE /v1/uploads/:id`).
+* **Device record erasure:** The per-install credential described in §5.1 is registered in R2 as one record (`devices/<id>.json`) holding only a salted verifier of the key and a creation timestamp — never the key, an e-mail address or a device identifier. `DELETE /v1/device`, which Settings issues when you choose *Delete all*, erases that record; a record whose install has been idle for a year is erased automatically by its lifecycle rule.
 * **Exclusion of Contributor / Training Models:** System workflows strictly utilize standard inference endpoints (Meta Llama 4 Scout with Google Gemma 4 as its fallback, Meta Muse Spark 1.3, and SAM 3.1). The Platform explicitly excludes contributor-tier models that retain or train on user-submitted content.
 
 ---
@@ -100,10 +107,44 @@ SIMT ECHO provides comprehensive governance controls over stored spatial data:
 * **Creator Asset Preview & Toggling:** Prior to exporting or sharing a route, creators can review an Export Preview sheet displaying all included landmark crops and toggle individual assets off. Items flagged for potential privacy risks (such as background text or screens) default to an excluded state.
 * **Mobile Data Control:** Creators may permit walk-time uploads over metered networks through the "Use mobile data" setting. The control is off by default (Wi-Fi only), is changed once in Settings rather than per walk, and applies to every subsequent walk until changed again. Roaming connections remain excluded in all cases.
 * **Route Expiration Settings:** Creators can configure an expiration timestamp (e.g., 24 hours or 7 days) for shared bundles (`PrivacyInfo.expiresAtEpochMs`). Recipient devices automatically purge expired routes upon application launch.
-* **Complete Storage Erasure:** Selecting "Delete All Data" within the application Settings immediately and permanently purges all local routes, draft recordings, trial logs, cached assets, and local route-memory overlays from device storage.
+* **Complete Storage Erasure:** Selecting *Delete all* within the application Settings purges all local routes, draft recordings, trial logs, cached assets, and local route-memory overlays from device storage, and, before doing so, erases what those records name on the server: any cloud processing job (`DELETE /v1/jobs/:id`), any resumable upload session and any walk-staged session (`DELETE /v1/uploads/:id`), and finally this install's device record (`DELETE /v1/device`) together with the local key. The server calls are best effort — if the network is unavailable the app says so, the local erase still completes, and the remaining objects expire under the 1-hour and 24-hour rules in §3.3.
 * **Local Route Memory Isolation:** Secondary devices retain visual route-memory overlays locally to improve navigation performance on subsequent walks. This data remains strictly local, is never uploaded to cloud servers, and is erased whenever the parent route is deleted.
 
 ---
+
+### 5.1 Lawful basis for each processing activity
+
+| Processing | What it touches | Lawful basis |
+| --- | --- | --- |
+| On-device sensing, recording, navigation and route storage | Sensor telemetry, keyframes, view strips, route files — all on the phone | Performance of the service you asked for; no transfer occurs (Art. 6(1)(b)) |
+| Cloud AI landmark enrichment, including walk-time staging | The keyframes and clips the Consent Sheet lists, sent to Cloudflare R2 and the inference endpoints in §5.2 | Your explicit consent, given per walk in the Consent Sheet and withdrawable at any time (Art. 6(1)(a)) |
+| Peer-to-peer and relay sharing | The encrypted bundle you choose to share | Your consent, expressed by displaying or tapping the code (Art. 6(1)(a)) |
+| Device credential and rate limiting | The key's salted verifier, the originating IP address in memory for the rate window | Legitimate interest in preventing abuse of a public endpoint (Art. 6(1)(f)) |
+| Crash-free operation and safety guidance | Nothing leaves the device; no analytics, advertising or tracking SDK is present | Not applicable — no processing beyond the device |
+
+We do not process special-category data for cloud enrichment: the on-device face filter excludes any frame containing a detected face (§3.1), and where no scanner exists the Consent Sheet discloses that frames are sent unscanned. Withdrawing consent stops future uploads; asking us to erase what was already sent is handled under §5.4.
+
+### 5.2 Processors, storage locations and international transfers
+
+| Recipient | Role | Data | Location |
+| --- | --- | --- | --- |
+| Cloudflare, Inc. | Processor: R2 object storage, Workers, Workers AI, Workflows | Uploaded keyframes and clips, manifests, job state, encrypted relay ciphertext | R2 bucket `echo-media`, EU (`WEUR`); inference on Cloudflare's network |
+| Meta Platforms, Inc. | Processor for the optional Meta Model API (Llama 4 Scout fallback path, SAM 3.1, Muse Spark 1.3) | The same keyframes and clips, only when that provider is selected for a job | United States and Meta's global infrastructure |
+| Google LLC (ML Kit) | On-device only | Camera frames scanned locally for faces | Never leaves the device |
+
+No other party receives your media. Transfers outside the EEA rely on the European Commission's Standard Contractual Clauses (2021/914), and, where the recipient is certified, on the EU–US Data Privacy Framework. You can ask us for the safeguard that applies to a specific transfer.
+
+### 5.3 Retention
+
+Local data lives until you delete it. Cloud media lives for at most 24 hours after a job ends, walked-time staged media for at most 1 hour, relay ciphertext for 30 minutes, the daily spend ledger for 2 days, and the device record until you erase it or a year passes without a request from that install. Backups of the object store follow the same lifecycle rules.
+
+### 5.4 Your rights
+
+You have the right to access your data (Art. 15), to rectify it (Art. 16), to erase it (Art. 17), to restrict or object to processing (Arts. 18 and 21), to receive it in a portable form (Art. 20), and to withdraw consent at any time (Art. 7(3)) without affecting the lawfulness of processing before the withdrawal.
+
+Because SIMT ECHO holds no account, most of these are exercised in the app and take effect immediately: *Delete all* erases the local store and the server objects and record it names (§5), the trials CSV and `.echo` export are your portability path, and revoking the Consent Sheet's opt-in stops further uploads. For anything else — including a copy of what a job held, or erasure of media whose job id you no longer have — write to **privacy@simt.app**; we answer within one month, and we may ask for the install's device key so we can find the objects it owns.
+
+If you believe we have handled your data unlawfully you may lodge a complaint with a supervisory authority: the data-protection authority of your country of residence, place of work, or the place of the alleged infringement. For the controller's establishment that is the competent authority in the EU member state where Simt Space operates. Complaints can also be addressed to us first at the mailbox above.
 
 ## 6. Safety and Emergency Guidance Disclaimers
 
