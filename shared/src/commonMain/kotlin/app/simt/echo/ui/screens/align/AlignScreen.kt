@@ -19,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -163,7 +164,10 @@ private fun LivePreview(
             style = MaterialTheme.typography.labelMedium,
             color = Color.White,
             textAlign = TextAlign.Center,
+            // The pip's contentDescription already names it; the visible
+            // label must not announce the same fact twice (review 0013 F2).
             modifier = Modifier
+                .clearAndSetSemantics {}
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .background(Color.Black.copy(alpha = 0.55f))

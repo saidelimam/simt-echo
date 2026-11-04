@@ -30,6 +30,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -63,6 +64,7 @@ import app.simt.echo.ui.theme.EchoSpace12
 import app.simt.echo.ui.theme.EchoSpace24
 
 const val NavigateReticleTag = "NavigateReticle"
+const val NavigateProgressDotsTag = "NavigateProgressDots"
 
 /**
  * Navigate screen (plan §8.3 / W2-06, Cosmos W8-10): reticle-framed arrow,
@@ -307,9 +309,11 @@ private fun NavigateBody(
 /**
  * Progress with node dots: one mark per leg (● passed/current, ○ ahead —
  * shape, never hue-only) plus the "Leg i of n" line for screen readers.
+ * The dot row is decorative: the line below states the same fact in words
+ * (review 0013 F2).
  */
 @Composable
-private fun NavigateProgress(
+internal fun NavigateProgress(
     legIndex: Int,
     legCount: Int,
     modifier: Modifier = Modifier,
@@ -323,7 +327,12 @@ private fun NavigateProgress(
             progress = { if (legCount > 0) (legIndex + 1).toFloat() / legCount else 0f },
             modifier = Modifier.fillMaxWidth(),
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier
+                .testTag(NavigateProgressDotsTag)
+                .clearAndSetSemantics {},
+        ) {
             for (leg in 0 until legCount) {
                 Text(
                     text = if (leg <= legIndex) "●" else "○",
@@ -333,6 +342,7 @@ private fun NavigateProgress(
                     } else {
                         MaterialTheme.colorScheme.outline
                     },
+                    modifier = Modifier.clearAndSetSemantics {},
                 )
             }
         }

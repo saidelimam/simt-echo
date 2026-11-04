@@ -198,7 +198,10 @@ fun FilmStrip(
                     .width(104.dp)
                     .clip(MaterialTheme.shapes.medium)
                     .clickable { if (selected) onInspect(frame.nodeId) else onScrub(frame.nodeId) }
-                    .semantics {
+                    // One TalkBack node per cell: the index, star count and
+                    // distance inside are decoration on top of this sentence
+                    // (review 0013 F2).
+                    .semantics(mergeDescendants = true) {
                         contentDescription =
                             "Frame at ${frame.atDistanceM.roundToInt()} m" +
                                 (if (frame.label.isNotEmpty()) ", ${frame.label}" else "") +

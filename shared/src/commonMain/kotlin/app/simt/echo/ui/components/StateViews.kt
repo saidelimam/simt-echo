@@ -16,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
@@ -81,7 +82,14 @@ private fun CosmosStateScaffold(
                 modifier = Modifier.size(48.dp),
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Text(text = kind.mark, style = MaterialTheme.typography.titleLarge)
+                    // Kind is already carried by the heading + copy below; the
+                    // glyph is decorative and must not be read as "White
+                    // circle" or "Multiplication sign" (review 0013 F2).
+                    Text(
+                        text = kind.mark,
+                        style = MaterialTheme.typography.titleLarge,
+                        modifier = Modifier.clearAndSetSemantics {},
+                    )
                 }
             }
         }

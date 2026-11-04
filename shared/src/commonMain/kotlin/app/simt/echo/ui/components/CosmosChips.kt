@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
@@ -77,9 +78,11 @@ fun CosmosChip(
                 Text(
                     text = "✓",
                     style = MaterialTheme.typography.labelLarge,
-                    modifier = Modifier.then(
-                        if (focused) Modifier.testTag(CosmosFocusRingTag) else Modifier,
-                    ),
+                    modifier = Modifier
+                        .then(if (focused) Modifier.testTag(CosmosFocusRingTag) else Modifier)
+                        // Selection is already exposed as state on the surface;
+                        // the mark is decorative (review 0013 F2).
+                        .clearAndSetSemantics {},
                 )
                 Spacer(modifier = Modifier.width(8.dp))
             }
@@ -140,7 +143,11 @@ fun CosmosSegmentedControl(
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
                 ) {
                     if (selected) {
-                        Text(text = "✓ ", style = MaterialTheme.typography.labelLarge)
+                        Text(
+                            text = "✓ ",
+                            style = MaterialTheme.typography.labelLarge,
+                            modifier = Modifier.clearAndSetSemantics {},
+                        )
                     }
                     Text(
                         text = option,
