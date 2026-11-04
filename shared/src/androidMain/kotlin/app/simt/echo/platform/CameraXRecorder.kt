@@ -135,7 +135,7 @@ class CameraXRecorder(
         }
         DisposableEffect(Unit) {
             onDispose {
-                provider?.unbindAll()
+                unbindBound()
                 analysisExecutor?.shutdown()
                 analysisExecutor = null
             }
@@ -161,8 +161,26 @@ class CameraXRecorder(
 
     private var boundPreview: Preview? = null
 
+    /**
+     * The use cases this recorder itself bound, or null before its first bind.
+     *
+     * [ProcessCameraProvider] is a process singleton, so tearing down with
+     * `unbindAll()` also killed the next screen's preview: Align is disposed
+     * only after Navigate has bound, and detaching every use case left
+     * Navigate's viewfinder frozen on the last frame it drew.
+     */
+    private var boundUseCases: List<UseCase>? = null
+
+    /** Unbinds this recorder's own use cases; never the provider's whole list. */
+    private fun unbindBound() {
+        val cases = boundUseCases
+        boundUseCases = null
+        boundPreview = null
+        if (!cases.isNullOrEmpty()) provider?.unbind(*cases.toTypedArray())
+    }
+
     private suspend fun ensureBound() {
-        if (provider != null) return
+        if (boundUseCases != null) return
         val cameraProvider = awaitProvider()
         provider = cameraProvider
         val cameraId = runCatching {
@@ -213,15 +231,19 @@ class CameraXRecorder(
             if (full.isNotEmpty()) {
                 cameraProvider.bindToLifecycle(lifecycleOwner, DEFAULT_BACK_CAMERA, *full.toTypedArray<UseCase>())
             }
+            boundUseCases = full
             boundMode = if (analysis != null) PerceptionMode.LEDGER_ON else PerceptionMode.LEDGER_OFF
         } catch (e: Exception) {
             Log.w(TAG, "Full ${graph.name} bind failed, falling back", e)
             if (fallback.isEmpty()) throw e
-            cameraProvider.unbindAll()
+            // Only this recorder's own (failed) use cases, never another
+            // screen's: the provider is shared across destinations.
+            cameraProvider.unbind(*full.toTypedArray<UseCase>())
             analysis?.clearAnalyzer()
             analysisExecutor?.shutdown()
             analysisExecutor = null
             cameraProvider.bindToLifecycle(lifecycleOwner, DEFAULT_BACK_CAMERA, *fallback.toTypedArray<UseCase>())
+            boundUseCases = fallback
             boundMode = PerceptionMode.LEDGER_OFF
         }
         if (state == RecorderState.IDLE) move(RecorderEvent.PREVIEW_READY)
