@@ -23,6 +23,7 @@ import app.simt.echo.platform.platformIoDispatcher
 import app.simt.echo.transfer.CloudApi
 import app.simt.echo.transfer.EchoApiError
 import app.simt.echo.transfer.FACE_FILTER_DISCLOSURE
+import app.simt.echo.transfer.UNSCANNED_UPLOAD_DISCLOSURE
 import app.simt.echo.transfer.FALLBACK_POLL_DELAYS_MS
 import app.simt.echo.transfer.JobEvent
 import app.simt.echo.transfer.JobRecord
@@ -94,9 +95,12 @@ data class ProcessingUiState(
 /** Plan consent copy (W3-02 verbatim): files, retention, training tier, shape. */
 fun consentCopy(info: ConsentInfo): String {
     val clips = if (info.samEnabled) " (and ${info.clips} short silent clips if SAM is enabled)" else ""
-    val face = if (info.faceFilterActive) " " + FACE_FILTER_DISCLOSURE else ""
+    // R12-08: silence would imply the filter ran. Either it ran and the sheet
+    // says what it did, or there is no scanner and the sheet says that.
+    val face = if (info.faceFilterActive) " " + FACE_FILTER_DISCLOSURE else " " + UNSCANNED_UPLOAD_DISCLOSURE
     return "Send ${info.photos} photos$clips to cloud AI on Cloudflare " +
-        "(Meta's Llama 4 Scout on Workers AI; Meta Model API if enabled) via SIMT ECHO's server " +
+        "(Meta's Llama 4 Scout on Workers AI, with Google Gemma 4 as its automatic fallback; " +
+        "the Meta Model API if enabled) via SIMT ECHO's server " +
         "to suggest landmarks. Files are deleted within 24 h (or now, from this screen). " +
         "If the Meta Model API is enabled, its standard tier is used, not the contributor tier " +
         "whose inputs may be used for training. Your route shape stays on this phone." +

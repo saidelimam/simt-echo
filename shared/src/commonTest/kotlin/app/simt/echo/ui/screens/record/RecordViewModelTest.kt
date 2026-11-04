@@ -161,8 +161,13 @@ class RecordViewModelTest {
     fun theCopyNamesOnlyTheNetworksTheSettingAllows() = runTest {
         val wifi = viewModel(this).first.readyOptIn.value
         assertEquals("Find landmarks while I walk", wifi.optInLabel)
-        assertTrue("over Wi-Fi only so landmarks" in wifi.consentBody)
+        assertTrue("over Wi-Fi only to Cloudflare R2" in wifi.consentBody)
         assertFalse("mobile data" in wifi.consentBody)
+        // R12-08: the pre-walk sheet carries the two retention windows and the
+        // fallback model, because staging starts before the walk is over.
+        assertTrue("within 1 hour" in wifi.consentBody)
+        assertTrue("within 24 hours" in wifi.consentBody)
+        assertTrue("Gemma 4" in wifi.consentBody)
 
         val data = viewModel(this, mobileDataAllowed = true).first.readyOptIn.value
         assertEquals("Find landmarks while I walk", data.optInLabel)

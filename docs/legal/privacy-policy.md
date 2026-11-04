@@ -41,15 +41,16 @@ Camera frames are accessed exclusively while the application is active in the fo
 SIMT ECHO incorporates advanced multimodal AI perception to translate raw visual frames into semantic navigation checkpoints (such as identifying a "red pillar beside the elevator"). Cloud processing is strictly opt-in and operates under a multi-layered privacy shield.
 
 ### 3.1 Pre-Upload On-Device Face Privacy Filter
-Before any image or video clip is prepared for cloud transmission, SIMT ECHO executes an on-device privacy pre-filter utilizing bundled ML Kit face detection algorithms:
+On Android, before any image or video clip is prepared for cloud transmission, SIMT ECHO runs an on-device privacy pre-filter using bundled ML Kit face detection:
 * **Automatic Scan & Exclusion:** Every approach frame is scanned locally for human faces.
-* **Redaction & Filtering:** Frames containing detected faces or personal identifying features are automatically excluded from generated video clips or blurred prior to packaging.
-* **Manifest Verification:** The resulting manifest carries explicit boolean flags (`faceFree: true`) confirming that privacy verification passed on the local device.
+* **Exclusion, not blurring:** A frame containing a detected face is excluded from the generated keyframes and video clips. The Platform does not blur or otherwise sanitize a frame it detected a face in; it drops the frame.
+* **Manifest Flags:** Each keyframe and clip in the manifest carries a `faceFree` boolean. `faceFree: false` means the asset failed the filter and is never uploaded. Where the platform has no scanner (iOS today), the flag is **omitted rather than set to `true`**: absence means "not verified", and the Consent Sheet discloses that the frames are sent unscanned before anything leaves the phone.
 
 ### 3.2 Explicit Consent and Asset Selection
 Cloud enrichment never occurs automatically. Before any data leaves the mobile device, the application presents a mandatory Consent Sheet detailing:
 * The exact number of keyframe photos and silent, 5-second 480p approach clips to be processed.
-* The specific cloud infrastructure utilized (Cloudflare Workers AI and optional Meta Model API providers).
+* The specific cloud infrastructure and models utilized: Cloudflare Workers AI (Meta Llama 4 Scout, with Google Gemma 4 as its automatic fallback) and the optional Meta Model API, plus Meta Muse Spark 1.3 and SAM 3.1.
+* **Two retention windows.** Enabling *Find landmarks while I walk* stages each checkpoint window to Cloudflare R2 as you walk, under a **1-hour** TTL; the processing job itself is created only after the walk, when the Consent Sheet shows the final photo/clip counts, and its media is retained for at most **24 hours**.
 * An explicit disclosure confirming that raw route video remains private on the creator's phone and is never uploaded.
 * **Network Data Gating:** Walk-time preparation uploads follow a data policy that defaults to Wi-Fi only. Under that default, a batch on a metered network—typically mobile data—is skipped entirely: no bytes are sent and nothing is partially staged. Roaming connections never upload, even if mobile data is permitted, and a network whose status cannot be determined fails closed as if offline.
 
@@ -60,7 +61,7 @@ When cloud enrichment is authorized, data is processed in accordance with strict
 * **Temporary Cloud Storage:** Uploaded assets land in a Cloudflare R2 storage bucket under short-lived job directories (`jobs/<jobId>/in/`).
 * **Automated Expiration:** All temporary cloud media and processing job directories are governed by an automated 24-hour Time-To-Live (TTL) lifecycle rule, after which they are permanently purged from server memory.
 * **Immediate Deletion API:** Upon reviewing and approving generated landmarks, the route creator can trigger an immediate deletion command (`DELETE /v1/jobs/:id`), which instantly wipes all uploaded media and processing outputs from R2 storage.
-* **Exclusion of Contributor / Training Models:** System workflows strictly utilize standard inference endpoints (such as Meta Llama 4 Scout, Muse Spark 1.3, and SAM 3.1). The Platform explicitly excludes contributor-tier models that retain or train on user-submitted content.
+* **Exclusion of Contributor / Training Models:** System workflows strictly utilize standard inference endpoints (Meta Llama 4 Scout with Google Gemma 4 as its fallback, Meta Muse Spark 1.3, and SAM 3.1). The Platform explicitly excludes contributor-tier models that retain or train on user-submitted content.
 
 ---
 

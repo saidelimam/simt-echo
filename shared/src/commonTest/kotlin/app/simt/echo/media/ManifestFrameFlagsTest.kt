@@ -79,7 +79,7 @@ class ManifestFrameFlagsTest {
     // ── build defaults (no scan → keep) ────────────────────────────────
 
     @Test
-    fun buildWithoutFlagsKeepsEveryKeyframe() {
+    fun buildWithoutFlagsKeepsEveryKeyframeAndMakesNoFaceClaim() {
         val route = flaggedRoute()
         val manifest = ManifestBuilder.build(
             route = route,
@@ -90,7 +90,9 @@ class ManifestFrameFlagsTest {
         )
         for (cp in manifest.checkpoints) {
             for (kf in cp.keyframes) {
-                assertTrue(kf.faceFree, "${kf.id} unflagged must keep faceFree")
+                // R12-08: an unflagged keyframe has no scan behind it, so the
+                // manifest omits the claim instead of asserting `true`.
+                assertNull(kf.faceFree, "${kf.id} unflagged must make no face claim")
                 assertEquals(FRAME_QUALITY_GOOD, kf.quality)
                 assertTrue(kf.exposureOk)
             }
@@ -112,12 +114,12 @@ class ManifestFrameFlagsTest {
         )
         val turn = manifest.checkpoints.single { it.nodeId == "n1" }
         val flagged = turn.keyframes.single { it.id == "kf_n1_1" }
-        assertTrue(flagged.faceFree)
+        assertEquals(true, flagged.faceFree)
         assertEquals(FRAME_QUALITY_BAD, flagged.quality)
         assertFalse(flagged.exposureOk)
-        // Siblings untouched.
-        assertTrue(turn.keyframes.single { it.id == "kf_n1_0" }.faceFree)
-        assertTrue(turn.keyframes.single { it.id == "kf_n1_2" }.faceFree)
+        // Siblings untouched: still no claim, never a scan they did not get.
+        assertNull(turn.keyframes.single { it.id == "kf_n1_0" }.faceFree)
+        assertNull(turn.keyframes.single { it.id == "kf_n1_2" }.faceFree)
     }
 
     @Test

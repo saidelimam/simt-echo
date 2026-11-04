@@ -65,6 +65,15 @@ const val FILE_PERCEPTION_OPT_IN_LABEL = "Include on-device perception data in t
 const val FACE_FILTER_DISCLOSURE =
     "Frames showing faces are left out before upload."
 
+/**
+ * Disclosure for a platform with no on-device scanner (iOS today, R12-08).
+ * Saying nothing would imply the filter ran; the sheet must say so before
+ * upload.
+ */
+const val UNSCANNED_UPLOAD_DISCLOSURE =
+    "This version has no on-device face scanner, so frames are sent unscanned " +
+        "and the manifest makes no face-free claim."
+
 /** One toggle row in the export preview sheet. */
 data class ExportItem(
     /** Asset id (`start` sentinel for the start photo, else crop asset id). */
