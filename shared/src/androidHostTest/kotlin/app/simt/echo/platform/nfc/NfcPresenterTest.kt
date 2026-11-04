@@ -164,20 +164,51 @@ class NfcPresenterTest {
     }
 
     @Test
-    fun theHostedServiceAnswersFromTheRegistryAndForgetsOnDestroy() {
+    fun serviceDestroyAfterFieldLossKeepsArmedOfferForNextTap() {
+        // The OS unbinds the HCE service when the RF field drops — after a
+        // partial tap, or while unsetPreferredService is processed — and
+        // rebinds it for the next tap. If destroy erased the registry, that
+        // second tap would answer 6985 while the screen still said "Ready
+        // to tap" (R14-02).
         arm()
-        val service = Robolectric.buildService(EchoHostApduService::class.java).create().get()
+        val first = Robolectric.buildService(EchoHostApduService::class.java).create().get()
         assertEquals(
             NfcApduProtocol.SW_OK,
-            statusOf(service.processCommandApdu(NfcApduProtocol.selectCommand(), null)),
+            statusOf(first.processCommandApdu(NfcApduProtocol.selectCommand(), null)),
+        )
+        first.onDestroy()
+
+        val second = Robolectric.buildService(EchoHostApduService::class.java).create().get()
+        assertEquals(
+            NfcApduProtocol.SW_OK,
+            statusOf(second.processCommandApdu(NfcApduProtocol.selectCommand(), null)),
+            "field loss does not end the offer",
         )
 
-        // Service recreation with no publication (cold start) serves nothing.
-        service.onDestroy()
-        val recreated = Robolectric.buildService(EchoHostApduService::class.java).create().get()
+        // Only the controller ends it: paused, method switched, visit gone.
+        ActiveNfcOfferRegistry.disarm()
         assertEquals(
             NfcApduProtocol.SW_NO_OFFER,
-            statusOf(recreated.processCommandApdu(NfcApduProtocol.selectCommand(), null)),
+            statusOf(second.processCommandApdu(NfcApduProtocol.selectCommand(), null)),
+        )
+    }
+
+    @Test
+    fun delayedDestroyAfterReofferDoesNotWipeTheNewGeneration() {
+        arm(generation = 1L)
+        val service = Robolectric.buildService(EchoHostApduService::class.java).create().get()
+
+        // The user toggled a crop: generation 2 replaced generation 1 and was
+        // armed. The previous binding's destroy arrives afterwards.
+        arm(generation = 2L, bytes = ByteArray(120) { 'q'.code.toByte() })
+        service.onDestroy()
+
+        assertEquals(2L, ActiveNfcOfferRegistry.generation())
+        val reborn = Robolectric.buildService(EchoHostApduService::class.java).create().get()
+        assertEquals(
+            NfcApduProtocol.SW_OK,
+            statusOf(reborn.processCommandApdu(NfcApduProtocol.selectCommand(), null)),
+            "a late destroy cannot unpublish the offer that replaced it",
         )
     }
 
