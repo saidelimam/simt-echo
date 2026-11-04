@@ -97,7 +97,7 @@ class SharePairingViewModelTest {
         override val progress: Flow<TransferProgress> get() = progressFlow
     }
 
-    private class FakeRelay(private val code: String = "ABCD2345") : RelayClient {
+    private class FakeRelay(private val code: String = "ABCD234567") : RelayClient {
         var uploads = 0
         override suspend fun upload(sealed: ByteArray): String {
             uploads++
@@ -358,7 +358,7 @@ class SharePairingViewModelTest {
         assertTrue(after.relayOffered)
         assertEquals(2, rig.transport.offers)
         assertEquals(1, rig.relay?.uploads)
-        assertEquals("ABCD2345", QrPayload.parse(after.qrUri!!).getOrThrow().relayCode)
+        assertEquals("ABCD234567", QrPayload.parse(after.qrUri!!).getOrThrow().relayCode)
         assertEquals(2, pairing.published.size)
         assertEquals(after.offerGeneration, pairing.published.last().first)
         assertTrue(after.offerGeneration > before.offerGeneration)

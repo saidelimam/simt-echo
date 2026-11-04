@@ -63,7 +63,7 @@ class TransferCancellationTest {
         }
     }
 
-    private class FakeRelay(private val code: String = "ABCD2345", var uploadGate: CompletableDeferred<Unit>? = null) : RelayClient {
+    private class FakeRelay(private val code: String = "ABCD234567", var uploadGate: CompletableDeferred<Unit>? = null) : RelayClient {
         val stored = mutableMapOf<String, ByteArray>()
         var uploads = 0
         var downloads = 0
@@ -230,7 +230,7 @@ class TransferCancellationTest {
         val rig = rig()
         // Sender is qualified so the QR carries `c=`; the receiver is not.
         val offer = sender(rig, qualified = true).offer(Fixtures.L_ROUTE.routeId, useRelay = true)
-        assertEquals("ABCD2345", QrPayload.parse(offer.qrUri).getOrThrow().relayCode)
+        assertEquals("ABCD234567", QrPayload.parse(offer.qrUri).getOrThrow().relayCode)
 
         rig.lan.failFetch = true
         assertFailsWith<IllegalStateException> { receiver(rig, qualified = false).fetchPreview(offer.qrUri) }

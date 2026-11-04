@@ -85,7 +85,8 @@ data class QrPayload(
 
         /** Relay code shape, matching `worker/src/relay.ts` exactly. */
         const val RELAY_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
-        const val RELAY_CODE_CHARS = 8
+        /** R12-03: ten characters ≈ 49.5 bits — the code is the capability. */
+        const val RELAY_CODE_CHARS = 10
 
         val SHA8_PATTERN = Regex("[0-9a-f]{16}")
         val RELAY_CODE_PATTERN = Regex("^[$RELAY_CODE_ALPHABET]{$RELAY_CODE_CHARS}$")

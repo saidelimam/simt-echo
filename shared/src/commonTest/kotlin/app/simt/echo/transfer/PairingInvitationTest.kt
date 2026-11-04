@@ -133,14 +133,14 @@ class PairingInvitationTest {
     @Test
     fun relayCodeMustMatchTheWorkerAlphabetAndLength() {
         val base = payload.build()
-        // Exactly what `worker/src/relay.ts` mints.
-        val withRelay = PairingInvitation.parseOrThrow("$base&c=ABCD2345").payload
-        assertEquals("ABCD2345", withRelay.relayCode)
+        // Exactly what `worker/src/relay.ts` mints (R12-03: 10 characters).
+        val withRelay = PairingInvitation.parseOrThrow("$base&c=ABCD234567").payload
+        assertEquals("ABCD234567", withRelay.relayCode)
         // Short, long, lowercase and ambiguous glyphs are all rejected.
-        rejection("$base&c=ABC234")
-        rejection("$base&c=ABCD23456")
-        rejection("$base&c=abcd2345")
-        rejection("$base&c=ABCDO234")
+        rejection("$base&c=ABC2345")
+        rejection("$base&c=ABCD2345678")
+        rejection("$base&c=abcd234567")
+        rejection("$base&c=ABCDO23456")
     }
 
     @Test

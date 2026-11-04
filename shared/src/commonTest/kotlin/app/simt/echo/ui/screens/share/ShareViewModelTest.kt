@@ -165,7 +165,7 @@ class ShareViewModelTest {
         val routes = RouteRepository(FileStore(fileSystem, "/relay".toPath()))
         routes.save(Fixtures.L_ROUTE)
         val relay = object : RelayClient {
-            override suspend fun upload(sealed: ByteArray): String = "XYZ23456"
+            override suspend fun upload(sealed: ByteArray): String = "XYZ2345678"
             override suspend fun download(code: String): ByteArray = error("unused")
         }
         val service = TransferService(
@@ -189,7 +189,7 @@ class ShareViewModelTest {
         advanceUntilIdle()
         assertTrue(vm.ui.value.relayOffered)
         assertEquals(
-            "XYZ23456",
+            "XYZ2345678",
             QrPayload.parse(vm.ui.value.qrUri ?: error("no QR yet")).getOrThrow().relayCode,
         )
     }
