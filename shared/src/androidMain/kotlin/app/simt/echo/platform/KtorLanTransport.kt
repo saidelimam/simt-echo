@@ -198,19 +198,31 @@ class KtorLanTransport(
         }
     }
 
-    private fun localIpv4(): String? {
-        val interfaces = NetworkInterface.getNetworkInterfaces().toList().map { iface ->
-            val address = iface.inetAddresses.toList()
-                .filterIsInstance<Inet4Address>()
-                .firstOrNull()
-            LanInterface(
-                name = iface.name,
-                address = address?.hostAddress ?: "",
-                isUp = iface.isUp,
-                isLoopback = iface.isLoopback,
-                isSiteLocal = address?.isSiteLocalAddress == true,
-            )
-        }
-        return selectLanIpv4(interfaces)
-    }
+    private fun localIpv4(): String? = selectLanIpv4(
+        runCatching { NetworkInterface.getNetworkInterfaces() }.getOrNull()
+            ?.toList()
+            .orEmpty()
+            .flatMap(::lanInterfaces),
+    )
+
+    /**
+     * One [LanInterface] per IPv4 address (R14-03). Keeping only the first
+     * address of an interface hid the hotspot address whenever the interface
+     * also carried a link-local or translated one.
+     */
+    private fun lanInterfaces(iface: NetworkInterface): List<LanInterface> = runCatching {
+        val isUp = iface.isUp
+        val isLoopback = iface.isLoopback
+        iface.inetAddresses.toList()
+            .filterIsInstance<Inet4Address>()
+            .map { address ->
+                LanInterface(
+                    name = iface.name,
+                    address = address.hostAddress ?: "",
+                    isUp = isUp,
+                    isLoopback = isLoopback,
+                    isSiteLocal = address.isSiteLocalAddress,
+                )
+            }
+    }.getOrDefault(emptyList())
 }
