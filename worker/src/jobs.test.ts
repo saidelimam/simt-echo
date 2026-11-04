@@ -188,6 +188,19 @@ function validManifest() {
   };
 }
 
+// R12-10: media fixtures carry the container header the server sniffs.
+const JPEG_MAGIC = [0xff, 0xd8, 0xff];
+const MP4_MAGIC = [0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70];
+function mediaOf(name: string, data: readonly number[] | Uint8Array): Uint8Array {
+  const body = data instanceof Uint8Array ? data : new Uint8Array(data);
+  const magic = name.startsWith("clip") ? MP4_MAGIC : JPEG_MAGIC;
+  if (magic.every((byte, i) => body[i] === byte)) return body;
+  const out = new Uint8Array(magic.length + body.length);
+  out.set(magic, 0);
+  out.set(body, magic.length);
+  return out;
+}
+
 function postJob(
   env: never,
   manifest: unknown,
@@ -199,7 +212,8 @@ function postJob(
 ) {
   const form = new FormData();
   form.append("manifest", typeof manifest === "string" ? manifest : JSON.stringify(manifest));
-  for (const f of files) form.append(f.id, new File([f.bytes], f.id, { type: f.type }));
+  for (const f of files)
+    form.append(f.id, new File([mediaOf(f.id, f.bytes)], f.id, { type: f.type }));
   return app.request(
     "/v1/jobs",
     { method: "POST", headers: bearer(KEY), body: form },
@@ -880,7 +894,10 @@ describe("v1.1 resumable uploads (W11-05)", () => {
 
   async function createUploadFor(env: never, files = stagedFiles()) {
     const refs = await Promise.all(
-      files.map(async (f) => ({ name: f.name, sha256: await shaHexOf(f.data), bytes: f.data.length })),
+      files.map(async (f) => {
+        const data = mediaOf(f.name, f.data);
+        return { name: f.name, sha256: await shaHexOf([...data]), bytes: data.length };
+      }),
     );
     const res = await createUpload(env, refs);
     expect(res.status).toBe(200);
@@ -893,7 +910,7 @@ describe("v1.1 resumable uploads (W11-05)", () => {
       {
         method: "PUT",
         headers: { ...auth, "Content-Type": "application/octet-stream" },
-        body: new Blob([new Uint8Array(data)]),
+        body: new Blob([mediaOf(name, data)]),
       },
       env,
     );
@@ -924,7 +941,10 @@ describe("v1.1 resumable uploads (W11-05)", () => {
       await createUpload(
         env,
         await Promise.all(
-          files.map(async (f) => ({ name: f.name, sha256: await shaHexOf(f.data), bytes: f.data.length })),
+          files.map(async (f) => {
+            const data = mediaOf(f.name, f.data);
+            return { name: f.name, sha256: await shaHexOf([...data]), bytes: data.length };
+          }),
         ),
       )
     ).json()) as { missing: string[] };
@@ -1009,7 +1029,7 @@ describe("v1.1 resumable uploads (W11-05)", () => {
     for (const f of files) {
       const stored = media.store.get(`jobs/${jobId}/in/${f.name}`);
       expect(stored).toBeDefined();
-      expect([...new Uint8Array(stored!.body)]).toEqual(f.data);
+      expect([...new Uint8Array(stored!.body)]).toEqual([...mediaOf(f.name, f.data)]);
     }
     expect(media.store.has(`jobs/${jobId}/manifest.json`)).toBe(true);
     // Single-use staging: the move consumes it, so a resumed GET is gone.

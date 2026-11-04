@@ -1,6 +1,13 @@
 import { Hono } from "hono";
 import type { AppEnv, Env } from "./index";
-import { deletePrefix, handleCreateJobV11, idemKey, readJobOwner, writeJobOwner } from "./uploads";
+import {
+  acceptedMediaType,
+  deletePrefix,
+  handleCreateJobV11,
+  idemKey,
+  readJobOwner,
+  writeJobOwner,
+} from "./uploads";
 import { reserveDailySpend, spendDisabled } from "./spend";
 import {
   JobEventSchema,
@@ -198,6 +205,41 @@ async function readJson<T>(env: Env, key: string): Promise<T | null> {
   }
 }
 
+
+/** R12-10 (review 0012, F10): a stream that stops at `limit`, so the parser
+ * reading it cannot buffer more. `onExceeded` records that the stop was the
+ * cap and not a malformed body. */
+export function cappedBody(
+  body: ReadableStream<Uint8Array> | null,
+  limit: number,
+  onExceeded: () => void,
+): ReadableStream<Uint8Array> {
+  if (body === null) {
+    return new ReadableStream<Uint8Array>({ start: (controller) => controller.close() });
+  }
+  const reader = body.getReader();
+  let total = 0;
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const { done, value } = await reader.read();
+      if (done) {
+        controller.close();
+        return;
+      }
+      total += value.byteLength;
+      if (total > limit) {
+        onExceeded();
+        controller.error(new Error("body_too_large"));
+        return;
+      }
+      controller.enqueue(value);
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    },
+  });
+}
+
 export function registerJobsRoutes(app: Hono<AppEnv>): void {
   app.post("/v1/jobs", async (c) => {
     if (!c.env.PIPELINE) {
@@ -217,11 +259,31 @@ export function registerJobsRoutes(app: Hono<AppEnv>): void {
     let manifest: Manifest;
     let files: Array<{ name: string; file: File }>;
     let totalBytes: number;
+    // R12-10 (review 0012, F10): bound the multipart stream before it is
+    // buffered. `formData()` reads to the end of the stream, so a 128 MB
+    // body exhausted the isolate before the size checks below could run.
+    // A declared length past the ceiling is refused outright; otherwise the
+    // stream itself stops at the cap, so the bound holds with or without a
+    // Content-Length header.
+    const maxBody = MAX_TOTAL_BYTES + 1_048_576;
+    const declaredLength = Number(c.req.header("content-length") ?? NaN);
+    if (Number.isFinite(declaredLength) && declaredLength > maxBody) {
+      return c.json({ ok: false, error: "payload_too_large" }, 413);
+    }
+    let tooLarge = false;
     try {
-      form = await c.req.formData();
+      form = await new Response(
+        cappedBody(c.req.raw.body, maxBody, () => {
+          tooLarge = true;
+        }),
+        { headers: { "content-type": c.req.header("content-type") ?? "" } },
+      ).formData();
       manifest = ManifestSchema.parse(JSON.parse(String(form.get("manifest"))));
     } catch {
-      return c.json({ ok: false, error: "invalid_manifest" }, 400);
+      // A body past the cap can only fail to parse for its size.
+      return tooLarge
+        ? c.json({ ok: false, error: "payload_too_large" }, 413)
+        : c.json({ ok: false, error: "invalid_manifest" }, 400);
     }
     if (!manifest.consent.sendFramesToCloudAi) {
       return c.json({ ok: false, error: "consent_required" }, 400);
@@ -250,6 +312,12 @@ export function registerJobsRoutes(app: Hono<AppEnv>): void {
         partSeen.add(name);
         files.push({ name, file: v });
         totalBytes += v.size;
+        // R12-10 (F10): the multipart part's declared type has to survive a
+        // look at the bytes; a mislabelled part never reaches storage.
+        const head = new Uint8Array(await v.slice(0, 8).arrayBuffer());
+        if (acceptedMediaType(head, v.type) === null) {
+          return c.json({ ok: false, error: "unsupported_media_type", file: name }, 415);
+        }
       }
     }
     if (files.length > MAX_FILES) {
@@ -273,8 +341,13 @@ export function registerJobsRoutes(app: Hono<AppEnv>): void {
     const jobId = crypto.randomUUID();
     try {
       for (const { name, file } of files) {
-        await c.env.MEDIA.put(inputKey(jobId, name), await file.arrayBuffer(), {
-          httpMetadata: { contentType: file.type || "application/octet-stream" },
+        const body = await file.arrayBuffer();
+        const mediaType = acceptedMediaType(new Uint8Array(body), file.type);
+        if (mediaType === null) {
+          return c.json({ ok: false, error: "unsupported_media_type", file: name }, 415);
+        }
+        await c.env.MEDIA.put(inputKey(jobId, name), body, {
+          httpMetadata: { contentType: mediaType },
         });
       }
       await c.env.MEDIA.put(manifestKey(jobId), JSON.stringify(manifest));
