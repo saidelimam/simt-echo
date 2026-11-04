@@ -36,6 +36,7 @@ object PairingCopy {
     const val SHARE_DOWNLOADED = "Route downloaded"
     const val SHARE_AS_FILE = "Share as file"
     const val SHARE_TRY_AGAIN = "Try again"
+    const val SHARE_AGAIN = "Share again"
 
     // Receive.
     const val RECEIVE_READY = "Ready to receive a tap"

@@ -15,18 +15,22 @@ import app.simt.echo.platform.Endpoint
 import app.simt.echo.platform.PeerTransport
 import app.simt.echo.platform.TransferProgress
 import app.simt.echo.transfer.NfcReadiness
+import app.simt.echo.transfer.OFFER_LIFETIME_MS
 import app.simt.echo.transfer.PairingFailure
 import app.simt.echo.transfer.PairingMethod
 import app.simt.echo.transfer.QrPayload
 import app.simt.echo.transfer.RelayClient
 import app.simt.echo.transfer.START_PHOTO_ITEM_ID
 import app.simt.echo.transfer.TransferService
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import okio.Path
@@ -114,7 +118,10 @@ class SharePairingViewModelTest {
         val relay: FakeRelay? = null,
     )
 
-    private fun rig(qualifiedRelay: Boolean = false): Rig {
+    private fun rig(
+        qualifiedRelay: Boolean = false,
+        nowMs: () -> Long = { 1_762_000_000_000L },
+    ): Rig {
         val fileSystem = FakeFileSystem()
         val store = FileStore(fileSystem, "/data".toPath())
         val routes = RouteRepository(store)
@@ -126,7 +133,7 @@ class SharePairingViewModelTest {
             routes = routes,
             store = store,
             randomBytes = { size -> ByteArray(size) { (it + 1).toByte() } },
-            nowMs = { 1_762_000_000_000L },
+            nowMs = nowMs,
             relay = relay,
             peerRelayQualified = qualifiedRelay,
             ioDispatcher = Dispatchers.Unconfined,
@@ -138,12 +145,14 @@ class SharePairingViewModelTest {
         rig: Rig,
         pairing: NfcPairingController,
         haptics: Haptics = FakeHaptics(),
+        timers: CoroutineDispatcher = Dispatchers.Default,
     ) = ShareViewModel(
         routeId = Fixtures.L_ROUTE.routeId,
         service = rig.service,
         haptics = haptics,
         sharing = FakeSharing(),
         pairing = pairing,
+        timers = timers,
     )
 
     private fun capabilities(
@@ -341,6 +350,71 @@ class SharePairingViewModelTest {
         advanceUntilIdle()
         assertTrue(vm.ui.value.sent)
         assertEquals(listOf(HapticPattern.CONFIRM), haptics.played)
+    }
+
+    @Test
+    fun downloadCompletionUnpublishesNfcAndAllowsShareAgain() = runTest(dispatcher) {
+        val rig = rig()
+        val pairing = FakeNfcPairingController(capabilities())
+        val vm = viewModel(rig, pairing)
+        advanceUntilIdle()
+        val first = vm.ui.value
+        pairing.confirmPublished(first.offerGeneration)
+        advanceUntilIdle()
+        assertTrue(vm.ui.value.readyToTap)
+
+        rig.transport.servedGenerations.emit(first.offerGeneration)
+        advanceUntilIdle()
+
+        assertTrue(vm.ui.value.sent)
+        // The transport stops serving seconds later: a consumed offer must
+        // not stay tappable or scannable while the QR still shows (R14-07).
+        assertFalse(vm.ui.value.readyToTap)
+        assertEquals(listOf(first.offerGeneration), pairing.clearedGenerations)
+
+        // Another receiver needs a freshly sealed invitation.
+        vm.shareAgain()
+        advanceUntilIdle()
+        val again = vm.ui.value
+        assertFalse(again.sent)
+        assertEquals(2, rig.transport.offers)
+        assertTrue(again.offerGeneration > first.offerGeneration)
+        assertEquals(again.offerGeneration, pairing.published.last().first)
+        assertEquals(first.selection, again.selection, "Share again keeps the export choices")
+    }
+
+    @Test
+    fun offerLifetimeExpiryUnpublishesNfcAndShowsRetry() = runTest(dispatcher) {
+        var now = 1_762_000_000_000L
+        val rig = rig(nowMs = { now })
+        val pairing = FakeNfcPairingController(capabilities())
+        val vm = viewModel(rig, pairing, timers = dispatcher)
+        runCurrent()
+        val first = vm.ui.value
+        pairing.confirmPublished(first.offerGeneration)
+        runCurrent()
+        assertTrue(vm.ui.value.readyToTap)
+
+        now += OFFER_LIFETIME_MS
+        advanceTimeBy(OFFER_LIFETIME_MS)
+        runCurrent()
+
+        val expired = vm.ui.value
+        assertNull(expired.qrUri, "the screen never shows a code nothing serves")
+        assertFalse(expired.readyToTap)
+        assertFalse(expired.sent)
+        assertEquals(PairingFailure.OfferExpired, expired.tapFailure)
+        assertEquals(listOf(first.offerGeneration), pairing.clearedGenerations)
+        assertNull(rig.service.currentOffer, "the session stopped serving")
+        assertTrue(rig.transport.stopCalls > 0)
+
+        // The one action back is a fresh offer, not a dead QR.
+        vm.retryOffer()
+        runCurrent()
+        val again = vm.ui.value
+        assertNotNull(again.qrUri)
+        assertNull(again.tapFailure)
+        assertEquals(2, rig.transport.offers)
     }
 
     @Test
