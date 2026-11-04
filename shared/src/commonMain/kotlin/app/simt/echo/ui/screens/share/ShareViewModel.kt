@@ -16,6 +16,7 @@ import app.simt.echo.transfer.ExportItem
 import app.simt.echo.transfer.ExportSelection
 import app.simt.echo.transfer.ExportSummary
 import app.simt.echo.transfer.NfcReadiness
+import app.simt.echo.transfer.OFFER_LIFETIME_MS
 import app.simt.echo.transfer.PairingFailure
 import app.simt.echo.transfer.PairingMethod
 import app.simt.echo.transfer.PairingPhase
@@ -28,9 +29,12 @@ import app.simt.echo.ui.copy.shareErrorCopy
 import app.simt.echo.ui.copy.shareExportErrorCopy
 import app.simt.echo.ui.copy.shareUpdateErrorCopy
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -111,6 +115,12 @@ class ShareViewModel(
      */
     private val pairing: NfcPairingController = UnavailableNfcPairingController(),
     private val role: PairingRole = PairingRole.SHARE,
+    /**
+     * Where the ten-minute window is waited out (R14-07). Not the main
+     * dispatcher: a blocked screen must never postpone retiring an offer,
+     * and a test scheduler is injected to assert expiry in virtual time.
+     */
+    private val timers: CoroutineDispatcher = Dispatchers.Default,
 ) : ViewModel() {
 
     private val _ui = MutableStateFlow(
@@ -121,6 +131,7 @@ class ShareViewModel(
     private val rate = ProgressRateTracker(viewModelScope, nowMs)
 
     private var producerJob: Job? = null
+    private var expiryJob: Job? = null
     private var closed = false
     /** Privacy defaults apply to the first offer of the visit, never a resume. */
     private var defaultsApplied = false
@@ -265,7 +276,7 @@ class ShareViewModel(
                     error = null,
                 )
             }
-            publishIfSelected()
+            offerReady(service.offerGeneration)
         }
     }
 
@@ -327,7 +338,69 @@ class ShareViewModel(
         if (state.sent) return
         if (generation != state.offerGeneration) return
         _ui.update { it.copy(sent = true) }
+        // A download consumes the single-use offer (R14-07): the transport
+        // stops serving seconds later, so nothing may keep advertising it —
+        // neither a tap nor a scan of a dead invitation.
+        cancelExpiry()
+        detachNfc()
         haptics.play(HapticPattern.CONFIRM)
+    }
+
+    /**
+     * Offers a fresh invitation to another receiver after a completed
+     * download (R14-07). The export choices stay as the user left them.
+     */
+    fun shareAgain() {
+        if (!_ui.value.sent) return
+        reoffer(_ui.value.selection)
+    }
+
+    /**
+     * A new offer is being served: re-arm its ten-minute window and present
+     * it. Presenting an offer we already hold (resume, method switch) goes
+     * through [publishIfSelected] instead and keeps the original deadline.
+     */
+    private fun offerReady(generation: Long) {
+        armExpiry(generation)
+        publishIfSelected()
+    }
+
+    private fun armExpiry(generation: Long) {
+        expiryJob?.cancel()
+        expiryJob = viewModelScope.launch(timers) {
+            delay(OFFER_LIFETIME_MS)
+            onOfferExpired(generation)
+        }
+    }
+
+    private fun cancelExpiry() {
+        expiryJob?.cancel()
+        expiryJob = null
+    }
+
+    /**
+     * The offer outlived its window (R14-07). The session reaps itself at
+     * the same deadline, but only the screen can withdraw the NFC
+     * publication and stop showing a code nothing serves.
+     */
+    private fun onOfferExpired(generation: Long) {
+        if (closed) return
+        if (generation != _ui.value.offerGeneration) return
+        // The session's own clock decides; the timer only wakes us.
+        service.expireOffer()
+        detachNfc()
+        service.stopOffer()
+        _ui.update {
+            it.copy(
+                qrUri = null,
+                sent = false,
+                tapRead = false,
+                tapFailure = PairingFailure.OfferExpired,
+                readyToTap = false,
+                offerGeneration = 0L,
+            )
+        }
+        refreshReadiness()
     }
 
     // ── offer mutations ──────────────────────────────────────────
@@ -390,7 +463,7 @@ class ShareViewModel(
                     error = null,
                 )
             }
-            publishIfSelected()
+            offerReady(service.offerGeneration)
         }
     }
 
@@ -425,7 +498,7 @@ class ShareViewModel(
                     error = null,
                 )
             }
-            publishIfSelected()
+            offerReady(service.offerGeneration)
         }
     }
 
@@ -437,7 +510,9 @@ class ShareViewModel(
     fun retryOffer() {
         if (_ui.value.qrUri != null) return
         clearProgress()
-        _ui.update { it.copy(error = null, sent = false, progress = null, bytesPerSecond = 0.0) }
+        _ui.update {
+            it.copy(error = null, sent = false, tapFailure = null, progress = null, bytesPerSecond = 0.0)
+        }
         launchProducer(errorCopy = ::shareErrorCopy) {
             val selection = _ui.value.selection
             val items = service.describeExport(routeId)
@@ -464,7 +539,7 @@ class ShareViewModel(
                     error = null,
                 )
             }
-            publishIfSelected()
+            offerReady(service.offerGeneration)
         }
     }
 
@@ -475,6 +550,7 @@ class ShareViewModel(
     fun stop() {
         producerJob?.cancel()
         producerJob = null
+        cancelExpiry()
         detachNfc()
         service.stopOffer()
         _ui.update { it.copy(readyToTap = false) }

@@ -30,6 +30,7 @@ import app.simt.echo.platform.NfcPairingController
 import app.simt.echo.platform.UnavailableNfcPairingController
 import app.simt.echo.transfer.FILE_PERCEPTION_OPT_IN_LABEL
 import app.simt.echo.transfer.NfcReadiness
+import app.simt.echo.transfer.PairingFailure
 import app.simt.echo.transfer.PairingMethod
 import app.simt.echo.transfer.PairingRole
 import app.simt.echo.transfer.TransferService
@@ -42,6 +43,7 @@ import app.simt.echo.ui.components.PairingLifecycle
 import app.simt.echo.ui.components.PairingMethodSelector
 import app.simt.echo.ui.components.StatusChip
 import app.simt.echo.ui.components.TransferParticles
+import app.simt.echo.ui.components.pairingFailureCopy
 import app.simt.echo.ui.copy.PairingCopy
 import app.simt.echo.ui.sigil.SigilGeometry
 import app.simt.echo.ui.theme.EchoSpace16
@@ -151,6 +153,8 @@ fun ShareScreen(
             modifier = Modifier.fillMaxWidth(),
         )
         val error = ui.error
+        // The ten-minute window ran out: the offer is gone, not "starting".
+        val expired = qrUri == null && ui.tapFailure == PairingFailure.OfferExpired
         when {
             error != null -> Text(
                 text = error,
@@ -159,6 +163,10 @@ fun ShareScreen(
             )
 
             ui.sent -> StatusChip(text = PairingCopy.SHARE_DOWNLOADED)
+            expired -> StatusChip(
+                text = pairingFailureCopy(PairingRole.SHARE, PairingFailure.OfferExpired),
+            )
+
             qrUri != null -> StatusChip(text = PairingCopy.SHARE_WAITING)
             else -> StatusChip(text = PairingCopy.SHARE_STARTING)
         }
@@ -172,7 +180,16 @@ fun ShareScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
-        if (error != null && qrUri == null) {
+        // A completed download consumed this invitation: another receiver
+        // needs a freshly sealed one (R14-07).
+        if (ui.sent) {
+            CosmosPrimaryButton(
+                label = PairingCopy.SHARE_AGAIN,
+                onClick = viewModel::shareAgain,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        if ((error != null || expired) && qrUri == null) {
             CosmosPrimaryButton(
                 label = PairingCopy.SHARE_TRY_AGAIN,
                 onClick = viewModel::retryOffer,
