@@ -55,13 +55,14 @@ class TransferService(
     private val relay: RelayClient? = null,
     /**
      * Whether the configured relay is qualified for peer delivery (plan
-     * 0005 §1). False for the current backend: `worker/src/relay.ts`
-     * `getRelay` refuses a code minted by another install (R10-01), so a
-     * cross-phone fallback is not verified. Configuring a relay therefore
-     * does not make it usable — nothing uploads or falls back until a
-     * producer contract and a two-install integration test enable it.
+     * 0005 §1). True since R12-03: `worker/src/relay.ts` treats the
+     * 10-character code as the capability — sender and receiver are
+     * different installs, and the payload is ciphertext whose key never
+     * reaches the worker — so a receiver can redeem a sender's code.
+     * Configuring a relay is what makes it usable; an unconfigured graph
+     * still offers nothing.
      */
-    private val peerRelayQualified: Boolean = false,
+    private val peerRelayQualified: Boolean = true,
     /**
      * Where the heavy bundle work runs (plan 0005 §4.5: never Main).
      * Injectable so a host test can keep preparation on its own dispatcher
@@ -79,10 +80,9 @@ class TransferService(
     val relayConfigured: Boolean get() = relay != null
 
     /**
-     * True when Share may offer peer relay delivery for this offer. Stays
-     * false on the current backend even with a relay configured, so the
-     * upload action hides instead of promising a fallback that a foreign
-     * install's code would be refused (plan 0005 §1).
+     * True when Share may offer peer relay delivery for this offer: a relay
+     * is configured and this backend is qualified for cross-install reads
+     * (plan 0005 §1, R12-03). Without a configured relay the action hides.
      */
     val relayAvailable: Boolean get() = relay != null && peerRelayQualified
 

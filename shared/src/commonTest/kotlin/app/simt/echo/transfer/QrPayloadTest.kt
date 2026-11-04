@@ -27,10 +27,10 @@ class QrPayloadTest {
 
     @Test
     fun relayCodeRoundTrips() {
-        // Exactly the 8-character code `worker/src/relay.ts` mints.
-        val withRelay = payload.copy(relayCode = "ABCD2345")
+        // Exactly the 10-character code `worker/src/relay.ts` mints.
+        val withRelay = payload.copy(relayCode = "ABCD234567")
         val parsed = QrPayload.parse(withRelay.build()).getOrThrow()
-        assertEquals("ABCD2345", parsed.relayCode)
+        assertEquals("ABCD234567", parsed.relayCode)
     }
 
     @Test

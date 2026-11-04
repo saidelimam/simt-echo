@@ -9,11 +9,13 @@ import kotlin.test.assertTrue
 /**
  * W9-03 gate: the relay cases in `TransferServiceTest` run against the
  * same [TransferService] the graph builds — and the graph must actually
- * supply the relay. Configured production config → relay available
- * (Share offers it); anything less → LAN-only, never a half-wired client.
+ * supply the relay.
  *
  * R12-02: the bearer is a per-install device key minted at first use, so
  * configuration is the base URL alone; no shared token is compiled in.
+ * R12-03: a configured relay is qualified for peer delivery — the worker
+ * treats the relay code as the capability, so a second install can redeem
+ * it (proven by the worker's two-install test).
  */
 class AppGraphRelayTest {
 
@@ -23,18 +25,14 @@ class AppGraphRelayTest {
     }
 
     @Test
-    fun aConfiguredRelayIsNotAPeerDeliveryFallback() {
+    fun aConfiguredRelayIsOfferedForPeerDelivery() {
         val graph = AppGraph(
             platform = FakePlatform(),
             apiBaseUrl = "https://echo.test",
         )
         assertTrue(graph.cloudAiConfigured)
-        // Plan 0005 §1: the Worker refuses a code minted by another install
-        // (R10-01), so a configured relay stays unusable for peer delivery
-        // until a producer contract and a two-install test enable it. The
-        // upload action must stay hidden even though the client exists.
-        assertTrue(graph.transferService.relayConfigured, "the graph still supplies the client")
-        assertFalse(graph.transferService.relayAvailable, "configured is not qualified")
+        assertTrue(graph.transferService.relayConfigured, "the graph supplies the client")
+        assertTrue(graph.transferService.relayAvailable, "R12-03: the code is the capability")
     }
 
     @Test
