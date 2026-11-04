@@ -128,7 +128,9 @@ class SimHandHold(
 
     companion object {
         val BASE_PITCH = -25.0 * PI / 180.0
-        val DEFAULT_START = SimPose(x = 0.0, y = 54.0, z = 1.5, yawRad = 0.0, pitchRad = BASE_PITCH)
+        // The scene runs from -4 m to 60 m. Starting near 4 m leaves a full
+        // 12 s walk (14.4 m at 1.2 m/s) inside the rendered geometry.
+        val DEFAULT_START = SimPose(x = 0.0, y = 4.0, z = 1.5, yawRad = 0.0, pitchRad = BASE_PITCH)
         private const val GRAVITY = 9.81
         private const val TWO_PI = 2.0 * PI
         private const val BOB_HZ = 2.0
@@ -136,7 +138,7 @@ class SimHandHold(
         private const val BOB_AMPLITUDE_M = 0.0139
         private const val SHAKE_AMPLITUDE_M = 0.020
         private const val BOB_PITCH_RAD = 0.035
-        private const val SHAKE_PITCH_RAD = 0.087
-        private const val SHAKE_YAW_RAD = 0.087
+        private const val SHAKE_PITCH_RAD = 0.035
+        private const val SHAKE_YAW_RAD = 0.035
     }
 }

@@ -133,4 +133,68 @@ class PdrEngineTest {
         assertEquals(50.0, last.magMag!!, 1e-9)
         assertEquals(0.0, last.magVert!!, 1e-9)
     }
+
+    @Test
+    fun deferredStepsEmitInOrderWithCandidateTime() = runTest {
+        val engine = PdrEngine(visualAssist = true)
+        engine.start()
+        val collected = mutableListOf<app.simt.echo.platform.MotionUpdate>()
+        val job = launch { engine.updates.collect { collected += it } }
+        runCurrent()
+        feedBobbing(engine, seconds = 10)
+        feedStill(engine, seconds = 1, startNs = 10_000_000_000L)
+        runCurrent()
+        job.cancel()
+
+        val steps = collected.filter { it.isStep }
+        assertTrue(steps.size in 19..21, "expected 20 ± 1 deferred steps, got ${steps.size}")
+        assertTrue(steps.zipWithNext().all { (a, b) -> b.tNs > a.tNs })
+        assertTrue(steps.zipWithNext().all { (a, b) -> b.distanceM > a.distanceM })
+        assertEquals(steps.size, steps.last().stepCount)
+    }
+
+    @Test
+    fun visualOffIsBitIdentical() = runTest {
+        val off = PdrEngine(visualAssist = false)
+        val on = PdrEngine(visualAssist = true)
+        off.start()
+        on.start()
+        val offUpdates = mutableListOf<app.simt.echo.platform.MotionUpdate>()
+        val onUpdates = mutableListOf<app.simt.echo.platform.MotionUpdate>()
+        val offJob = launch { off.updates.collect { offUpdates += it } }
+        val onJob = launch { on.updates.collect { onUpdates += it } }
+        runCurrent()
+        for (engine in listOf(off, on)) {
+            feedBobbing(engine, seconds = 10)
+            feedStill(engine, seconds = 1, startNs = 10_000_000_000L)
+        }
+        runCurrent()
+        offJob.cancel()
+        onJob.cancel()
+
+        val offSteps = offUpdates.filter { it.isStep }
+        val onSteps = onUpdates.filter { it.isStep }
+        assertEquals(offSteps.size, onSteps.size)
+        offSteps.zip(onSteps).forEach { (a, b) ->
+            assertEquals(a.tNs, b.tNs)
+            assertEquals(a.stepCount, b.stepCount)
+            assertEquals(a.distanceM, b.distanceM, 1e-12)
+        }
+    }
+
+    private fun feedBobbing(engine: PdrEngine, seconds: Int) {
+        val hz = 50
+        for (i in 0 until hz * seconds) {
+            val tSec = i.toDouble() / hz
+            val magnitude = 9.81 + 2.0 * sin(2.0 * PI * 2.0 * tSec)
+            engine.onAccelerometer(ImuSample((tSec * 1_000_000_000).toLong(), 0.0, 0.0, magnitude))
+        }
+    }
+
+    private fun feedStill(engine: PdrEngine, seconds: Int, startNs: Long) {
+        val hz = 50
+        for (i in 0 until hz * seconds) {
+            engine.onAccelerometer(ImuSample(startNs + i * 20_000_000L, 0.0, 0.0, 9.81))
+        }
+    }
 }

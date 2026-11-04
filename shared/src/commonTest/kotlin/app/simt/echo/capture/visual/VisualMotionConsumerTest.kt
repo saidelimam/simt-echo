@@ -305,7 +305,7 @@ class VisualMotionConsumerTest {
             TestTap(),
             TestInput(),
             intervalNs = INTERVAL_NS,
-            onEgo = { ego, tNs -> engine.onVisualEgo(ego, tNs) },
+            onEgo = { ego, tNs, reason -> engine.onVisualEgo(ego, tNs, reason = reason) },
         )
         assertTrue(consumer.start())
         engine.start()
@@ -333,7 +333,7 @@ class VisualMotionConsumerTest {
             TestTap(),
             TestInput(),
             intervalNs = INTERVAL_NS,
-            onEgo = { ego, tNs -> engine.onVisualEgo(ego, tNs) },
+            onEgo = { ego, tNs, reason -> engine.onVisualEgo(ego, tNs, reason = reason) },
         )
         assertTrue(consumer.start())
         engine.start()
@@ -345,6 +345,30 @@ class VisualMotionConsumerTest {
         )
         consumer.stop()
         engine.stop()
+    }
+
+    @Test
+    fun rejectedFrameReachesTheGateAsZeroConfidenceWithItsReason() {
+        var calls = 0
+        var reason = VisualReason.NONE
+        var confidence = 1.0
+        val input = TestInput().apply { mode = PoseMode.FLAT }
+        val consumer = VisualMotionConsumer(
+            TestTap(),
+            input,
+            intervalNs = INTERVAL_NS,
+            onEgo = { ego, _, why ->
+                calls++
+                confidence = ego.confidence01
+                reason = why
+            },
+        )
+        assertTrue(consumer.start())
+        consumer.onFrame(sample(world(), START, START_NS))
+        assertEquals(1, calls)
+        assertEquals(VisualReason.FLAT, reason)
+        assertEquals(0.0, confidence)
+        consumer.stop()
     }
 
     /**

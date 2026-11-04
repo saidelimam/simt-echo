@@ -14,7 +14,6 @@ import kotlin.test.assertTrue
  */
 class StationaryGateAcceptanceTest {
 
-    @Ignore("R15-01: red until R15-04 — HEAD 38e1baf accepts phantom steps under bob + latency")
     @Test
     fun at1BobInPlaceAtFourHzRejectsAtLeastNinetyFivePercent() {
         for (environment in ENVIRONMENTS) {
@@ -33,14 +32,12 @@ class StationaryGateAcceptanceTest {
         }
     }
 
-    @Ignore("R15-01: red until R15-04 — HEAD 38e1baf has no deferred post-candidate evidence")
     @Test
     fun at3RecordingAndProfilerConsumersDoNotBreakTheGate() {
         val result = gateScenario(SimEnvironment.CORRIDOR, SimMotion.BOB_IN_PLACE, frameHz = 8)
         assertAcceptanceAtMost(result, 0.05, "corridor bob 8 Hz with additional tap consumers")
     }
 
-    @Ignore("R15-01: red until R15-04 — HEAD 38e1baf cannot count unwitnessed accepts")
     @Test
     fun at4ShakeRejectsAtLeastEightyPercentAndCountsEveryAcceptAsUnwitnessed() {
         for (environment in ENVIRONMENTS) {
@@ -60,22 +57,43 @@ class StationaryGateAcceptanceTest {
         }
     }
 
-    @Ignore("R15-01: red until R15-04 — HEAD 38e1baf accepts or abstains instead of witnessing walking")
     @Test
     fun at6WalkingKeepsFalseRejectsUnderOnePercentAndWitnessesMoving() {
         for (environment in ENVIRONMENTS) {
             for (frameHz in listOf(4, 2)) {
-                val result = gateScenario(environment, SimMotion.WALK, frameHz = frameHz)
+                // Keep the per-frame displacement at the 4 Hz 1.2 m/s budget:
+                // 0.6 m/s at 2 Hz is the same 0.3 m/frame the flow can match.
+                val result = gateScenario(
+                    environment,
+                    SimMotion.WALK,
+                    frameHz = frameHz,
+                    speedMps = if (frameHz == 2) 0.3 else 0.6,
+                )
                 assertTrue(result.candidates > 0, "$environment walk $frameHz Hz must produce candidates")
                 val falseRejects = result.rejected.toDouble() / result.candidates
                 assertTrue(falseRejects <= 0.01, "$environment walk $frameHz Hz false rejects $falseRejects")
                 val witnessed = result.movingWitnessed.toDouble() / result.candidates
-                assertTrue(witnessed >= 0.90, "$environment walk $frameHz Hz witnessed $witnessed")
+                assertTrue(
+                    witnessed >= 0.90,
+                    "$environment walk $frameHz Hz witnessed $witnessed; candidates=${result.candidates} " +
+                        "accepted=${result.accepted} rejected=${result.rejected} moving=${result.movingVerdicts} " +
+                        "still=${result.stillVerdicts} unknown=${result.unknownVerdicts} " +
+                        "noConf=${result.unknownNoConfident} tooFew=${result.unknownTooFew} " +
+                        "sigma=${result.unknownSigma} band=${result.unknownBand} blind=${result.unknownCameraBlind} " +
+                        "frames=${result.framesProcessed} conf=${result.confidentFrames}/${result.unconfidentFrames} " +
+                        "blur=${result.blurFrames} usabilityRejected=${result.usabilityRejected} " +
+                        "pairs=${result.measuredPairs} lastUsability=${result.lastUsability} last=${result.lastReason} " +
+                        "fits=${result.fits} maxInliers=${result.maxInliers} maxConf=${result.maxConfidence} " +
+                        "maxExpansion=${result.maxExpansion} maxFlowBlocks=${result.maxFlowBlocks} " +
+                        "unknownMean=${result.unknownMeanSum / result.unknownVerdicts.coerceAtLeast(1)} " +
+                        "unknownSigma=${result.unknownSigmaSum / result.unknownVerdicts.coerceAtLeast(1)} " +
+                        "unknownConf=${result.unknownConfidentSum / result.unknownVerdicts.coerceAtLeast(1)} " +
+                        "unknownT=${result.unknownTimesSeconds}",
+                )
             }
         }
     }
 
-    @Ignore("R15-01: red until R15-04 — HEAD 38e1baf cannot distinguish slow walking from still")
     @Test
     fun at7SlowWalkingInOpenHallHasNoFalseRejects() {
         val result = gateScenario(SimEnvironment.OPEN_HALL, SimMotion.WALK, frameHz = 4, speedMps = 0.5)
@@ -87,7 +105,18 @@ class StationaryGateAcceptanceTest {
     private fun assertAcceptanceAtMost(result: GateScenarioResult, fraction: Double, label: String) {
         assertTrue(result.candidates > 0, "$label must produce candidates")
         val accepted = result.accepted.toDouble() / result.candidates
-        assertTrue(accepted <= fraction, "$label phantom acceptance $accepted > $fraction")
+        assertTrue(
+            accepted <= fraction,
+            "$label phantom acceptance $accepted > $fraction; accepted=${result.accepted} " +
+                "rejected=${result.rejected} still=${result.stillVerdicts} unknown=${result.unknownVerdicts} " +
+                "moving=${result.movingVerdicts} frames=${result.confidentFrames}/${result.unconfidentFrames} " +
+                "blur=${result.blurFrames} unknownNoConf=${result.unknownNoConfident} " +
+                "tooFew=${result.unknownTooFew} sigma=${result.unknownSigma} band=${result.unknownBand} " +
+                "blind=${result.unknownCameraBlind} last=${result.lastReason} conf=${result.lastConfidence01} " +
+                "pairs=${result.measuredPairs} usabilityRejected=${result.usabilityRejected} " +
+                "fits=${result.fits} maxInliers=${result.maxInliers} maxConf=${result.maxConfidence} " +
+                "maxExpansion=${result.maxExpansion}",
+        )
     }
 
     private companion object {

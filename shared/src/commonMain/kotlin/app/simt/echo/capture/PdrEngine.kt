@@ -91,6 +91,17 @@ class PdrEngine(
     /** Visual step gate (W16-04): rejects shake-in-place phantom steps and flags slow shuffles. */
     val stepGate = VisualStepGate()
 
+    private class PendingStep {
+        var tNs = 0L
+        var lengthM = 0.0
+        var priorLastStepNs = 0L
+        var hadPrior = false
+    }
+
+    private val pendingSteps = Array(PENDING_CAPACITY) { PendingStep() }
+    private var pendingHead = 0
+    private var pendingCount = 0
+
     override fun start() {
         gravity = 9.81
         signal = 0.0
@@ -111,6 +122,8 @@ class PdrEngine(
         magVert = null
         headingQuality.reset()
         stepGate.reset()
+        pendingHead = 0
+        pendingCount = 0
         running = true
     }
 
@@ -132,6 +145,7 @@ class PdrEngine(
     fun onRotation(sample: RotSample, wallNowNs: Long = sample.tNs) {
         if (!running) return
         val tNs = correctNs(sample.tNs, wallNowNs)
+        resolvePending(tNs)
         lastRotMatrix = sample.r.copyOf()
         val (heading, camera) = headingRad(sample.r, cameraAxis)
         val axisSwitched = camera != cameraAxis
@@ -157,12 +171,23 @@ class PdrEngine(
         headingQuality.onGyro(yawRateRadPerSec, correctNs(tNs, wallNowNs))
     }
 
-    /** Visual ego-motion feed (W16-03, W16-04); active only when [visualAssist] is enabled. */
-    fun onVisualEgo(ego: VisualEgo, tNs: Long, wallNowNs: Long = tNs) {
+    /**
+     * Visual ego-motion feed (W16-03, W16-04); active only when
+     * [visualAssist] is enabled. Rejected frames arrive with confidence 0 and
+     * their [VisualReason], so absence of evidence is distinguishable from a
+     * camera that cannot see. This call only records evidence; candidates are
+     * resolved on the IMU thread once a post-candidate frame or deadline lands.
+     */
+    fun onVisualEgo(
+        ego: VisualEgo,
+        tNs: Long,
+        wallNowNs: Long = tNs,
+        reason: app.simt.echo.capture.visual.VisualReason = app.simt.echo.capture.visual.VisualReason.NONE,
+    ) {
         if (!running || !visualAssist) return
         val correctedTNs = correctNs(tNs, wallNowNs)
         headingQuality.onVisualEgo(ego, correctedTNs)
-        if (stepGate.onVisualEgo(ego, correctedTNs) == StepGateVerdict.MISSED_STEP_SUSPECT) {
+        if (stepGate.onVisualEgo(ego, correctedTNs, reason) == StepGateVerdict.MISSED_STEP_SUSPECT) {
             _updates.tryEmit(snapshot(correctedTNs, isStep = false, missedStepSuspect = true))
         }
     }
@@ -192,6 +217,7 @@ class PdrEngine(
     fun onAccelerometer(sample: ImuSample, wallNowNs: Long = sample.tNs) {
         if (!running) return
         val tNs = correctNs(sample.tNs, wallNowNs)
+        resolvePending(tNs)
         val magnitude = sqrt(sample.ax * sample.ax + sample.ay * sample.ay + sample.az * sample.az)
         headingQuality.onAccelerometer(magnitude / GRAVITY, tNs)
         gravity += 0.02 * (magnitude - gravity)
@@ -219,20 +245,60 @@ class PdrEngine(
     }
 
     private fun acceptStep(tNs: Long) {
-        if (visualAssist && stepGate.evaluateStepCandidate(tNs) == StepGateVerdict.REJECTED_PHANTOM) {
-            amax = signal
-            amin = signal
-            return
-        }
-        headingQuality.onStep(tNs)
         val range = (amax - amin).coerceAtLeast(0.0)
         val length = (stepK * range.pow(0.25)).coerceIn(0.35, 0.95)
-        stepCount += 1
-        distanceM += length
+        val prior = lastStepNs
+        val priorExists = prior != null
         lastStepNs = tNs
         amax = signal
         amin = signal
+        if (!visualAssist) {
+            commitStep(tNs, length)
+            return
+        }
+        if (pendingCount == PENDING_CAPACITY) resolvePending(tNs, force = true)
+        val index = (pendingHead + pendingCount) % PENDING_CAPACITY
+        val pending = pendingSteps[index]
+        pending.tNs = tNs
+        pending.lengthM = length
+        pending.priorLastStepNs = prior ?: tNs
+        pending.hadPrior = priorExists
+        pendingCount++
+    }
+
+    private fun commitStep(tNs: Long, lengthM: Double) {
+        headingQuality.onStep(tNs)
+        stepCount += 1
+        distanceM += lengthM
         _updates.tryEmit(snapshot(tNs, isStep = true))
+    }
+
+    /**
+     * Resolves queued candidates in order. A candidate is decided when a frame
+     * captured at least [POST_CANDIDATE_NS] after it has arrived, or at
+     * [VERDICT_DEADLINE_NS]. MOVING accepts, STILL rejects, and UNKNOWN is
+     * fail-open; a late/missing witness while armed is counted.
+     */
+    private fun resolvePending(nowNs: Long, force: Boolean = false) {
+        while (pendingCount > 0) {
+            val pending = pendingSteps[pendingHead]
+            val postFrame = stepGate.lastSampleTimeNs() >= pending.tNs + POST_CANDIDATE_NS
+            val deadline = force || nowNs >= pending.tNs + VERDICT_DEADLINE_NS
+            if (!postFrame && !deadline) return
+            val verdict = stepGate.evaluateStepCandidate(pending.tNs)
+            val evidence = stepGate.lastEvidence
+            val cameraBlind = stepGate.cameraCannotSeeAt(nowNs) || stepGate.cameraCannotSeeAt(pending.tNs)
+            if (verdict == StepGateVerdict.ACCEPTED) {
+                if (evidence == VisualMotionEvidence.UNKNOWN && !cameraBlind) {
+                    stepGate.onUnwitnessed()
+                }
+                commitStep(pending.tNs, pending.lengthM)
+            } else if (pendingCount == 1) {
+                lastStepNs = if (pending.hadPrior) pending.priorLastStepNs else null
+            }
+            pendingHead = (pendingHead + 1) % PENDING_CAPACITY
+            pendingCount--
+        }
     }
 
     private fun snapshot(
@@ -257,5 +323,8 @@ class PdrEngine(
     private companion object {
         const val SOURCE = "echo_builtin_pdr"
         const val GRAVITY = 9.81
+        const val PENDING_CAPACITY = 4
+        const val POST_CANDIDATE_NS = 150_000_000L
+        const val VERDICT_DEADLINE_NS = 600_000_000L
     }
 }

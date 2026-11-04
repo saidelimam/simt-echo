@@ -58,9 +58,9 @@ class StepGateTest {
     fun meanBetweenStillCeilingAndMovingFloorIsUnknownNotStill() {
         val gate = VisualStepGate()
         gate.onVisual(0.0, 0.9, 1_000_000_000L, 0.001)
-        gate.onVisual(0.06, 0.9, 1_200_000_000L, 0.001)
+        gate.onVisual(0.07, 0.9, 1_200_000_000L, 0.001)
         gate.onVisual(0.0, 0.9, 1_400_000_000L, 0.001)
-        gate.onVisual(0.06, 0.9, 1_600_000_000L, 0.001)
+        gate.onVisual(0.07, 0.9, 1_600_000_000L, 0.001)
         assertEquals(VisualMotionEvidence.UNKNOWN, gate.evidenceAt(1_300_000_000L))
         assertEquals(StepGateVerdict.ACCEPTED, gate.evaluateStepCandidate(1_300_000_000L))
     }
@@ -161,17 +161,17 @@ class StepGateTest {
     }
 
     @Test
-    fun stepCandidateAcceptedWhenVisualConfidenceLowOrOutsideFourHundredMsWindow() {
+    fun stepCandidateAcceptedWhenVisualConfidenceLowOrOutsideWindow() {
         val gate = VisualStepGate()
         // Low confidence (0.2) with zero expansion still accepts the step.
         gate.onVisual(expansionPerSec = 0.0, confidence01 = 0.2, tNs = 1_000_000_000L)
         assertEquals(StepGateVerdict.ACCEPTED, gate.evaluateStepCandidate(1_100_000_000L))
 
-        // Confident zero expansion at t = 2.0 s rejects a step at t = 2.35 s (within 0.4 s)
-        // but accepts a step at t = 2.50 s (outside 0.4 s).
+        // Confident zero expansion at t = 2.0 s rejects a step at t = 2.35 s
+        // but accepts a step at t = 3.30 s (outside the declared 1.2 s window).
         gate.onVisual(expansionPerSec = 0.0, confidence01 = 0.9, tNs = 2_000_000_000L)
         assertEquals(StepGateVerdict.REJECTED_PHANTOM, gate.evaluateStepCandidate(2_350_000_000L))
-        assertEquals(StepGateVerdict.ACCEPTED, gate.evaluateStepCandidate(2_500_000_000L))
+        assertEquals(StepGateVerdict.ACCEPTED, gate.evaluateStepCandidate(3_300_000_000L))
     }
 
     @Test
