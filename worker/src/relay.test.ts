@@ -201,7 +201,7 @@ describe("W4-05 relay endpoints", () => {
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(sealed);
   });
 
-  it("lets another install redeem the code (the code is the capability)", async () => {
+  it("allows receiver install to download ciphertext uploaded by sender install", async () => {
     const bucket = new FakeBucket();
     const testEnv = await env(bucket);
     const sealed = ciphertext();

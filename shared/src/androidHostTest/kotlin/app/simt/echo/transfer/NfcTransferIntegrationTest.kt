@@ -1,6 +1,7 @@
 package app.simt.echo.transfer
 
 import app.simt.echo.Fixtures
+import app.simt.echo.bundle.BundleCodec
 import app.simt.echo.data.FileStore
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.platform.Endpoint
@@ -9,6 +10,7 @@ import app.simt.echo.platform.PeerTransport
 import app.simt.echo.platform.TransferProgress
 import app.simt.echo.platform.nfc.NfcInvitationReader
 import app.simt.echo.platform.nfc.NfcTransceiver
+import java.io.IOException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -105,11 +107,51 @@ class NfcTransferIntegrationTest {
         override fun stopOffer() = Unit
     }
 
+    /** A LAN that cannot reach the peer at all: campus Wi-Fi client isolation. */
+    private class IsolatedTransport : PeerTransport {
+        var fetches = 0
+
+        override val progress: Flow<TransferProgress> = MutableSharedFlow(extraBufferCapacity = 1)
+
+        override suspend fun offer(payload: ByteArray, token: String): Endpoint =
+            error("the receiver never offers")
+
+        override suspend fun fetch(endpoint: Endpoint, token: String): ByteArray {
+            fetches++
+            throw IOException("no route to host")
+        }
+
+        override fun stopOffer() = Unit
+    }
+
+    /** The cloud relay as the two installs see it: one bucket, one code. */
+    private class RelayStore(private val code: String = "ABCD234567") : RelayClient {
+        var uploaded: ByteArray? = null
+        var uploads = 0
+        var downloads = 0
+
+        override suspend fun upload(sealed: ByteArray): String {
+            uploads++
+            uploaded = sealed.copyOf()
+            return code
+        }
+
+        override suspend fun download(code: String): ByteArray {
+            downloads++
+            return uploaded ?: error("nothing was uploaded")
+        }
+    }
+
     private class Phone(val routes: RouteRepository, val store: FileStore)
 
     private val at = { 1_762_000_000_000L }
 
-    private fun sender(transport: PeerTransport, fileSystem: FakeFileSystem): Pair<TransferService, Phone> {
+    private fun sender(
+        transport: PeerTransport,
+        fileSystem: FakeFileSystem,
+        relay: RelayClient? = null,
+        peerRelayQualified: Boolean = false,
+    ): Pair<TransferService, Phone> {
         val store = FileStore(fileSystem, "/sender".toPath())
         val routes = RouteRepository(store)
         routes.save(Fixtures.L_ROUTE)
@@ -121,12 +163,18 @@ class NfcTransferIntegrationTest {
             store = store,
             randomBytes = { size -> ByteArray(size) { (it + 1).toByte() } },
             nowMs = at,
+            relay = relay,
+            peerRelayQualified = peerRelayQualified,
             ioDispatcher = Dispatchers.Unconfined,
         )
         return service to Phone(routes, store)
     }
 
-    private fun receiver(transport: PeerTransport): Pair<TransferService, Phone> {
+    private fun receiver(
+        transport: PeerTransport,
+        relay: RelayClient? = null,
+        peerRelayQualified: Boolean = false,
+    ): Pair<TransferService, Phone> {
         val store = FileStore(FakeFileSystem(), "/receiver".toPath())
         val routes = RouteRepository(store)
         val service = TransferService(
@@ -134,6 +182,8 @@ class NfcTransferIntegrationTest {
             routes = routes,
             store = store,
             nowMs = at,
+            relay = relay,
+            peerRelayQualified = peerRelayQualified,
             ioDispatcher = Dispatchers.Unconfined,
         )
         return service to Phone(routes, store)
@@ -278,6 +328,41 @@ class NfcTransferIntegrationTest {
         val expectedReads = (offer.qrUri.encodeToByteArray().size + NfcApduProtocol.MAX_READ_BYTES - 1) /
             NfcApduProtocol.MAX_READ_BYTES
         assertEquals(1 + expectedReads, transceiver.commands)
+    }
+
+    @Test
+    fun whenLanIsIsolatedTapWithRelayCodeFallsBackToRelayAndVerifiesBundle() = runTest {
+        val lan = LoopbackTransport()
+        val relay = RelayStore()
+        val (serviceA, _) = sender(lan, FakeFileSystem(), relay = relay, peerRelayQualified = true)
+        // A relay offer seals once and uploads the ciphertext under a code.
+        val offer = serviceA.offer(Fixtures.L_ROUTE.routeId, useRelay = true)
+        val payload = QrPayload.parse(offer.qrUri).getOrThrow()
+        assertEquals("ABCD234567", payload.relayCode, "the invitation carries a relay code")
+        assertEquals(1, relay.uploads)
+
+        // The real tap: actual presenter, actual reader, actual v1 invitation.
+        val apdu = presenter({ snapshotOf(offer.qrUri, generation = serviceA.offerGeneration) })
+        val reading = Reading(this)
+        reading.reader.arm(1)
+        reading.reader.start(1) { ScriptedTransceiver(apdu::respond) }
+        advanceUntilIdle()
+        val uri = reading.invitation()
+        assertEquals(offer.qrUri, uri)
+
+        // The receiver is on Wi-Fi that isolates peers: the LAN dial fails.
+        val isolated = IsolatedTransport()
+        val (serviceB, phoneB) = receiver(isolated, relay = relay, peerRelayQualified = true)
+        val body = serviceB.fetchPreview(uri!!)
+        serviceB.saveImported(body)
+        advanceUntilIdle()
+
+        assertEquals(1, isolated.fetches, "the LAN stays the first choice")
+        assertEquals(1, relay.downloads, "an unreachable peer falls back to the relay")
+        // The relay copy is the same AES-GCM bundle: it verifies, and only
+        // then does the route reach the receiving phone.
+        assertEquals(payload.sha8Hex, BundleCodec.sha8Hex(body))
+        assertEquals(Fixtures.L_ROUTE.name, phoneB.routes.get(Fixtures.L_ROUTE.routeId)?.name)
     }
 
     // ── adversarial boundaries ───────────────────────────────────
