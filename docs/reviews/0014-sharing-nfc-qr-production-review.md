@@ -40,7 +40,7 @@ common edge cases. Critical and High findings BLOCK production sign-off.
 | R14-06 | Complete | F6 QR scanner reliability & lifecycle (`QrScanner.android.kt`, `ShareQr.kt`, `ReceiveViewModel`): 1280×720 analysis resolution, cancel late camera bind on dispose, surface non-ECHO/corrupt QR failures with `"Scan again"` | High | qr | — | ea77ebbc975c834ee912fbc3b8d946aa5783fc20 |
 | R14-07 | Complete | F7 Post-download & 10-minute expiry desync (`ShareViewModel`, `KtorLanTransport`): unpublish NFC on download/expiry, offer `"Share again"` after download/expiry, and wire `expireOffer()` timer | High | share | R14-05 | b16ba34dcc1d22d11aeb3c30a4a16bf91eee4ff4 |
 | R14-08 | Complete | F8 Missing NFC contact & transfer UX (`ReceiveViewModel`, `ReceiveScreen`, `NfcTapPanel`): wire receiver `Haptics`, render `"Hold still…"` on `NfcEvent.Reading`, and `"Connected — you can separate the phones"` on fetch | Medium | ux | R14-04 | 2ed1d9319926021ca93a05cedefd1fe86eba7e96 |
-| R14-09 | Queued | F9 Cross-install cloud relay qualification (`worker/src/relay.ts`, `TransferService`, `ShareScreen`): capability-based relay GET, `etagDoesNotMatch: "*"`, device-key auth, and `peerRelayQualified = true` fallback | High | relay | R14-01 |  |
+| R14-09 | Complete | F9 Cross-install cloud relay qualification (`worker/src/relay.ts`, `TransferService`, `ShareScreen`): capability-based relay GET, `etagDoesNotMatch: "*"`, device-key auth, and `peerRelayQualified = true` fallback | High | relay | R14-01 | ef8a418eaf0050b8cf89b29a2eed05fdad3f1e5b |
 | R14-10 | Queued | F10 Two-phone hardware qualification (`docs/testing/nfc-sharing.md`, W21-05): execute and record the A1–D4 matrix across two physical Android devices | High | qa | R14-01..R14-09 |  |
 
 ---
