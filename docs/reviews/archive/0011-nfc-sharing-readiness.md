@@ -1,5 +1,7 @@
 # Review 0011 — ECHO Tap (NFC + QR sharing) readiness
 
+Status: **complete** · archived 2026-11-04
+
 Date: 2026-11-03 · Plan: [0005](../plans/0005-echo-nfc-sharing.md) · Slices: W20-01 … W21-04
 
 **Verdict: APPROVE WITH RESIDUAL RISK.**
