@@ -114,7 +114,9 @@ class RouteDetailAlignJourneyTest {
         compose.onNodeWithText("Stand here. Match this view.").assertIsDisplayed()
         compose.onNodeWithContentDescription("View to match").assertIsDisplayed()
         compose.onNodeWithText("No start photo for this route").assertDoesNotExist()
-        compose.onNodeWithText("Live preview").assertIsDisplayed()
+        // The pip is named once by its content description (R13-02); the
+        // visible label above it is decorative.
+        compose.onNodeWithContentDescription("Live preview").assertIsDisplayed()
         assertPreviewSitsInTheBottomRight()
     }
 

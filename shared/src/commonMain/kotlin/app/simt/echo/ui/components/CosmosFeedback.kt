@@ -15,6 +15,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -28,12 +30,16 @@ import app.simt.echo.ui.theme.EchoSpace16
 
 const val CosmosBannerTag = "CosmosBanner"
 
-/** Banner kinds with a text mark so kind never rides on hue alone. */
-enum class CosmosBannerKind(val mark: String) {
-    Info("i"),
-    Warning("!"),
-    Error("×"),
-    Success("✓"),
+/**
+ * Banner kinds with a text mark so kind never rides on hue alone. The mark
+ * is decorative on screen and spoken as [spokenLabel], never as the raw
+ * character (review 0013 F2).
+ */
+enum class CosmosBannerKind(val mark: String, val spokenLabel: String) {
+    Info("i", "Information"),
+    Warning("!", "Warning"),
+    Error("×", "Error"),
+    Success("✓", "Success"),
 }
 
 /**
@@ -62,7 +68,13 @@ fun CosmosBanner(
             horizontalArrangement = Arrangement.spacedBy(EchoSpace12),
             modifier = Modifier.padding(horizontal = EchoSpace16, vertical = EchoSpace12),
         ) {
-            Text(text = kind.mark, style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = kind.mark,
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.clearAndSetSemantics {
+                    contentDescription = kind.spokenLabel
+                },
+            )
             Text(
                 text = message,
                 style = MaterialTheme.typography.bodyMedium,

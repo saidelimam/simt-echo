@@ -13,9 +13,11 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.assertIsFocused
@@ -318,7 +320,9 @@ class CosmosComponentsTest {
         compose.onNodeWithText("Landmarks").performClick()
         compose.waitForIdle()
         assertTrue(selected)
-        compose.onNodeWithText("✓").assertIsDisplayed()
+        // The tick is decorative (R13-02); selection is the exposed state.
+        compose.onNodeWithTag("$CosmosChipTag:Landmarks").assertIsSelected()
+        compose.onAllNodesWithText("✓", useUnmergedTree = true).assertCountEquals(0)
     }
 
     @Test
