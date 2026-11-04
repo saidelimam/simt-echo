@@ -1,6 +1,8 @@
 package app.simt.echo.ui.components
 
 import androidx.compose.foundation.border
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.sizeIn
@@ -46,6 +48,8 @@ fun CosmosTextField(
     errorText: String? = null,
     supportingText: String? = null,
     singleLine: Boolean = true,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    keyboardActions: KeyboardActions = KeyboardActions.Default,
 ) {
     val shape = MaterialTheme.shapes.small
     val extras = EchoExtras
@@ -58,6 +62,8 @@ fun CosmosTextField(
             enabled = enabled,
             isError = isError,
             singleLine = singleLine,
+            keyboardOptions = keyboardOptions,
+            keyboardActions = keyboardActions,
             shape = shape,
             supportingText = {
                 when {

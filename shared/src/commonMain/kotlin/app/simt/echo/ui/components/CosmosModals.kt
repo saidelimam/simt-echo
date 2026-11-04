@@ -1,5 +1,7 @@
 package app.simt.echo.ui.components
 
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -105,6 +107,7 @@ fun CosmosSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = EchoSpace24),
             verticalArrangement = Arrangement.spacedBy(EchoSpace12),
             horizontalAlignment = Alignment.CenterHorizontally,
