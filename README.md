@@ -9,6 +9,12 @@ navigates a friend along it — turn cues, landmark AR overlays, QR checkpoints.
 
 Developed for the **Meta AI Hackathon 2026** by Said Elimam.
 
+## Platforms
+
+- **Android** — current: the phone app (`androidApp/`)
+- **Wear OS** — soon: companion watch (paired haptics, `wear/`)
+- **iOS** — soon: the shared KMP library already compiles for iOS; the app is next
+
 ## Legal
 
 - [Privacy Policy](docs/legal/privacy-policy.md)
