@@ -376,13 +376,34 @@ class SettingsViewModelTest {
         assertEquals("Nothing to delete.", vm.ui.value.deleteNote)
     }
 
+
+    /**
+     * An empty phone still offers Delete all: the device record on the server
+     * is one of the things it erases (R12-09).
+     */
+    @Test
+    fun deleteAllOffersTheDeviceRecordWhenThePhoneIsEmpty() {
+        val vm = fullVm()
+        assertEquals(1, vm.ui.value.deletableItems)
+        assertTrue(vm.ui.value.canDeleteAll)
+
+        vm.deleteAll()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(1, api.deviceDeletes)
+        assertEquals(
+            "Deleted this install's cloud copies and device record.",
+            vm.ui.value.deleteNote,
+        )
+    }
+
     /**
      * Delete all is a promise to erase something: over an empty store the
      * row stays disabled, and it disables itself once a delete empties it.
      */
     @Test
     fun deleteAllStaysDisabledUntilThereIsSomethingToErase() {
-        val empty = fullVm()
+        val empty = localVm()
         assertEquals(0, empty.ui.value.deletableItems)
         assertFalse(empty.ui.value.canDeleteAll, "an empty store offers nothing to delete")
 
@@ -397,7 +418,7 @@ class SettingsViewModelTest {
                 startPhoto = "start.jpg",
             ),
         )
-        val vm = fullVm()
+        val vm = localVm()
         assertEquals(1, vm.ui.value.deletableItems)
         assertTrue(vm.ui.value.canDeleteAll, "a saved draft is something to delete")
 
@@ -414,7 +435,7 @@ class SettingsViewModelTest {
         trials.save(trial("t1"))
         store.writeText("exports/trials.csv", "a")
 
-        val vm = fullVm()
+        val vm = localVm()
 
         assertEquals(2, vm.ui.value.deletableItems)
         assertTrue(vm.ui.value.canDeleteAll)

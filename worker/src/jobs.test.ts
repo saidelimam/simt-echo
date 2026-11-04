@@ -909,7 +909,10 @@ describe("v1.1 resumable uploads (W11-05)", () => {
       `/v1/uploads/${uploadId}/${name}`,
       {
         method: "PUT",
-        headers: { ...auth, "Content-Type": "application/octet-stream" },
+        headers: {
+          ...auth,
+          "Content-Type": name.startsWith("clip") ? "video/mp4" : "image/jpeg",
+        },
         body: new Blob([mediaOf(name, data)]),
       },
       env,

@@ -2,8 +2,11 @@ package app.simt.echo.transfer
 
 import app.simt.echo.data.FileStore
 import io.ktor.client.HttpClient
+import io.ktor.client.request.get
+import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.statement.bodyAsText
+import io.ktor.http.HttpHeaders
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
@@ -71,12 +74,20 @@ suspend fun mintDeviceKey(http: HttpClient, baseUrl: String): String {
 class FileDeviceCredentials(
     private val store: FileStore,
     private val mint: suspend () -> String,
+    /**
+     * Checks a stored key against the server once per process (R12-09): a
+     * record aged out by the `expire-devices` rule answers 401 to a key that
+     * still sits in app storage, and without this the install would be locked
+     * out until its data was cleared. Absent means "trust what is stored".
+     */
+    private val verify: (suspend (String) -> Boolean)? = null,
 ) : DeviceCredentials {
     private val mutex = Mutex()
     private var cached: String? = null
 
     override suspend fun bearer(): String = mutex.withLock {
-        cached ?: readStored() ?: mintAndStore()
+        cached ?: readStored()?.let { stored -> if (verify == null || verify(stored)) stored else null }
+            ?: mintAndStore()
     }
 
     override suspend fun rotate(): String = mutex.withLock { mintAndStore() }
@@ -87,7 +98,7 @@ class FileDeviceCredentials(
     }
 
     private fun readStored(): String? =
-        store.readText(PATH)?.trim()?.takeIf { DEVICE_KEY.matches(it) }?.also { cached = it }
+        store.readText(PATH)?.trim()?.takeIf { DEVICE_KEY.matches(it) }
 
     private suspend fun mintAndStore(): String {
         val key = mint()
@@ -100,5 +111,25 @@ class FileDeviceCredentials(
     private companion object {
         /** Relative to the app-private data directory; never exported. */
         const val PATH = "device/credential"
+    }
+}
+
+/**
+ * True unless the server rejects [key] with 401. The probe is a read of a
+ * session id that cannot exist, so a live key gets a 404 and nothing is
+ * touched. A transport failure counts as accepted: an offline launch must
+ * not burn the key it already holds.
+ */
+suspend fun deviceKeyAccepted(http: HttpClient, baseUrl: String, key: String): Boolean {
+    if (baseUrl.isBlank()) return true
+    return try {
+        val response = http.get(baseUrl.trimEnd('/') + "/v1/uploads/00000000-0000-0000-0000-000000000000") {
+            header(HttpHeaders.Authorization, "Bearer $key")
+        }
+        response.status.value != 401
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        true
     }
 }

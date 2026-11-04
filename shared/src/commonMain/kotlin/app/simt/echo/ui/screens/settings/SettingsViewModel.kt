@@ -58,7 +58,7 @@ data class SettingsUi(
     val deleteNote: String? = null,
     /** Anchored legs folded into the learned stride (W12-03). */
     val strideLearnedLegs: Int = 0,
-    /** Files Delete all would erase right now; 0 disables the row (W8-11). */
+    /** Items Delete all would erase right now; 0 disables the row (W8-11). */
     val deletableItems: Int = 0,
 ) {
     /**
@@ -321,9 +321,15 @@ class SettingsViewModel(
         false
     }
 
-    /** Saved routes, drafts and trial/export files Delete all would erase. */
+    /**
+     * Routes, drafts, trial/export files Delete all would erase — plus this
+     * install's device record, which Delete all also erases (R12-09). That is
+     * what keeps the row usable when the phone holds nothing and the server
+     * still holds a record.
+     */
     private fun deletableCount(): Int =
-        (routes?.list()?.size ?: 0) + (drafts?.listDraftIds()?.size ?: 0) + trials.deletableFileCount()
+        (routes?.list()?.size ?: 0) + (drafts?.listDraftIds()?.size ?: 0) +
+            trials.deletableFileCount() + (if (api != null) 1 else 0)
 }
 
 /** Settings line for the learned stride (W12-03): "1 leg", "3 legs". */

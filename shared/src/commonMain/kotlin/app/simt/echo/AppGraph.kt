@@ -26,6 +26,7 @@ import app.simt.echo.transfer.DeviceCredentials
 import app.simt.echo.transfer.EchoApiClient
 import app.simt.echo.transfer.FileDeviceCredentials
 import app.simt.echo.transfer.KtorRelayClient
+import app.simt.echo.transfer.deviceKeyAccepted
 import app.simt.echo.transfer.mintDeviceKey
 import app.simt.echo.transfer.NetworkGate
 import app.simt.echo.transfer.OfflineNetworkGate
@@ -168,7 +169,13 @@ class AppGraph(
      * The retired shared `ECHO_APP_TOKEN` is never read.
      */
     val deviceCredentials: DeviceCredentials by lazy {
-        FileDeviceCredentials(fileStore) { mintDeviceKey(httpClient, apiBaseUrl) }
+        FileDeviceCredentials(
+            fileStore,
+            mint = { mintDeviceKey(httpClient, apiBaseUrl) },
+            // R12-09: a key whose record aged out is re-minted instead of
+            // failing every call for the life of the install.
+            verify = { key -> deviceKeyAccepted(httpClient, apiBaseUrl, key) },
+        )
     }
 
     /** Cloud API client (W3-02): consent upload, job polling, deletion. */
