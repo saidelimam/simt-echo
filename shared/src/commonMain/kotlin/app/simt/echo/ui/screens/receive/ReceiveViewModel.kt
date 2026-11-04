@@ -173,7 +173,9 @@ class ReceiveViewModel(
         if (closed) return
         if (attemptId != state.generation.toLong()) return
         if (state.fetching || state.preview != null) return
-        if (source == PairingSource.QR && !uri.startsWith(ECHO_QR_SCHEME)) return
+        // No scheme pre-filter: a foreign or corrupt code goes through the
+        // same bounded parser as an NFC read, so it fails with typed
+        // InvalidInvitation and keeps a "Scan again" recovery (R14-06).
         if (handledUri == uri) return
         handledUri = uri
 
@@ -504,9 +506,5 @@ class ReceiveViewModel(
 
     override fun onCleared() {
         close()
-    }
-
-    private companion object {
-        const val ECHO_QR_SCHEME = "simt-echo://"
     }
 }

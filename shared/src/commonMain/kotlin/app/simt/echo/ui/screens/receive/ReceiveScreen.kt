@@ -37,6 +37,7 @@ import app.simt.echo.platform.FileSharing
 import app.simt.echo.platform.NfcPairingController
 import app.simt.echo.platform.QrScannerView
 import app.simt.echo.platform.UnavailableNfcPairingController
+import app.simt.echo.transfer.PairingFailure
 import app.simt.echo.transfer.PairingMethod
 import app.simt.echo.transfer.PairingRole
 import app.simt.echo.transfer.TransferService
@@ -209,14 +210,8 @@ fun ReceiveScreen(
                         onAction = viewModel::rescan,
                     )
                 } else if (ui.method == PairingMethod.QR) {
-                    // A rejected invitation is not network advice: it keeps
-                    // its own typed copy, and retry stays in this method.
                     ui.pairingFailure?.let { failure ->
-                        Text(
-                            text = pairingFailureCopy(PairingRole.RECEIVE, failure),
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.error,
-                        )
+                        QrFailureState(failure = failure, onRescan = viewModel::rescan)
                     }
                 }
                 CosmosSecondaryButton(
@@ -232,6 +227,23 @@ fun ReceiveScreen(
             }
         }
     }
+}
+
+/**
+ * A rejected QR invitation (R14-06): a corrupt or foreign code keeps its own
+ * typed copy and one action back. "Scan again" advances the generation, which
+ * remounts the scanner, so the failure is never a dead end.
+ */
+@Composable
+internal fun QrFailureState(
+    failure: PairingFailure,
+    onRescan: () -> Unit,
+) {
+    CosmosErrorState(
+        message = pairingFailureCopy(PairingRole.RECEIVE, failure),
+        actionLabel = PairingCopy.RECEIVE_SCAN_AGAIN,
+        onAction = onRescan,
+    )
 }
 
 /** One line naming how this route is arriving (plan 0005 §2). */

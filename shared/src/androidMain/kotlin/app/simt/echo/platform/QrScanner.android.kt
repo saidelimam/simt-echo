@@ -2,11 +2,14 @@ package app.simt.echo.platform
 
 import android.annotation.SuppressLint
 import android.util.Log
+import android.util.Size
 import androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA
 import androidx.camera.compose.CameraXViewfinder
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
 import androidx.camera.core.SurfaceRequest
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -65,6 +68,11 @@ actual fun QrScannerView(
     val analysis = remember {
         ImageAnalysis.Builder()
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            // The camera default is 640x480: an ECHO v1 URI at High error
+            // correction with the centre sigil is a dense 73x73..89x89
+            // module code, so modules land at ~2 px and indoor scans fail
+            // (R14-06). 720p makes them readable at arm's length.
+            .setResolutionSelector(QR_ANALYSIS_RESOLUTION)
             .build()
     }
     val preview = remember { Preview.Builder().build() }
@@ -85,8 +93,12 @@ actual fun QrScannerView(
             val input = InputImage.fromMediaImage(mediaImage, proxy.imageInfo.rotationDegrees)
             scanner.process(input)
                 .addOnSuccessListener { barcodes ->
-                    val uri = barcodes.mapNotNull { it.rawValue }
-                        .firstOrNull { it.startsWith(ECHO_QR_SCHEME) }
+                    // Every code is delivered, not just `simt-echo://`: a
+                    // foreign or corrupt one has to reach the bounded parser
+                    // so the screen can say "This isn't an ECHO share" and
+                    // offer "Scan again" instead of silently ignoring the
+                    // scan (R14-06).
+                    val uri = barcodes.firstNotNullOfOrNull { it.rawValue }
                     if (uri != null && delivered.compareAndSet(false, true)) {
                         onScanned(uri)
                     }
@@ -94,10 +106,15 @@ actual fun QrScannerView(
                 .addOnCompleteListener { proxy.close() }
         }
         preview.setSurfaceProvider { request = it }
+        // The provider future completes on the main executor, possibly after
+        // this composition is gone (switched to NFC). Binding then would open
+        // the camera behind the tap panel (R14-06).
+        val disposed = AtomicBoolean(false)
         val providerFuture = ProcessCameraProvider.getInstance(context)
         val mainExecutor = ContextCompat.getMainExecutor(context)
         providerFuture.addListener(
             {
+                if (disposed.get()) return@addListener
                 try {
                     providerFuture.get().bindToLifecycle(lifecycleOwner, DEFAULT_BACK_CAMERA, preview, analysis)
                 } catch (e: Exception) {
@@ -107,6 +124,7 @@ actual fun QrScannerView(
             mainExecutor,
         )
         onDispose {
+            disposed.set(true)
             preview.setSurfaceProvider(null)
             analysis.clearAnalyzer()
             scanner.close()
@@ -127,5 +145,15 @@ actual fun QrScannerView(
 
 private const val TAG = "EchoQrScanner"
 
-/** ECHO pairing URIs; anything else in view is not ours to handle. */
-private const val ECHO_QR_SCHEME = "simt-echo://"
+/**
+ * Analysis resolution for the pairing scanner: 720p, or the closest higher
+ * camera mode then the closest lower one. Never the 640x480 default.
+ */
+private val QR_ANALYSIS_RESOLUTION: ResolutionSelector = ResolutionSelector.Builder()
+    .setResolutionStrategy(
+        ResolutionStrategy(
+            Size(1280, 720),
+            ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
+        ),
+    )
+    .build()

@@ -344,6 +344,29 @@ class ReceivePairingViewModelTest {
     }
 
     @Test
+    fun aForeignQrIsRejectedAndRescanAcceptsTheNextCode() = runTest(dispatcher) {
+        val rig = rig()
+        val offer = rig.offer()
+        val vm = viewModel(rig)
+        advanceUntilIdle()
+
+        // A code from another app, or a corrupt ECHO one: the same bounded
+        // parser rejects it, and nothing reaches the network (R14-06).
+        vm.onScanned("https://example.com")
+        advanceUntilIdle()
+        assertEquals(PairingFailure.InvalidInvitation, vm.ui.value.pairingFailure)
+        assertEquals(0, rig.transport.fetches)
+
+        // "Scan again" advances the generation, so the next code is accepted.
+        vm.rescan()
+        advanceUntilIdle()
+        vm.onScanned(offer)
+        advanceUntilIdle()
+        assertNull(vm.ui.value.pairingFailure)
+        assertEquals(Fixtures.L_ROUTE.name, vm.ui.value.preview?.name)
+    }
+
+    @Test
     fun aTapTimeoutSaysNoTapYetAndStopsPolling() = runTest(dispatcher) {
         // W20-05 accept: 20 s without a completed invitation stops polling and
         // leaves QR recovery behind; it never re-arms itself in a loop.
