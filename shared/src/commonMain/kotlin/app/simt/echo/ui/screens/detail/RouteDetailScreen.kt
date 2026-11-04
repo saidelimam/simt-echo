@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
@@ -17,13 +18,19 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.transfer.CloudApi
 import app.simt.echo.transfer.TransferService
+import app.simt.echo.ui.components.CosmosDialog
+import app.simt.echo.ui.components.CosmosEmptyState
 import app.simt.echo.ui.components.CosmosPrimaryButton
+import app.simt.echo.ui.components.CosmosRecordRow
+import app.simt.echo.ui.components.CosmosRecordRows
 import app.simt.echo.ui.components.CosmosSecondaryButton
+import app.simt.echo.ui.components.CropImage
 import app.simt.echo.ui.copy.MISSING_ROUTE_ERROR
 import app.simt.echo.ui.copy.UNTITLED_WALK
 import app.simt.echo.ui.motion.echoSharedElement
@@ -83,12 +90,13 @@ fun RouteDetailScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         if (route == null) {
-            Text(text = MISSING_ROUTE_ERROR.whatHappened, style = MaterialTheme.typography.titleLarge)
-            Text(
-                text = "${MISSING_ROUTE_ERROR.whatsSafe} ${MISSING_ROUTE_ERROR.nextAction}",
-                style = MaterialTheme.typography.bodyLarge,
+            CosmosEmptyState(
+                title = MISSING_ROUTE_ERROR.whatHappened,
+                body = "${MISSING_ROUTE_ERROR.whatsSafe} ${MISSING_ROUTE_ERROR.nextAction}",
+                actionLabel = "Back home",
+                onAction = onBack,
+                modifier = Modifier.fillMaxWidth(),
             )
-            CosmosPrimaryButton(label = "Back home", onClick = onBack, modifier = Modifier.fillMaxWidth())
             return@Column
         }
         // Hero (W13-03): the route's own sigil traces itself in above its
@@ -118,14 +126,34 @@ fun RouteDetailScreen(
                 textAlign = TextAlign.Center,
             )
         }
-        route.landmarks.forEach { landmark ->
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(text = landmark.title, style = MaterialTheme.typography.titleMedium)
-                if (landmark.cue.isNotBlank()) {
-                    Text(text = landmark.cue, style = MaterialTheme.typography.bodyMedium)
+        // Landmarks use the record grammar: crop, name, cue and the node
+        // distance, instead of two bare Texts (review 0013 F8).
+        val landmarkRows: List<@Composable () -> Unit> =
+            route.landmarks.map { landmark ->
+                {
+                    val crop = landmark.cropAssetId?.let { routes.readAsset(routeId, it) }
+                    val atM = route.nodes.firstOrNull { it.id == landmark.nodeId }?.atDistanceM
+                    CosmosRecordRow(
+                        title = landmark.title,
+                        subtitle = listOfNotNull(
+                            landmark.cue.takeIf { it.isNotBlank() },
+                            atM?.let { "at ${it.roundToInt()} m" },
+                        ).joinToString(" · ").ifBlank { null },
+                        leading = crop?.let { bytes ->
+                            {
+                                CropImage(
+                                    bytes = bytes,
+                                    contentDescription = landmark.title,
+                                    modifier = Modifier
+                                        .size(56.dp)
+                                        .clip(MaterialTheme.shapes.small),
+                                )
+                            }
+                        },
+                    )
                 }
             }
-        }
+        CosmosRecordRows(rows = landmarkRows)
         CosmosPrimaryButton(
             label = "Navigate",
             onClick = { onNavigate(routeId) },
@@ -168,26 +196,27 @@ fun RouteDetailScreen(
         deleteError?.let {
             Text(text = it, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.error)
         }
-        if (!confirmDelete) {
-            CosmosSecondaryButton(
-                label = "Delete route",
-                onClick = { confirmDelete = true },
-                modifier = Modifier.fillMaxWidth(),
-            )
-        } else {
-            CosmosPrimaryButton(
-                label = "Confirm delete",
-                onClick = {
+        CosmosSecondaryButton(
+            label = "Delete route",
+            onClick = { confirmDelete = true },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (confirmDelete) {
+            // Destructive confirms go through the shared dialog, whose
+            // primary renders on the danger channel (review 0013 F8).
+            CosmosDialog(
+                title = "Delete this route?",
+                body = "The saved walk, its landmarks and its crops are removed from this phone. This cannot be undone.",
+                primaryLabel = "Delete route",
+                onPrimary = {
                     transferService?.deletePlainExportsFor(routeId)
                     routes.delete(routeId)
                     onDeleted()
                 },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            CosmosSecondaryButton(
-                label = "Keep route",
-                onClick = { confirmDelete = false },
-                modifier = Modifier.fillMaxWidth(),
+                onDismiss = { confirmDelete = false },
+                secondaryLabel = "Keep route",
+                onSecondary = { confirmDelete = false },
+                destructive = true,
             )
         }
     }

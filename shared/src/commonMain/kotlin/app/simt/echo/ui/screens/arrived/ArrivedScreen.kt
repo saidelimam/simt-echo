@@ -11,9 +11,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -22,6 +22,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.data.TrialRepository
@@ -29,6 +31,7 @@ import app.simt.echo.model.NodeType
 import app.simt.echo.model.Trial
 import app.simt.echo.ui.components.CosmosSecondaryButton
 import app.simt.echo.ui.components.CosmosSuccessState
+import app.simt.echo.ui.components.CosmosTextField
 import app.simt.echo.ui.components.CosmosTertiaryButton
 import app.simt.echo.ui.components.oneDecimal
 import app.simt.echo.ui.copy.UNTITLED_WALK
@@ -125,29 +128,32 @@ private fun TrialForm(trialId: String, trials: TrialRepository) {
         modifier = Modifier.fillMaxWidth(),
     ) {
         Text(text = "Field trial (${existing.mode})", style = MaterialTheme.typography.titleMedium)
-        OutlinedTextField(
+        CosmosTextField(
+            label = "Lighting",
             value = lighting,
             onValueChange = { lighting = it; saved = false },
-            label = { Text("Lighting") },
-            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
         )
-        OutlinedTextField(
+        CosmosTextField(
+            label = "Holding style",
             value = holding,
             onValueChange = { holding = it; saved = false },
-            label = { Text("Holding style") },
-            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
         )
-        OutlinedTextField(
+        CosmosTextField(
+            label = "Mistaken confirmations",
             value = mistaken,
             onValueChange = { mistaken = it.filter(Char::isDigit); saved = false },
-            label = { Text("Mistaken confirmations") },
-            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Number,
+                imeAction = ImeAction.Next,
+            ),
         )
-        OutlinedTextField(
+        CosmosTextField(
+            label = "Notes",
             value = notes,
             onValueChange = { notes = it; saved = false },
-            label = { Text("Notes") },
-            modifier = Modifier.fillMaxWidth(),
+            singleLine = false,
         )
         CosmosSecondaryButton(
             label = if (saved) "Trial saved" else "Save trial",
