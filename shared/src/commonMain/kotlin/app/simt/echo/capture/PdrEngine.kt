@@ -1,6 +1,8 @@
 package app.simt.echo.capture
 
 import app.simt.echo.capture.visual.VisualEgo
+import app.simt.echo.capture.visual.VisualEgoInbox
+import app.simt.echo.capture.visual.VisualReason
 import app.simt.echo.platform.MotionSource
 import app.simt.echo.platform.MotionUpdate
 import kotlinx.coroutines.flow.Flow
@@ -102,6 +104,10 @@ class PdrEngine(
     private var pendingHead = 0
     private var pendingCount = 0
 
+    private val visualInbox = VisualEgoInbox(VISUAL_INBOX_CAPACITY)
+    private val visualSample = VisualEgoInbox.Sample()
+    private var lastEmittedNs = Long.MIN_VALUE
+
     override fun start() {
         gravity = 9.81
         signal = 0.0
@@ -124,6 +130,8 @@ class PdrEngine(
         stepGate.reset()
         pendingHead = 0
         pendingCount = 0
+        visualInbox.reset()
+        lastEmittedNs = Long.MIN_VALUE
         running = true
     }
 
@@ -145,6 +153,7 @@ class PdrEngine(
     fun onRotation(sample: RotSample, wallNowNs: Long = sample.tNs) {
         if (!running) return
         val tNs = correctNs(sample.tNs, wallNowNs)
+        drainVisualInbox()
         resolvePending(tNs)
         lastRotMatrix = sample.r.copyOf()
         val (heading, camera) = headingRad(sample.r, cameraAxis)
@@ -154,7 +163,7 @@ class PdrEngine(
         val rawYaw = wrapPi(heading - origin)
         headingQuality.onYaw(rawYaw, tNs, axisSwitched)
         yawRad = if (visualAssist) headingQuality.correctedYaw(rawYaw) else rawYaw
-        _updates.tryEmit(snapshot(tNs, isStep = false))
+        emit(snapshot(tNs, isStep = false))
     }
 
     /** Device-frame gyroscope feed (W16-03); projected onto world-up once rotation is known. */
@@ -175,21 +184,17 @@ class PdrEngine(
      * Visual ego-motion feed (W16-03, W16-04); active only when
      * [visualAssist] is enabled. Rejected frames arrive with confidence 0 and
      * their [VisualReason], so absence of evidence is distinguishable from a
-     * camera that cannot see. This call only records evidence; candidates are
-     * resolved on the IMU thread once a post-candidate frame or deadline lands.
+     * camera that cannot see. This call only copies the result into the
+     * single-writer inbox; the IMU thread applies it.
      */
     fun onVisualEgo(
         ego: VisualEgo,
         tNs: Long,
         wallNowNs: Long = tNs,
-        reason: app.simt.echo.capture.visual.VisualReason = app.simt.echo.capture.visual.VisualReason.NONE,
+        reason: VisualReason = VisualReason.NONE,
     ) {
         if (!running || !visualAssist) return
-        val correctedTNs = correctNs(tNs, wallNowNs)
-        headingQuality.onVisualEgo(ego, correctedTNs)
-        if (stepGate.onVisualEgo(ego, correctedTNs, reason) == StepGateVerdict.MISSED_STEP_SUSPECT) {
-            _updates.tryEmit(snapshot(correctedTNs, isStep = false, missedStepSuspect = true))
-        }
+        visualInbox.publish(tNs, wallNowNs, ego, reason)
     }
 
     fun onPressure(sample: PressureSample) {
@@ -217,6 +222,7 @@ class PdrEngine(
     fun onAccelerometer(sample: ImuSample, wallNowNs: Long = sample.tNs) {
         if (!running) return
         val tNs = correctNs(sample.tNs, wallNowNs)
+        drainVisualInbox()
         resolvePending(tNs)
         val magnitude = sqrt(sample.ax * sample.ax + sample.ay * sample.ay + sample.az * sample.az)
         headingQuality.onAccelerometer(magnitude / GRAVITY, tNs)
@@ -270,7 +276,26 @@ class PdrEngine(
         headingQuality.onStep(tNs)
         stepCount += 1
         distanceM += lengthM
-        _updates.tryEmit(snapshot(tNs, isStep = true))
+        emit(snapshot(tNs, isStep = true))
+    }
+
+    /** Applies queued visual samples on the IMU thread, never on analysis. */
+    private fun drainVisualInbox() {
+        if (!visualAssist) return
+        while (visualInbox.poll(visualSample)) {
+            val frameNs = correctNs(visualSample.tNs, visualSample.wallNowNs)
+            headingQuality.onVisualEgo(visualSample.ego, frameNs)
+            if (stepGate.onVisualEgo(visualSample.ego, frameNs, visualSample.reason) == StepGateVerdict.MISSED_STEP_SUSPECT) {
+                emit(snapshot(maxOf(lastEmittedNs, frameNs), isStep = false, missedStepSuspect = true))
+            }
+        }
+    }
+
+    /** Emission clock is monotonic even when a deferred step resolves late. */
+    private fun emit(update: MotionUpdate) {
+        val tNs = maxOf(update.tNs, lastEmittedNs)
+        lastEmittedNs = tNs
+        _updates.tryEmit(if (tNs == update.tNs) update else update.copy(tNs = tNs))
     }
 
     /**
@@ -326,5 +351,6 @@ class PdrEngine(
         const val PENDING_CAPACITY = 4
         const val POST_CANDIDATE_NS = 150_000_000L
         const val VERDICT_DEADLINE_NS = 600_000_000L
+        const val VISUAL_INBOX_CAPACITY = 8
     }
 }
