@@ -239,12 +239,17 @@ async function createUploadFor(env: never, files: Array<{ name: string; data: nu
   return ((await res.json()) as { uploadId: string; missing: string[] }).uploadId;
 }
 
+/** The header the client actually sends for each staged file (R12-10). */
+function mediaHeaderFor(name: string): string {
+  return name.startsWith("clip") ? "video/mp4" : "image/jpeg";
+}
+
 function putBlob(env: never, uploadId: string, name: string, data: number[] | Uint8Array) {
   return app.request(
     `/v1/uploads/${uploadId}/${name}`,
     {
       method: "PUT",
-      headers: { ...auth, "Content-Type": "application/octet-stream" },
+      headers: { ...auth, "Content-Type": mediaHeaderFor(name) },
       body: new Blob([mediaOf(name, data)]),
     },
     env,
@@ -795,7 +800,11 @@ describe("upload PUT and id hardening", () => {
         ...init,
         method: "PUT",
         ...(init.body instanceof Uint8Array ? { body: mediaOf("kf_n2_0", init.body) } : {}),
-        headers: { ...auth, ...(init.headers as Record<string, string>) },
+        headers: {
+          ...auth,
+          "Content-Type": "image/jpeg",
+          ...(init.headers as Record<string, string>),
+        },
       },
       env,
     );
@@ -975,7 +984,7 @@ describe("per-install isolation (R10-01)", () => {
         `/v1/uploads/${foreign}/${name}`,
         {
           method: "PUT",
-          headers: { ...foreignAuth, "Content-Type": "application/octet-stream" },
+          headers: { ...foreignAuth, "Content-Type": mediaHeaderFor(name) },
           body: new Blob([mediaOf(name, data)]),
         },
         env,
@@ -1017,7 +1026,7 @@ describe("per-install isolation (R10-01)", () => {
       `/v1/uploads/${uploadId}/kf_n2_0`,
       {
         method: "PUT",
-        headers: { ...foreign, "Content-Type": "application/octet-stream" },
+        headers: { ...foreign, "Content-Type": "image/jpeg" },
         body: new Blob([new Uint8Array([1, 2, 3])]),
       },
       env,

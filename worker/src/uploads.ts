@@ -673,10 +673,11 @@ export function acceptedMediaType(
 ): "image/jpeg" | "video/mp4" | null {
   const sniffed = mediaTypeOf(bytes);
   if (sniffed === null) return null;
+  // R12-10: the declared type must name the sniffed one. No octet-stream
+  // escape hatch — "no type" is exactly what a mislabelled upload looks like,
+  // and the client always declares the media type it built.
   const header = (declared ?? "").split(";")[0].trim().toLowerCase();
-  if (header !== "" && header !== "application/octet-stream" && header !== sniffed) {
-    return null;
-  }
+  if (header !== sniffed) return null;
   return sniffed;
 }
 
