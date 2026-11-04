@@ -108,8 +108,8 @@ class NavigateViewModel(
         (motion as? VisualMotionSource)?.attachVisual(
             tap,
             visualAssistRequested,
-            // The step gate's ±0.4 s window needs frames faster than the 2 Hz
-            // navigation rate, or a candidate is judged with an empty window.
+            // The step gate's ±1.2 s window needs a frame rate fast enough to
+            // cover deferred candidates; 4 Hz gives five frames per window.
             app.simt.echo.capture.FrameRateGovernor.VISUAL_GATE_INTERVAL_NS,
         ) == true
 

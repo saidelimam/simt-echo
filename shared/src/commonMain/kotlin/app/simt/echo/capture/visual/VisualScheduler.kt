@@ -9,7 +9,7 @@ import kotlin.math.abs
  * Pure information-gain scheduler for the visual analyzer tap (plan W18-03).
  *
  * Chooses the `FrameTap` base interval (`ns`, `0L` = paused / 0 Hz) from:
- * - Standing state (`isStanding` → `0 Hz` / `0L`)
+     * - Standing state (`isStanding` → `0 Hz`; with visual assist, `2 Hz` floor)
  * - Thermal state (`SEVERE` → `0 Hz` / `0L`, `MODERATE` halves rate)
  * - Battery Saver (`batterySaver` halves rate, capped at ≤ 2 Hz)
  * - Filter uncertainty `sigmaM` (`< 2 m` straight → `1 Hz`; `2..3 m` → `2 Hz`; `>= 3 m` → `4 Hz`)
@@ -42,8 +42,10 @@ object VisualScheduler {
         hasAmbiguousTurn: Boolean = false,
         thermal: ThermalState = ThermalState.NORMAL,
         batterySaver: Boolean = false,
+        visualAssist: Boolean = false,
     ): Long {
-        if (isStanding || thermal == ThermalState.SEVERE) return OFF_INTERVAL_NS
+        if (thermal == ThermalState.SEVERE) return OFF_INTERVAL_NS
+        if (isStanding) return if (visualAssist) INTERVAL_2_HZ_NS else OFF_INTERVAL_NS
         val safeSigma = if (sigmaM.isFinite() && sigmaM >= 0.0) sigmaM else HIGH_SIGMA_M
         val nearTurn = distanceToTurnM.isFinite() && distanceToTurnM in 0.0..TURN_PROXIMITY_M
 
@@ -85,6 +87,7 @@ object VisualScheduler {
         usability01: Double = 1.0,
         thermal: ThermalState = ThermalState.NORMAL,
         batterySaver: Boolean = false,
+        visualAssist: Boolean = false,
     ): Long {
         var nearestTurnDist = Double.POSITIVE_INFINITY
         var ambiguous = false
@@ -112,6 +115,7 @@ object VisualScheduler {
             hasAmbiguousTurn = ambiguous,
             thermal = thermal,
             batterySaver = batterySaver,
+            visualAssist = visualAssist,
         )
     }
 }

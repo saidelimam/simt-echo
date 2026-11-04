@@ -89,4 +89,13 @@ class FrameRateGovernorTest {
         governor.setBaseInterval(Long.MAX_VALUE)
         assertFalse(governor.shouldEmit(120L, ThermalState.MODERATE))
     }
+
+    @Test
+    fun visualGateIntervalSurvivesModerate() {
+        val governor = FrameRateGovernor(FrameRateGovernor.VISUAL_GATE_INTERVAL_NS)
+        assertTrue(governor.shouldEmit(0L, ThermalState.MODERATE))
+        assertFalse(governor.shouldEmit(249_000_000L, ThermalState.MODERATE))
+        assertTrue(governor.shouldEmit(250_000_000L, ThermalState.MODERATE))
+        assertFalse(governor.shouldEmit(250_000_001L, ThermalState.SEVERE))
+    }
 }

@@ -23,7 +23,6 @@ class StationaryGateAcceptanceTest {
         }
     }
 
-    @Ignore("R15-01: red until R15-06 — HEAD 38e1baf halves the witness to 2 Hz at MODERATE")
     @Test
     fun at2BobInPlaceAtTwoHzSurvivesThermalModerate() {
         for (environment in ENVIRONMENTS) {
