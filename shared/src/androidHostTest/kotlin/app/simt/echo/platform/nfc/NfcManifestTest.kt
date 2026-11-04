@@ -118,6 +118,31 @@ class NfcManifestTest {
         assertEquals(listOf("F04543484F01"), aids, "exactly one six-byte proprietary AID")
     }
 
+    /**
+     * R14-01: a sealed LAN bundle is fetched over plain HTTP, and Android 9+
+     * refuses that unless the shipped configuration says so. The permission
+     * is cleartext for the peer dial only — every cloud call stays https
+     * inside `EchoApiClient`, which this file cannot weaken.
+     */
+    @Test
+    fun lanSharingMayUseCleartextUnderAShippedPolicy() {
+        val application = manifest().descendants("application").single()
+        assertEquals(
+            "@xml/network_security_config",
+            application.android("networkSecurityConfig"),
+            "the manifest must point at the shipped policy",
+        )
+
+        val config = parse(File(root, "androidApp/src/main/res/xml/network_security_config.xml"))
+        val base = config.descendants("base-config").singleOrNull()
+        assertNotNull(base, "the policy needs a base-config")
+        assertEquals(
+            "true",
+            base.getAttribute("cleartextTrafficPermitted"),
+            "the LAN fetch to a peer's hotspot address is plain HTTP",
+        )
+    }
+
     @Test
     fun noTapCanLaunchAnAppOrAWallet() {
         val manifest = manifest()

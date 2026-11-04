@@ -78,6 +78,12 @@ class AppGraph(
      * Defaults to offline so a platform with no verified view never uploads.
      */
     val networkGate: NetworkGate = OfflineNetworkGate,
+    /**
+     * LAN bundle transport. The Android entry point supplies one bound to the
+     * active Wi-Fi network (R14-01); null keeps the platform transport, which
+     * is what previews and tests use.
+     */
+    private val lanTransport: PeerTransport? = null,
 ) {
     /** Root of all on-disk state (plan §5.3). Empty only in previews/tests. */
     val fileStore: FileStore by lazy {
@@ -218,7 +224,7 @@ class AppGraph(
         app.simt.echo.ai.AiRouter(localVision())
 
     /** LAN bundle transport + offer/receive service (W2-03). */
-    val peerTransport: PeerTransport by lazy { createPeerTransport() }
+    val peerTransport: PeerTransport by lazy { lanTransport ?: createPeerTransport() }
 
     /**
      * Internet relay (W4-05, wired W9-03): the same production config as
