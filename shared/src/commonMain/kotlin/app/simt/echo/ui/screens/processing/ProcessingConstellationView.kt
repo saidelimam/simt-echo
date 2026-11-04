@@ -167,17 +167,28 @@ private fun ConstellationLayout(
         val placeables = subcompose(ConstellationSlot.Stars) { stars.forEach { item(it) } }
             .map { it.measure(itemLimit) }
         val itemH = placeables.maxOfOrNull { it.height } ?: 0
-        val height = maxOf(CONSTELLATION_MIN_HEIGHT.roundToPx(), itemH * 2)
+        // Crowded routes get more vertical room: two stars per row, and an
+        // extra row for odd counts, so the separation pass has space to
+        // work with instead of only clamping at the edges (review 0013 F7).
+        val rows = ((stars.size + 1) / 2).coerceAtLeast(2)
+        val height = maxOf(CONSTELLATION_MIN_HEIGHT.roundToPx(), itemH * rows)
         val edge = STAR_EDGE.roundToPx()
         val glyphHalf = STAR_GLYPH.roundToPx() / 2
         val spanY = height - itemH
-        val origins = placeables.mapIndexed { i, placeable ->
-            val star = stars[i]
-            IntOffset(
-                x = placePx(star.x01, width - placeable.width, edge),
-                y = placePx(star.screenY01(), spanY, edge),
-            )
-        }
+        val origins = separateStarOrigins(
+            origins = placeables.mapIndexed { i, placeable ->
+                val star = stars[i]
+                IntOffset(
+                    x = placePx(star.x01, width - placeable.width, edge),
+                    y = placePx(star.screenY01(), spanY, edge),
+                )
+            },
+            widths = placeables.map { it.width },
+            heights = placeables.map { it.height },
+            width = width,
+            height = height,
+            edge = edge,
+        )
         val centres = origins.mapIndexed { i, origin ->
             Offset((origin.x + placeables[i].width / 2).toFloat(), (origin.y + glyphHalf).toFloat())
         }
@@ -298,4 +309,69 @@ private fun placePx(frac: Float, span: Int, edge: Int): Int {
     val hi = span - edge
     if (hi <= edge) return (span / 2).coerceAtLeast(0)
     return (span * frac.coerceIn(0f, 1f)).roundToInt().coerceIn(edge, hi)
+}
+
+/**
+ * Pushes overlapping star origins apart along their smaller overlap axis,
+ * a few passes, clamped inside the panel. Labels from nearby checkpoints
+ * would otherwise sit on top of each other at large font scales.
+ *
+ * Pure and deterministic; returns [origins] unchanged when nothing
+ * overlaps.
+ */
+internal fun separateStarOrigins(
+    origins: List<IntOffset>,
+    widths: List<Int>,
+    heights: List<Int>,
+    width: Int,
+    height: Int,
+    edge: Int,
+    passes: Int = 6,
+): List<IntOffset> {
+    if (origins.size < 2) return origins
+    val out = origins.toMutableList()
+    repeat(passes) {
+        var moved = false
+        for (i in out.indices) {
+            for (j in i + 1 until out.size) {
+                val a = out[i]
+                val b = out[j]
+                val overlapX = minOf(a.x + widths[i], b.x + widths[j]) - maxOf(a.x, b.x)
+                val overlapY = minOf(a.y + heights[i], b.y + heights[j]) - maxOf(a.y, b.y)
+                if (overlapX <= 0 || overlapY <= 0) continue
+                if (overlapX <= overlapY) {
+                    val push = overlapX / 2 + 1
+                    val maxA = (width - widths[i] - edge).coerceAtLeast(edge)
+                    val maxB = (width - widths[j] - edge).coerceAtLeast(edge)
+                    out[i] = if (b.x >= a.x) {
+                        a.copy(x = (a.x - push).coerceIn(edge, maxA))
+                    } else {
+                        a.copy(x = (a.x + push).coerceIn(edge, maxA))
+                    }
+                    out[j] = if (b.x >= a.x) {
+                        b.copy(x = (b.x + push).coerceIn(edge, maxB))
+                    } else {
+                        b.copy(x = (b.x - push).coerceIn(edge, maxB))
+                    }
+                } else {
+                    val push = overlapY / 2 + 1
+                    val maxA = (height - heights[i] - edge).coerceAtLeast(edge)
+                    val maxB = (height - heights[j] - edge).coerceAtLeast(edge)
+                    out[i] = if (b.y >= a.y) {
+                        a.copy(y = (a.y - push).coerceIn(edge, maxA))
+                    } else {
+                        a.copy(y = (a.y + push).coerceIn(edge, maxA))
+                    }
+                    out[j] = if (b.y >= a.y) {
+                        b.copy(y = (b.y + push).coerceIn(edge, maxB))
+                    } else {
+                        b.copy(y = (b.y - push).coerceIn(edge, maxB))
+                    }
+                }
+                moved = true
+            }
+        }
+        if (!moved) return out
+    }
+    return out
 }

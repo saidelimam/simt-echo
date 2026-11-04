@@ -2,6 +2,7 @@ package app.simt.echo.ui.screens.settings
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -25,6 +26,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.simt.echo.ui.components.CosmosDestructiveButton
@@ -106,6 +109,12 @@ fun SettingsScreen(
                                 label = "Measured metres",
                                 value = ui.measuredM,
                                 onValueChange = viewModel::onMeasuredChange,
+                                // A tape reading is decimal: ask for that keypad
+                                // instead of the full text keyboard (review 0013 F7).
+                                keyboardOptions = KeyboardOptions(
+                                    keyboardType = KeyboardType.Decimal,
+                                    imeAction = ImeAction.Done,
+                                ),
                             )
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 CosmosPrimaryButton(label = "Calibrate", onClick = viewModel::calibrate)
