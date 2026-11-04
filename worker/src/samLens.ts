@@ -383,7 +383,12 @@ function videoBody(phrase: string, b64: string): object {
  * W11-04 per-frame flags (carried by `KeyframeRefSchema`). Present-and-failing
  * flags drop the candidate; absent flags keep it (today's manifests).
  */
-function frameFailsFlags(cp: Checkpoint, imageId: string): boolean {
+/** R12-07: the on-device filter's verdict for one keyframe — refused for a
+ * face, bad quality or failed exposure. Exported so every path that reads
+ * keyframe bytes (the lens, the per-checkpoint scout, the Meta Spark scout)
+ * applies the same rule. An unknown id is admissible: the flag was never
+ * reported, and absence is not failure. */
+export function frameFailsFlags(cp: Checkpoint, imageId: string): boolean {
   const ref = cp.keyframes.find((k) => k.id === imageId);
   if (!ref) return false;
   if (ref.faceFree === false) return true;
@@ -567,7 +572,12 @@ export async function runGroundLens(
     let clipFps = 0;
     let clipHeroIdx = 0;
     let hasClip = false;
-    if (cp.clip) {
+    // R12-07 (review 0012, F7.2): a clip the client marked as containing a
+    // frame that failed the filter (`faceFree: false`) is not escalated to
+    // SAM video segmentation. Absent means unproven, which stays eligible —
+    // the alternative is disabling video escalation on every platform that
+    // cannot prove it.
+    if (cp.clip && cp.clip.faceFree !== false) {
       const clipObj = await env.MEDIA.get(`jobs/${jobId}/in/${cp.clip.id}`);
       if (clipObj) {
         hasClip = true;

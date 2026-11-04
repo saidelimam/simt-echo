@@ -52,6 +52,10 @@ export const ClipRefSchema = z.object({
   endMs: z.number().int().nonnegative(),
   frameCount: z.number().int().positive(),
   durationMs: z.number().int().positive(),
+  /** R12-07 (review 0012, F7.2): whether every frame of this clip passed the
+   *  on-device filter. Absent means the client could not prove it (an
+   *  unscanned platform), which is not the same as `true`. */
+  faceFree: z.boolean().optional(),
 });
 
 export const ApproachSampleSchema = z.object({
