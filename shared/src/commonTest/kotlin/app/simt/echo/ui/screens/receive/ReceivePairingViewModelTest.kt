@@ -364,6 +364,55 @@ class ReceivePairingViewModelTest {
     }
 
     @Test
+    fun anInterruptedTapKeepsListeningAndReady() = runTest(dispatcher) {
+        val rig = rig()
+        val uri = rig.offer()
+        val pairing = FakeNfcPairingController(NfcCapabilities(canRead = true, enabled = true))
+        val vm = viewModel(rig, pairing)
+        advanceUntilIdle()
+        vm.selectMethod(PairingMethod.NFC)
+        advanceUntilIdle()
+        val attempt = vm.ui.value.generation.toLong()
+
+        // Field loss mid-exchange: reader mode is still on, so the screen
+        // must not claim it is merely preparing (R14-04).
+        pairing.emit(NfcEvent.ReadFailed(attempt, PairingFailure.Interrupted))
+        advanceUntilIdle()
+        assertTrue(vm.ui.value.nfcListening)
+        assertEquals(NfcReadiness.ARMED, vm.ui.value.nfcReadiness)
+        assertEquals(PairingFailure.Interrupted, vm.ui.value.pairingFailure)
+
+        // The retry is the same tap, on the same attempt.
+        pairing.emit(NfcEvent.Invitation(attempt, uri))
+        advanceUntilIdle()
+        assertEquals(Fixtures.L_ROUTE.name, vm.ui.value.preview?.name)
+        assertNull(vm.ui.value.pairingFailure)
+    }
+
+    @Test
+    fun switchingNfcOnWhileOnReceiveArmsTheReaderOnce() = runTest(dispatcher) {
+        val rig = rig()
+        val pairing = FakeNfcPairingController(NfcCapabilities(canRead = true, enabled = false))
+        val vm = viewModel(rig, pairing)
+        advanceUntilIdle()
+        vm.selectMethod(PairingMethod.NFC)
+        advanceUntilIdle()
+        assertEquals(NfcReadiness.DISABLED, vm.ui.value.nfcReadiness)
+        assertFalse(vm.ui.value.nfcListening)
+        assertTrue(pairing.readingAttempts.isEmpty(), "a disabled adapter is never armed")
+
+        // The user turns NFC on in Settings or the quick-settings tile.
+        pairing.setCapabilities(NfcCapabilities(canRead = true, enabled = true))
+        advanceUntilIdle()
+
+        assertEquals(1, pairing.readingAttempts.size, "the reader arms exactly once")
+        assertEquals(vm.ui.value.generation.toLong(), pairing.readingAttempts.single())
+        assertTrue(vm.ui.value.nfcListening)
+        assertEquals(NfcReadiness.ARMED, vm.ui.value.nfcReadiness)
+        assertNull(vm.ui.value.pairingFailure)
+    }
+
+    @Test
     fun aNewerSchemaFailsBeforeSave() = runTest(dispatcher) {
         val rig = rig()
         val future = Fixtures.L_ROUTE.copy(routeId = "future", schemaVersion = EchoSchemaVersion.CURRENT + 1)

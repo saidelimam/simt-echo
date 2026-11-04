@@ -166,6 +166,19 @@ class NfcReaderTest {
     }
 
     @Test
+    fun aTagWithoutTheEchoApplicationIsReportedNotIgnored() = runTest {
+        // A standard NFC tag has no IsoDep interface. Ignoring it left the
+        // receiver silent on a tap that did happen (R14-04).
+        val reader = reader(backgroundScope, UnconfinedTestDispatcher(testScheduler))
+        reader.arm(attemptId = 1L)
+        reader.start(attemptId = 1L) { null as NfcTransceiver? }
+        runCurrent()
+
+        assertEquals(listOf(PairingFailure.InvalidInvitation), failures())
+        assertTrue(invitations().isEmpty())
+    }
+
+    @Test
     fun malformedResponsesFailBeforeAnyInvitation() = runTest {
         // A SELECT cut short of its status bytes.
         val truncated = object : NfcTransceiver {

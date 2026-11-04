@@ -75,6 +75,8 @@ fun NfcTapPanel(
     onOpenNfcSettings: () -> Unit,
     onUseQrInstead: () -> Unit,
     modifier: Modifier = Modifier,
+    /** In-place retry for a failure that stopped polling (the 20 s window). */
+    onRetryTap: (() -> Unit)? = null,
     sigil: SigilGeometry? = null,
     tier: CosmosMotionTier = cosmosMotionTier(),
     /**
@@ -127,7 +129,7 @@ fun NfcTapPanel(
                     PhoneOutline()
                 }
             }
-            val status = statusCopy(role, readiness, tapRead)
+            val status = statusCopy(role, readiness, tapRead, failure)
             Text(
                 text = status,
                 style = MaterialTheme.typography.titleMedium,
@@ -153,7 +155,10 @@ fun NfcTapPanel(
             }
             val canSettings = readiness == NfcReadiness.DISABLED
             val canSwitch = readiness == NfcReadiness.UNAVAILABLE || canSettings
-            if (canSettings || canSwitch) {
+            // A failure that stopped polling is recoverable in this method:
+            // retrying must not require a trip through another screen.
+            val retry = onRetryTap.takeIf { failure != null && !listening }
+            if (canSettings || canSwitch || retry != null) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -167,8 +172,21 @@ fun NfcTapPanel(
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
+                    retry?.let {
+                        CosmosPrimaryButton(
+                            label = PairingCopy.TRY_TAP_AGAIN,
+                            onClick = it,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                     if (canSwitch) {
                         CosmosPrimaryButton(
+                            label = PairingCopy.USE_QR_INSTEAD,
+                            onClick = onUseQrInstead,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    } else if (retry != null) {
+                        CosmosSecondaryButton(
                             label = PairingCopy.USE_QR_INSTEAD,
                             onClick = onUseQrInstead,
                             modifier = Modifier.fillMaxWidth(),
@@ -180,7 +198,15 @@ fun NfcTapPanel(
     }
 }
 
-private fun statusCopy(role: PairingRole, readiness: NfcReadiness, tapRead: Boolean): String = when {
+private fun statusCopy(
+    role: PairingRole,
+    readiness: NfcReadiness,
+    tapRead: Boolean,
+    failure: PairingFailure?,
+): String = when {
+    // The idle window closed without a tap: say so above its retry.
+    failure == PairingFailure.Timeout -> PairingCopy.TAP_TIMED_OUT
+
     readiness == NfcReadiness.UNAVAILABLE ->
         if (role == PairingRole.SHARE) PairingCopy.SHARE_BY_QR else PairingCopy.NFC_UNAVAILABLE
 

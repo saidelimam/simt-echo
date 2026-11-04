@@ -69,11 +69,21 @@ class AndroidNfcPairingController private constructor(
         scope = scope,
         events = { event ->
             _events.tryEmit(event)
-            // A complete invitation ends acquisition; the screen takes over
-            // with fetching, and must not keep polling for another tap.
-            if (event is NfcEvent.Invitation) {
-                val attempt = readingAttempt
-                if (attempt != null) scope.launch { stopReading(attempt) }
+            val attempt = readingAttempt
+            when (event) {
+                // A complete invitation ends acquisition; the screen takes
+                // over with fetching, and must not keep polling.
+                is NfcEvent.Invitation -> if (attempt != null) scope.launch { stopReading(attempt) }
+
+                // A retryable failure leaves reader mode armed: the same tap
+                // can simply be repeated, so the 20 s window restarts rather
+                // than cutting the user off on the old clock (R14-04).
+                is NfcEvent.ReadFailed ->
+                    if (attempt != null && event.attemptId == attempt && event.failure.keepsListening) {
+                        armIdleTimeout(attempt)
+                    }
+
+                else -> Unit
             }
         },
     )
@@ -143,6 +153,11 @@ class AndroidNfcPairingController private constructor(
             failRead(attemptId, PairingFailure.Unsupported)
             return
         }
+        armIdleTimeout(attemptId)
+    }
+
+    /** One idle window; retryable failures restart it for the same attempt. */
+    private fun armIdleTimeout(attemptId: Long) {
         idleJob?.cancel()
         idleJob = scope.launch {
             delay(NFC_READER_IDLE_TIMEOUT_MS.milliseconds)
