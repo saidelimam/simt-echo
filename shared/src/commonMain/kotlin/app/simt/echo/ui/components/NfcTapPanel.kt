@@ -75,6 +75,8 @@ fun NfcTapPanel(
     onOpenNfcSettings: () -> Unit,
     onUseQrInstead: () -> Unit,
     modifier: Modifier = Modifier,
+    /** A real reader connected and the invitation is arriving (R14-08). */
+    readingTap: Boolean = false,
     /** In-place retry for a failure that stopped polling (the 20 s window). */
     onRetryTap: (() -> Unit)? = null,
     sigil: SigilGeometry? = null,
@@ -129,7 +131,7 @@ fun NfcTapPanel(
                     PhoneOutline()
                 }
             }
-            val status = statusCopy(role, readiness, tapRead, failure)
+            val status = statusCopy(role, readiness, tapRead, failure, readingTap)
             Text(
                 text = status,
                 style = MaterialTheme.typography.titleMedium,
@@ -203,6 +205,7 @@ private fun statusCopy(
     readiness: NfcReadiness,
     tapRead: Boolean,
     failure: PairingFailure?,
+    readingTap: Boolean = false,
 ): String = when {
     // The idle window closed without a tap: say so above its retry.
     failure == PairingFailure.Timeout -> PairingCopy.TAP_TIMED_OUT
@@ -211,6 +214,10 @@ private fun statusCopy(
         if (role == PairingRole.SHARE) PairingCopy.SHARE_BY_QR else PairingCopy.NFC_UNAVAILABLE
 
     readiness == NfcReadiness.DISABLED -> PairingCopy.TURN_ON_NFC
+
+    // Contact happened: the invitation is arriving, so the honest status is
+    // what to do with the phones, not "ready" (R14-08).
+    readingTap && role == PairingRole.RECEIVE -> PairingCopy.RECEIVE_HOLD_STILL
 
     // Details supplied, route not received: never "sent".
     tapRead && role == PairingRole.SHARE -> PairingCopy.SHARE_TAP_READ

@@ -34,12 +34,15 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import app.simt.echo.platform.CameraPermissionGate
 import app.simt.echo.platform.FileSharing
+import app.simt.echo.platform.Haptics
 import app.simt.echo.platform.NfcPairingController
 import app.simt.echo.platform.QrScannerView
 import app.simt.echo.platform.UnavailableNfcPairingController
+import app.simt.echo.platform.rememberHaptics
 import app.simt.echo.transfer.PairingFailure
 import app.simt.echo.transfer.PairingMethod
 import app.simt.echo.transfer.PairingRole
+import app.simt.echo.transfer.PairingSource
 import app.simt.echo.transfer.TransferService
 import app.simt.echo.ui.atmosphere.CanopyPanel
 import app.simt.echo.ui.atmosphere.CanopyVariant
@@ -89,10 +92,12 @@ fun ReceiveScreen(
     pairing: NfcPairingController? = null,
     /** Opens the system NFC settings screen (never toggles the adapter). */
     onOpenNfcSettings: () -> Unit = {},
+    /** Contact cues for a real tap; the platform's own by default. */
+    haptics: Haptics = rememberHaptics(),
 ) {
     val controller = pairing ?: remember { UnavailableNfcPairingController() }
-    val viewModel = remember(service, sharing, controller) {
-        ReceiveViewModel(service, sharing, pairing = controller)
+    val viewModel = remember(service, sharing, controller, haptics) {
+        ReceiveViewModel(service, sharing, haptics = haptics, pairing = controller)
     }
     val ui by viewModel.ui.collectAsState()
     PairingLifecycle(
@@ -171,6 +176,7 @@ fun ReceiveScreen(
                             onOpenNfcSettings = onOpenNfcSettings,
                             onUseQrInstead = { viewModel.selectMethod(PairingMethod.QR) },
                             modifier = Modifier.fillMaxWidth(),
+                            readingTap = ui.readingTap,
                             onRetryTap = viewModel::rescan,
                         )
                     }
@@ -183,6 +189,16 @@ fun ReceiveScreen(
                     )
                 }
                 if (ui.fetching) {
+                    // A tap already handed over the invitation: the route is
+                    // coming over the LAN, so the phones need not stay
+                    // together any more (R14-08).
+                    if (ui.lastSource == PairingSource.NFC) {
+                        Text(
+                            text = PairingCopy.RECEIVE_CONNECTED_SEPARATE,
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                        )
+                    }
                     // The live-region text below already announces fetching;
                     // an unlabelled spinner would only add an empty node.
                     CircularProgressIndicator(modifier = Modifier.clearAndSetSemantics {})
