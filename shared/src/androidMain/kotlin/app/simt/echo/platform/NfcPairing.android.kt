@@ -32,11 +32,11 @@ actual fun rememberNfcPairingController(): NfcPairingController {
                 else -> Unit
             }
         }
-        lifecycleOwner.lifecycle.addObserver(observer)
+        // Listeners first: adding an observer to an already-resumed owner
+        // dispatches ON_RESUME synchronously, and that callback must find the
+        // adapter receiver and event bus already registered (R14-05).
         controller.start()
-        if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
-            controller.onResumed()
-        }
+        lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
             controller.close()

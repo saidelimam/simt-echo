@@ -122,6 +122,8 @@ class ShareViewModel(
 
     private var producerJob: Job? = null
     private var closed = false
+    /** Privacy defaults apply to the first offer of the visit, never a resume. */
+    private var defaultsApplied = false
 
     init {
         // Undispatched: subscribed before any offer can move bytes, so a
@@ -204,18 +206,29 @@ class ShareViewModel(
         refreshReadiness()
     }
 
-    /** The destination came back to the foreground. */
+    /**
+     * The destination came back to the foreground. A live offer is
+     * re-presented exactly as it is: re-sealing would invalidate the
+     * invitation the other phone may already hold and silently discard the
+     * user's export choices (R14-05).
+     */
     fun onResumed() {
         if (closed) return
+        if (_ui.value.qrUri != null && service.currentOffer != null) {
+            publishIfSelected()
+            return
+        }
         start()
     }
 
     /**
-     * The destination left the foreground but may return. Stops serving and
-     * cancels the producer; [onResumed] offers afresh.
+     * The destination left the foreground but may return. Only the NFC
+     * presentation stops: the LAN offer keeps serving, because the peer may
+     * already be downloading after a tap or a scan, and separating the phones
+     * lowers this screen (plan 0005 §1, §4.5). [close] is what ends serving.
      */
     fun onPaused() {
-        stop()
+        detachNfc()
     }
 
     private fun start() {
@@ -223,7 +236,12 @@ class ShareViewModel(
         if (producerJob?.isActive == true) return
         launchProducer(errorCopy = ::shareErrorCopy) {
             val items = service.describeExport(routeId)
-            val selection = service.defaultSelectionFor(routeId)
+            val selection = if (defaultsApplied) {
+                _ui.value.selection
+            } else {
+                service.defaultSelectionFor(routeId)
+            }
+            defaultsApplied = true
             val summary = service.summaryFor(routeId, selection)
             // The preview describes the route, not the offer: publish it
             // before the offer completes, so a slow or failed offer can
