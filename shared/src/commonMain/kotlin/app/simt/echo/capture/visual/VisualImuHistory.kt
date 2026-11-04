@@ -151,10 +151,15 @@ class VisualImuHistory(private val capacity: Int = 256) : VisualMotionInput {
         accelerationTimeNs = tNs
     }
 
-    /** Advisory freshness only: readAt still requires a real bracket, never extrapolation. */
+    /**
+     * Advisory freshness only: readAt still requires a real bracket, never
+     * extrapolation. A past frame may arrive after [MAX_GAP_NS] of camera +
+     * analysis latency; it is readable while the history still brackets it.
+     * Only a request materially in the future is unavailable.
+     */
     override fun isAvailable(tNs: Long): Boolean {
         val latest = latestTimeNs
-        return tNs >= 0L && latest >= 0L && abs(tNs - latest) <= MAX_GAP_NS
+        return tNs >= 0L && latest >= 0L && tNs <= latest + MAX_GAP_NS && latest - tNs <= MAX_PAST_NS
     }
 
     override fun readAt(tNs: Long, meanLuma: Double, target: VisualFramePose): Boolean {
@@ -252,6 +257,7 @@ class VisualImuHistory(private val capacity: Int = 256) : VisualMotionInput {
     companion object {
         private const val GRAVITY = 9.81
         private const val MAX_GAP_NS = 100_000_000L
+        private const val MAX_PAST_NS = 2_000_000_000L
         private const val MATRIX_TOLERANCE = 0.01
     }
 }

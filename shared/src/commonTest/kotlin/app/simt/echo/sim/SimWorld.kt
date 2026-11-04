@@ -73,9 +73,15 @@ class SimWorld(
     val phone: SimPhone = SimPhone(),
     private val seed: Long = 0L,
     private val pixelSamplesPerAxis: Int = 8,
+    /** Seeded per-pixel temporal read noise, DN (same distribution for a still scene). */
+    private val temporalNoiseDn: Double = 0.0,
+    /** Row-to-row exposure delay; 0 disables rolling shutter. */
+    private val readoutSeconds: Double = 0.0,
 ) {
     init {
         require(pixelSamplesPerAxis in 1..16)
+        require(temporalNoiseDn >= 0.0 && temporalNoiseDn.isFinite())
+        require(readoutSeconds >= 0.0 && readoutSeconds.isFinite())
     }
 
     /** Integrate the unchanged tiled material over the pixel, then apply imaging. */
@@ -85,17 +91,25 @@ class SimWorld(
         pose: SimPose,
         tNs: Long,
         angularVelocityRadPerSec: Double = 0.0,
+        pitchVelocityRadPerSec: Double = 0.0,
     ): Int {
         require(angularVelocityRadPerSec.isFinite())
-        val blurSamples = if (abs(angularVelocityRadPerSec) * phone.exposureSeconds >= BLUR_THRESHOLD_RAD) {
+        require(pitchVelocityRadPerSec.isFinite())
+        val angularRate = kotlin.math.hypot(angularVelocityRadPerSec, pitchVelocityRadPerSec)
+        val blurSamples = if (angularRate * phone.exposureSeconds >= BLUR_THRESHOLD_RAD) {
             BLUR_SAMPLES
         } else {
             1
         }
+        val rowOffsetSeconds = if (readoutSeconds == 0.0) 0.0 else ((y + 0.5) / LUMA_HEIGHT - 0.5) * readoutSeconds
         var brightness = 0
         for (sample in 0 until blurSamples) {
-            val shutterOffset = if (blurSamples == 1) 0.0 else (sample.toDouble() / (blurSamples - 1) - 0.5) * phone.exposureSeconds
-            val sampledPose = if (blurSamples == 1) pose else pose.copy(yawRad = pose.yawRad + angularVelocityRadPerSec * shutterOffset)
+            val shutterOffset = (if (blurSamples == 1) 0.0 else (sample.toDouble() / (blurSamples - 1) - 0.5) * phone.exposureSeconds) +
+                rowOffsetSeconds
+            val sampledPose = if (shutterOffset == 0.0) pose else pose.copy(
+                yawRad = pose.yawRad + angularVelocityRadPerSec * shutterOffset,
+                pitchRad = pose.pitchRad + pitchVelocityRadPerSec * shutterOffset,
+            )
             for (sy in 0 until pixelSamplesPerAxis) {
                 for (sx in 0 until pixelSamplesPerAxis) {
                     brightness += samplePixel(
@@ -107,18 +121,21 @@ class SimWorld(
                 }
             }
         }
-        return applyPhone(brightness / (blurSamples * pixelSamplesPerAxis * pixelSamplesPerAxis), x, y)
+        return applyPhone(brightness / (blurSamples * pixelSamplesPerAxis * pixelSamplesPerAxis), x, y, tNs)
     }
 
     fun render(
         pose: SimPose,
         tNs: Long,
         angularVelocityRadPerSec: Double = 0.0,
+        pitchVelocityRadPerSec: Double = 0.0,
     ): FrameSample {
+        require(angularVelocityRadPerSec.isFinite())
+        require(pitchVelocityRadPerSec.isFinite())
         val luma = ByteArray(LUMA_WIDTH * LUMA_HEIGHT)
         for (y in 0 until LUMA_HEIGHT) {
             for (x in 0 until LUMA_WIDTH) {
-                luma[y * LUMA_WIDTH + x] = pixelAt(x, y, pose, tNs, angularVelocityRadPerSec).toByte()
+                luma[y * LUMA_WIDTH + x] = pixelAt(x, y, pose, tNs, angularVelocityRadPerSec, pitchVelocityRadPerSec).toByte()
             }
         }
         return FrameSample(
@@ -327,10 +344,15 @@ class SimWorld(
         return (TEXTURE_MIN + coarse + seam - stairStripe).coerceIn(0, 255)
     }
 
-    private fun applyPhone(value: Int, x: Int, y: Int): Int {
+    private fun applyPhone(value: Int, x: Int, y: Int, tNs: Long): Int {
         val pixelBias = ((hash(seed.toInt() xor x * HASH_Y xor y * HASH_X) ushr 1) % SENSOR_NOISE_RANGE) -
             SENSOR_NOISE_RADIUS
-        val exposed = ((value + pixelBias).coerceIn(0, 255) / 255.0 * phone.exposure).coerceIn(0.0, 1.0)
+        val temporal = if (temporalNoiseDn == 0.0) 0.0 else {
+            val timeBits = (tNs xor (tNs ushr 32)).toInt()
+            val noise = hash(seed.toInt() xor timeBits xor x * HASH_X xor y * HASH_Y xor TEMPORAL_SEED)
+            ((noise ushr 8 and 0xffff) / 65535.0 * 2.0 - 1.0) * temporalNoiseDn
+        }
+        val exposed = ((value + pixelBias + temporal).coerceIn(0.0, 255.0) / 255.0 * phone.exposure).coerceIn(0.0, 1.0)
         return (exposed.pow(1.0 / phone.gamma) * 255.0).toInt().coerceIn(0, 255)
     }
 
@@ -368,6 +390,7 @@ class SimWorld(
         private const val HASH_X = 0x45d9f3b
         private const val HASH_Y = 0x119de1f3
         private const val HASH_MATERIAL = 0x3449
+        private const val TEMPORAL_SEED = 0x51ed270b
         private const val SCENE_START_M = -4.0
         private const val SCENE_END_M = 60.0
         private const val JUNCTION_OPEN_START_M = 16.0
