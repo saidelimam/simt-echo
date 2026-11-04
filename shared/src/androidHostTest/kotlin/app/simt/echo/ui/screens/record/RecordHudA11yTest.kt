@@ -1,6 +1,9 @@
 package app.simt.echo.ui.screens.record
 
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -74,6 +77,42 @@ class RecordHudA11yTest {
             }
         }
         compose.waitForIdle()
+    }
+
+    @Test
+    fun hudAtFontScaleTwoKeepsChipsTrailAndFinishApart() {
+        val big = Density(compose.density.density, fontScale = 2.0f)
+        compose.setContent {
+            CompositionLocalProvider(LocalDensity provides big) {
+                EchoTheme(darkTheme = true) {
+                    RecordInstrument(
+                        state = CaptureState.RECORDING,
+                        hud = CaptureHud(distanceM = 23.4, steps = 31, elapsedMs = 65_000L, marks = 1),
+                        headingRad = 0.0,
+                        error = null,
+                        onStart = {},
+                        onMark = {},
+                        onBeginFinish = {},
+                        onSave = { _, _ -> },
+                        walk = walked,
+                    )
+                }
+            }
+        }
+        compose.waitForIdle()
+        listOf("1:05", "31 steps", "1 spots").forEach { label ->
+            compose.onNodeWithText(label).assertIsDisplayed()
+        }
+        compose.onNodeWithTag(TrailRibbonTag).assertIsDisplayed()
+        val finish = compose.onNodeWithContentDescription("Hold to finish")
+            .assertIsDisplayed()
+            .fetchSemanticsNode()
+            .boundsInRoot
+        val trail = compose.onNodeWithTag(TrailRibbonTag).fetchSemanticsNode().boundsInRoot
+        assertFalse(
+            trail.overlaps(finish),
+            "the trail panel $trail collides with Finish $finish at fontScale 2.0",
+        )
     }
 
     @Test

@@ -7,6 +7,8 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -224,6 +226,7 @@ fun RecordScreen(
  * platform sensors or the camera.
  */
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 internal fun RecordInstrument(
     state: CaptureState,
     hud: CaptureHud,
@@ -266,7 +269,12 @@ internal fun RecordInstrument(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Chips wrap as whole pills at large text instead of squeezing
+                // their labels onto two lines (review 0013 F5 follow-up).
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     StatusChip(text = formatElapsed(hud.elapsedMs))
                     StatusChip(text = "${hud.steps} steps")
                     StatusChip(text = "${hud.marks} spots")
