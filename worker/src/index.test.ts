@@ -1,12 +1,21 @@
 import { describe, expect, it } from "vitest";
 import worker, { app, type Env } from "./index";
-import { JOB_RETENTION_MS, STAGING_TTL_MS } from "./uploads";
+import { JOB_RETENTION_MS, STAGING_TTL_MS, sweepExpiredRelayObjects } from "./uploads";
 import { RELAY_TTL_MS } from "./relay";
 import { bearer, mintDevice } from "./testkit";
 
-// In-memory R2: only the surface the sweep touches.
+// In-memory R2: only the surface the sweep touches. It mirrors production
+// R2's list contract: customMetadata and uploaded are present only because
+// R2 always returns `uploaded`, and customMetadata only when `include`
+// asks for it (R12-04).
 class FakeR2 {
-  store = new Map<string, { body: string; customMetadata?: Record<string, string> }>();
+  store = new Map<
+    string,
+    { body: string; uploaded: number; customMetadata?: Record<string, string> }
+  >();
+  /** Every `include` the sweep passed, so a test can prove the request. */
+  listIncludes: Array<string[] | undefined> = [];
+
   async put(
     key: string,
     value: string | Uint8Array | ArrayBuffer,
@@ -18,7 +27,7 @@ class FakeR2 {
         : new TextDecoder().decode(
             value instanceof Uint8Array ? value : new Uint8Array(value),
           );
-    this.store.set(key, { body, customMetadata: opts?.customMetadata });
+    this.store.set(key, { body, uploaded: Date.now(), customMetadata: opts?.customMetadata });
     return null;
   }
   async get(key: string) {
@@ -28,17 +37,54 @@ class FakeR2 {
       : { json: async () => JSON.parse(entry.body) as unknown };
   }
   head = async (key: string) => (this.store.has(key) ? { key } : null);
-  async list({ prefix }: { prefix?: string }) {
+  async list({ prefix, include }: { prefix?: string; include?: string[] }) {
+    this.listIncludes.push(include);
     const entries = [...this.store.entries()]
       .filter(([k]) => !prefix || k.startsWith(prefix))
       .sort(([a], [b]) => a.localeCompare(b));
+    const withMetadata = include?.includes("customMetadata") ?? false;
     return {
-      objects: entries.map(([key, entry]) => ({ key, customMetadata: entry.customMetadata })),
+      objects: entries.map(([key, entry]) => ({
+        key,
+        uploaded: new Date(entry.uploaded),
+        ...(withMetadata ? { customMetadata: entry.customMetadata } : {}),
+      })),
       truncated: false as const,
     };
   }
   async delete(keys: string | string[]) {
     for (const k of Array.isArray(keys) ? keys : [keys]) this.store.delete(k);
+  }
+  /** Moves every object under [prefix] [ms] into the past. */
+  age(prefix: string, ms: number) {
+    for (const [key, entry] of this.store) {
+      if (key.startsWith(prefix)) entry.uploaded -= ms;
+    }
+  }
+}
+
+/** Workflow stand-in: records termination and deletion of instances. */
+class FakeWorkflow {
+  instances = new Map<string, { status: string }>();
+  terminated: string[] = [];
+
+  seed(id: string, status: string) {
+    this.instances.set(id, { status });
+  }
+
+  async get(id: string) {
+    const inst = this.instances.get(id);
+    if (!inst) throw new Error(`unknown instance ${id}`);
+    return {
+      status: async () => ({ status: inst.status }),
+      terminate: async () => {
+        inst.status = "terminated";
+        this.terminated.push(id);
+      },
+      delete: async () => {
+        this.instances.delete(id);
+      },
+    };
   }
 }
 
@@ -100,6 +146,94 @@ describe("scheduled() expiry backstop", () => {
       "jobs/running-1/progress.json",
       "relay/NEW456",
     ]);
+  });
+
+  it("asks R2 for custom metadata before reading relay expiry (R12-04)", async () => {
+    const media = new FakeR2();
+    await media.put("relay/OLD123", "ciphertext", {
+      customMetadata: { expiresAt: String(Date.now() - 1) },
+    });
+    await media.put("relay/NEW456", "ciphertext", {
+      customMetadata: { expiresAt: String(Date.now() + RELAY_TTL_MS) },
+    });
+
+    const swept = await sweepExpiredRelayObjects({ MEDIA: media } as never);
+
+    // The fake mirrors production: without include the metadata is absent
+    // and this would have deleted nothing.
+    expect(media.listIncludes.some((inc) => inc?.includes("customMetadata"))).toBe(true);
+    expect(swept).toBe(1);
+    expect([...media.store.keys()]).toEqual(["relay/NEW456"]);
+  });
+
+  it("drops a swept job's idempotency record and Workflow instance (R12-04)", async () => {
+    const media = new FakeR2();
+    const pipeline = new FakeWorkflow();
+    await media.put("jobs/done/in/kf_n2_0", "photo");
+    await media.put(
+      "jobs/done/progress.json",
+      JSON.stringify({ stage: "complete", updatedAt: Date.now() - JOB_RETENTION_MS - 1 }),
+    );
+    await media.put("jobs/idem/done.json", JSON.stringify({ jobId: "done" }));
+    pipeline.seed("done", "complete");
+
+    await worker.scheduled(
+      {} as ScheduledController,
+      { MEDIA: media, PIPELINE: pipeline } as unknown as Env,
+    );
+
+    expect([...media.store.keys()].filter((k) => k.includes("done"))).toEqual([]);
+    // Workflow step outputs (manifest, scout titles, sign text, masks) are
+    // not R2 state: the instance has to go too.
+    expect(pipeline.instances.has("done")).toBe(false);
+  });
+
+  it("sweeps a stale non-terminal job whose objects outlived retention (R12-04)", async () => {
+    const media = new FakeR2();
+    const pipeline = new FakeWorkflow();
+    await media.put("jobs/stuck/in/kf_n2_0", "photo");
+    // A terminated or timed-out Workflow never writes a terminal stage.
+    await media.put(
+      "jobs/stuck/progress.json",
+      JSON.stringify({ stage: "scouting", updatedAt: Date.now() }),
+    );
+    media.age("jobs/stuck", JOB_RETENTION_MS + 1);
+    pipeline.seed("stuck", "running");
+
+    await worker.scheduled(
+      {} as ScheduledController,
+      { MEDIA: media, PIPELINE: pipeline } as unknown as Env,
+    );
+
+    expect([...media.store.keys()].filter((k) => k.startsWith("jobs/stuck/"))).toEqual([]);
+    // A live instance is terminated before it is deleted.
+    expect(pipeline.terminated).toEqual(["stuck"]);
+    expect(pipeline.instances.has("stuck")).toBe(false);
+  });
+
+  it("keeps a fresh job, its idem record and its instance", async () => {
+    const media = new FakeR2();
+    const pipeline = new FakeWorkflow();
+    await media.put("jobs/live/in/kf_n2_0", "photo");
+    // A live job has a manifest: sweepOrphanedIdem keys off it.
+    await media.put("jobs/live/manifest.json", JSON.stringify({ schemaVersion: 2 }));
+    await media.put(
+      "jobs/live/progress.json",
+      JSON.stringify({ stage: "scouting", updatedAt: Date.now() }),
+    );
+    await media.put("jobs/idem/live.json", JSON.stringify({ jobId: "live" }));
+    pipeline.seed("live", "running");
+
+    await worker.scheduled(
+      {} as ScheduledController,
+      { MEDIA: media, PIPELINE: pipeline } as unknown as Env,
+    );
+
+    expect(media.store.has("jobs/live/manifest.json")).toBe(true);
+    expect(media.store.has("jobs/live/in/kf_n2_0")).toBe(true);
+    expect(media.store.has("jobs/idem/live.json")).toBe(true);
+    expect(pipeline.instances.has("live")).toBe(true);
+    expect(pipeline.terminated).toEqual([]);
   });
 });
 
