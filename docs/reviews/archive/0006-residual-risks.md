@@ -1,6 +1,6 @@
 # Review 0006 — Residual risks from 0001-agentic-flow
 
-Status: **in progress** · created 2026-11-01 · converted from `docs/plans/0002-residual-risks.md` 2026-11-01
+Status: **complete** · created 2026-11-01 · archived 2026-11-04 · converted from `docs/plans/0002-residual-risks.md` 2026-11-01
 
 ## Scope
 
@@ -58,8 +58,32 @@ that proves it.
 |----|-------|-------|------|------|------------|----------|
 | W6-01 | Complete | Settings CSV export over the W2-07 `shareFile` seam | F | E | — | 6c523a8 · test: ./gradlew :shared:testAndroidHostTest |
 | W6-02 | Complete | Draw-box normalisation extracted + unit-tested | F | E | — | 1c51afa · test: ./gradlew :shared:testAndroidHostTest |
-| W6-03 | In progress | Robolectric + Compose UI verification (gesture, KeepScreenOn, offline/airplane, permission gate) | L | E | W6-02 | — |
-| W6-04 | Queued | Production close-out: R2 bucket, worker deploy, live job, residual dispositions on 0001 | L | D | W6-01, W6-02, W6-03 | — |
+| W6-03 | Complete | Robolectric + Compose UI verification (gesture, KeepScreenOn, offline/airplane, permission gate) | L | E | W6-02 | test: `./gradlew :shared:testAndroidHostTest --tests app.simt.echo.ui.screens.review.DrawOverlayUiTest` (3/3) `--tests app.simt.echo.platform.DeviceServicesUiTest` (2/2) `--tests app.simt.echo.platform.CameraPermissionGateUiTest` (2/2) — BUILD SUCCESSFUL 2026-11-04 |
+| W6-04 | Complete | Production close-out: R2 bucket, worker deploy, live job, residual dispositions on 0001 | L | D | W6-01, W6-02, W6-03 | Remote evidence recorded in `docs/release.md` §Production deploy / §Relay live round-trip (W9-01, W9-02: bucket `echo-media`, deploy version ids, live job lifecycle) · ten markers disposed in §W6-04 dispositions below (2026-11-04) |
+
+## W6-04 dispositions
+
+Every marker carried on a `Complete` row of 0001 gets one final state. A
+marker closes only on the check named beside it; the rest name the slice
+that owns the hardware run, so nothing is left bare and nothing is claimed
+without evidence.
+
+| Marker (0001 row) | Disposition | Evidence / owner |
+|---|---|---|
+| W4-01 Settings CSV export gap | closed-with-evidence | W6-01 `6c523a8`; `SettingsViewModelTest` asserts shared bytes, name and MIME |
+| W2-01 Compose draw gesture | closed-with-evidence (headless data path) | W6-02 `1c51afa` + `DrawOverlayUiTest.dragConfirm_reportsNormalizedCropBox` (3/3); device feel stays W9-05 |
+| W2-06 KeepScreenOn / isOnline | closed-with-evidence | `DeviceServicesUiTest.keepScreenOn_holdsFlagOnlyWhileComposed`, `rememberOnline_followsConnectivity` (2/2) |
+| W2-06 haptic feel | open-with-owner | W9-04 judges the TICK/CONFIRM/LEFT/RIGHT/WARN/ARRIVE sequence on hardware |
+| W2-04 two-phone transfer | open-with-owner | W9-04; runbook `docs/testing/nfc-sharing.md` |
+| W3-02 jobs API live job | closed-with-evidence | `docs/release.md` §Production deploy: POST → complete → fetch → DELETE → 404 |
+| W3-04 worker deploy / R2 bucket | closed-with-evidence | `docs/release.md`: bucket `echo-media`, deploy version ids, health true-to-config |
+| W3-05 live SAM 3.1 check | closed-with-evidence | `docs/measurements.md` addendum: `AI_GROUNDED` in 693 ms, confidence 0.9298 |
+| W4-02 calibrated walk | open-with-owner | W9-06 (5+5 §11 protocol, CSV, `docs/measurements.md`) |
+| W4-03 device abuse pass | permission path closed-with-evidence; kill/airplane open-with-owner | `CameraPermissionGateUiTest` (2/2) covers granted and NOT_DETERMINED; W9-05 runs kill, deny and airplane on hardware |
+| W5-02 camera overlay | open-with-owner | W9-04/W9-05 on-device overlay and camera gate; no live-frame projection is claimed |
+| W5-04 on-watch delivery | superseded by owner | W9-08 (`a3e32c1`) owns the paired-watch proof |
+| NR-1 stub-`R` harness | accepted-with-mitigation | open-with-owner; revisit if AGP adds an `androidHostTest` resource pipeline |
+| NR-2 Robolectric SDK pin | accepted-with-mitigation | open-with-owner; raise when Robolectric supports SDK 37 |
 
 ## New residual risks (surfaced during W6-01…W6-03)
 

@@ -15,7 +15,7 @@ spends cloud money like it is scarce, and navigates with a real
 probabilistic engine instead of a linear guess. It is ECHO 2.0.
 
 Slice ids continue at **W10–W14**. W0–W9 are spent (W6 lives in
-`docs/reviews/0006-residual-risks.md`), so the registered pattern in
+`docs/reviews/archive/0006-residual-risks.md`), so the registered pattern in
 `simt.json` widens from `^W[0-9]-[0-9]{2}$` to `^W[0-9]{1,2}-[0-9]{2}$`
 with this plan; every earlier id still matches.
 

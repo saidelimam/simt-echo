@@ -3,7 +3,7 @@
 Owner: plan `docs/plans/0002-mvp-cosmos-design.md` slice W7-01 (T primary, S reviewer).
 Spec of record: `docs/research/SIMT_ECHO_IMPLEMENTATION_PLAN_V2.md` (cited as *V2 §n*).
 Trackers: `docs/plans/0001-agentic-flow.md` (0001), `docs/plans/0002-mvp-cosmos-design.md` (0002).
-Reviews: `docs/reviews/0001`–`0005` plus `0006-residual-risks.md` (0006).
+Reviews: `docs/reviews/0001`–`0005` plus `archive/0006-residual-risks.md` (0006).
 
 ## Method
 
