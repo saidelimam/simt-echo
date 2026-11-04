@@ -155,19 +155,29 @@ object RoutePolish {
             }
         }
 
-        // Integrate cumulative drift offset at the midpoint of each leg and subtract it.
-        val correctedHeadingsRad = DoubleArray(legCount)
+        // Cumulative drift as a function of distance. The rate is constant inside
+        // a leg, so the integral is piecewise linear and continuous at every node:
+        // no step where two legs meet, and so no corner introduced there.
+        val legDriftAtStart = DoubleArray(legCount)
         var cumulativeDriftRad = 0.0
         for (i in 0 until legCount) {
-            val legLen = route.legs[i].lengthM.coerceAtLeast(0.0)
-            val dtSec = legLen / speed
-            val midDrift = cumulativeDriftRad + 0.5 * smoothedRates[i] * dtSec
-            correctedHeadingsRad[i] = wrapPi(rawLegHeadingsRad[i] - midDrift)
-            cumulativeDriftRad += smoothedRates[i] * dtSec
+            legDriftAtStart[i] = cumulativeDriftRad
+            cumulativeDriftRad += smoothedRates[i] * (route.legs[i].lengthM.coerceAtLeast(0.0) / speed)
+        }
+        fun driftAt(d: Double): Double {
+            var i = 0
+            while (i + 1 < legCount && d > legStarts[i + 1]) i++
+            val travelled = (d - legStarts[i]).coerceIn(0.0, route.legs[i].lengthM.coerceAtLeast(0.0))
+            return legDriftAtStart[i] + travelled / speed * smoothedRates[i]
         }
 
-        // Rebuild path from corrected leg headings (preserving step distances d).
-        var rebuiltPath = rebuildPathFromLegs(route.path, legStarts, legEnds, correctedHeadingsRad, route.totalLengthM)
+        val correctedHeadingsRad = DoubleArray(legCount) { i ->
+            wrapPi(rawLegHeadingsRad[i] - driftAt(0.5 * (legStarts[i] + legEnds[i])))
+        }
+
+        // Rotate the recorded walk by the drift rather than re-integrating one
+        // heading per leg: the turns the creator actually walked stay in the path.
+        var rebuiltPath = rebuildPathFromRecorded(route.path) { d -> driftAt(d) }
 
         // Loop closure check: when start and destination view strips match (or round-trip geometry closes),
         // distribute the closure error across legs proportionally to legLengthM * legSigmaRad^2.
@@ -187,36 +197,17 @@ object RoutePolish {
         if (viewsMatch && rebuiltPath.size >= 2 && legCount >= 2) {
             val endPt = rebuiltPath.last()
             val gapM = hypot(endPt.x, endPt.y)
-                if (hypot(endPt.x, endPt.y) > 0.05 && hypot(endPt.x, endPt.y) <= route.totalLengthM * 0.25) {
-                    loopClosed = true
-                    val weights = DoubleArray(legCount) { i ->
-                        route.legs[i].lengthM.coerceAtLeast(0.5) * legSigmas[i] * legSigmas[i]
-                    }
-                    val totalW = weights.sum().coerceAtLeast(1e-9)
-                    val endX = endPt.x
-                    val endY = endPt.y
-
-                    var curX = 0.0
-                    var curY = 0.0
-                    var cumW = 0.0
-                    for (i in 0 until legCount) {
-                        val len = route.legs[i].lengthM
-                        val h = correctedHeadingsRad[i]
-                        val rawNextX = curX + len * sin(h)
-                        val rawNextY = curY + len * cos(h)
-                        cumW += weights[i]
-                        val frac = cumW / totalW
-                        val targetX = rawNextX - frac * endX
-                        val targetY = rawNextY - frac * endY
-                        val dx = targetX - curX
-                        val dy = targetY - curY
-                        if (hypot(dx, dy) > 1e-6) {
-                            correctedHeadingsRad[i] = atan2(dx, dy)
-                        }
-                        curX += len * sin(correctedHeadingsRad[i])
-                        curY += len * cos(correctedHeadingsRad[i])
-                    }
+            if (gapM > 0.05 && gapM <= route.totalLengthM * 0.25) {
+                loopClosed = true
+                // Pull the residual gap out of the whole walk, proportionally to
+                // distance: the loop closes without bending the recorded turns.
+                val firstD = rebuiltPath.first().d
+                val totalD = (endPt.d - firstD).coerceAtLeast(1e-9)
+                rebuiltPath = rebuiltPath.map { p ->
+                    val frac = ((p.d - firstD) / totalD).coerceIn(0.0, 1.0)
+                    p.copy(x = p.x - frac * endPt.x, y = p.y - frac * endPt.y)
                 }
+            }
         }
 
         val updatedLegs = route.legs.mapIndexed { i, leg ->
@@ -225,19 +216,7 @@ object RoutePolish {
             if (abs(rounded - leg.headingRelDeg) < 1e-4) leg else leg.copy(headingRelDeg = rounded)
         }
         val headingsChanged = updatedLegs.indices.any { i -> updatedLegs[i].headingRelDeg != route.legs[i].headingRelDeg }
-        if (headingsChanged || loopClosed) {
-            val finalLegHeadingsRad = DoubleArray(legCount) { i -> updatedLegs[i].headingRelDeg * PI / 180.0 }
-            rebuiltPath = rebuildPathFromLegs(
-                route.path,
-                legStarts,
-                legEnds,
-                finalLegHeadingsRad,
-                route.totalLengthM,
-                closeLoopEndpoint = loopClosed,
-            )
-        } else {
-            rebuiltPath = route.path
-        }
+        if (!headingsChanged && !loopClosed) rebuiltPath = route.path
 
         val totalBuckets = maxOf(1, (route.totalLengthM / ParallaxProfile.STEP_M).roundToInt())
         val updatedParallax = (existingParallax ?: ParallaxProfile(
@@ -270,50 +249,34 @@ object RoutePolish {
         )
     }
 
-    private fun rebuildPathFromLegs(
+    /**
+     * Re-walks the recorded path with [driftAt] removed at every step.
+     *
+     * Each step keeps the heading it was recorded with, so a turn stays the arc
+     * the creator walked; only the slow bias is subtracted. Integrating a single
+     * heading per leg instead would flatten every turn into a corner at the node
+     * distance, and the path would stop being a record of the walk.
+     */
+    private fun rebuildPathFromRecorded(
         originalPath: List<PathPoint>,
-        legStarts: DoubleArray,
-        legEnds: DoubleArray,
-        legHeadingsRad: DoubleArray,
-        totalLengthM: Double,
-        closeLoopEndpoint: Boolean = false,
+        driftAt: (Double) -> Double,
     ): List<PathPoint> {
         if (originalPath.isEmpty()) return emptyList()
         val points = ArrayList<PathPoint>(originalPath.size)
         var x = 0.0
         var y = 0.0
         points.add(PathPoint(d = originalPath.first().d, x = 0.0, y = 0.0))
-
         for (pIdx in 1 until originalPath.size) {
-            val prevD = originalPath[pIdx - 1].d
-            val curD = originalPath[pIdx].d
-            val ds = (curD - prevD).coerceAtLeast(0.0)
-            val midD = 0.5 * (prevD + curD)
-            var legIdx = 0
-            for (i in legStarts.indices) {
-                if (midD >= legStarts[i] && midD <= legEnds[i] + 1e-6) {
-                    legIdx = i
-                    break
-                } else if (midD >= legStarts[i]) {
-                    legIdx = i
-                }
-            }
-            val h = legHeadingsRad[legIdx]
-            x += ds * sin(h)
-            y += ds * cos(h)
-            points.add(PathPoint(d = curD, x = x, y = y))
-        }
-
-        if (closeLoopEndpoint && points.size >= 2 && totalLengthM > 0.0) {
-            val errX = points.last().x
-            val errY = points.last().y
-            for (i in 1 until points.size) {
-                val frac = (points[i].d / totalLengthM).coerceIn(0.0, 1.0)
-                points[i] = points[i].copy(
-                    x = points[i].x - frac * errX,
-                    y = points[i].y - frac * errY,
-                )
-            }
+            val prev = originalPath[pIdx - 1]
+            val cur = originalPath[pIdx]
+            val ds = (cur.d - prev.d).coerceAtLeast(0.0)
+            val dx = cur.x - prev.x
+            val dy = cur.y - prev.y
+            val walkedHeading = if (hypot(dx, dy) < 1e-9) 0.0 else atan2(dx, dy)
+            val heading = walkedHeading - driftAt(0.5 * (prev.d + cur.d))
+            x += ds * sin(heading)
+            y += ds * cos(heading)
+            points.add(PathPoint(d = cur.d, x = x, y = y))
         }
         return points
     }

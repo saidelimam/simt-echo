@@ -12,8 +12,10 @@ import app.simt.echo.nav.ghost.GhostFilter
 import kotlin.io.encoding.Base64
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
+import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -207,5 +209,64 @@ class RoutePolishTest {
         val filter = GhostFilter(closedFirst.route, seed = 42L)
         filter.observeHeading(0.1, quality01 = 1.0)
         assertEquals(1, filter.headingObservationCount)
+    }
+
+    /**
+     * Regression: a turn walked inside one leg used to come back as a straight
+     * chord, because Polish rebuilt the path by integrating one heading per leg.
+     * The path is the record of what was walked: Polish removes drift from it,
+     * never the turns.
+     */
+    @Test
+    fun polishKeepsTurnsWalkedInsideALegInsteadOfStraighteningThePath() {
+        val arcM = 20.0
+        val radius = arcM / (PI / 2.0)
+        val steps = (arcM / 0.5).roundToInt()
+        val path = ArrayList<PathPoint>(steps + 1)
+        for (i in 0..steps) {
+            val t = (PI / 2.0) * i / steps
+            path.add(
+                PathPoint(
+                    d = arcM * i / steps,
+                    x = radius * sin(t),
+                    y = radius * (1.0 - cos(t)),
+                ),
+            )
+        }
+        val route = EchoRoute(
+            routeId = "curved-1",
+            name = "Curved walk",
+            createdAtEpochMs = 0L,
+            creatorLabel = "sim",
+            motionSource = "sim",
+            totalLengthM = arcM,
+            start = StartAnchor("Start", null, "Face forward"),
+            nodes = listOf(
+                RouteNode("n0", NodeType.START, 0.0, "Start"),
+                RouteNode("n1", NodeType.DESTINATION, arcM, "End"),
+            ),
+            legs = listOf(RouteLeg("n0", "n1", arcM, 45.0)),
+            path = path,
+        )
+
+        val polished = RoutePolish.polish(route, stillnessDriftPriorRadPerSec = 0.001).route
+
+        // A straight chord has no sag: the quarter circle must keep its bulge.
+        val end = polished.path.last()
+        val chord = hypot(end.x, end.y)
+        val sagM = polished.path.maxOf { p -> abs(p.x * end.y - p.y * end.x) / chord }
+        assertTrue(sagM > 2.0, "Polish straightened the walked turn: max offset from the chord is $sagM m")
+
+        // And it still turns about 90°, step by step, rather than 0 at one node.
+        var turnedRad = 0.0
+        for (i in 2 until polished.path.size) {
+            val a = polished.path[i - 2]
+            val b = polished.path[i - 1]
+            val c = polished.path[i]
+            turnedRad += abs(wrapPi(atan2(c.x - b.x, c.y - b.y) - atan2(b.x - a.x, b.y - a.y)))
+        }
+        val turnedDeg = turnedRad * 180.0 / PI
+        assertTrue(turnedDeg in 80.0..100.0, "expected ~90° of recorded turning, got $turnedDeg°")
+        assertEquals(arcM, polished.path.last().d, 1e-9)
     }
 }
