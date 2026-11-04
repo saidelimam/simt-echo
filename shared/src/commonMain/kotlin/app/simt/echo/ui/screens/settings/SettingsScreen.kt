@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -35,6 +34,7 @@ import app.simt.echo.ui.components.CosmosRecordRow
 import app.simt.echo.ui.components.CosmosRecordRows
 import app.simt.echo.ui.components.CosmosSecondaryButton
 import app.simt.echo.ui.components.CosmosTextField
+import app.simt.echo.ui.components.CosmosToggleRow
 import app.simt.echo.ui.components.threeDecimals
 import app.simt.echo.ui.copy.cloudAiStatusCopy
 import app.simt.echo.ui.theme.EchoExtras
@@ -126,15 +126,11 @@ fun SettingsScreen(
             CosmosRecordRows(
                 rows = listOf(
                     {
-                        CosmosRecordRow(
+                        CosmosToggleRow(
                             title = "Baseline mode",
                             subtitle = "Hides landmark cards: turns and distance only.",
-                            trailing = {
-                                Switch(
-                                    checked = ui.baselineMode,
-                                    onCheckedChange = viewModel::setBaselineMode,
-                                )
-                            },
+                            checked = ui.baselineMode,
+                            onCheckedChange = viewModel::setBaselineMode,
                         )
                     },
                     {
@@ -156,50 +152,35 @@ fun SettingsScreen(
             CosmosRecordRows(
                 rows = listOf(
                     {
-                        CosmosRecordRow(
+                        CosmosToggleRow(
                             title = "Visual assist",
                             subtitle = "Uses the camera while you walk, analysed on the phone, no images stored or sent; the route stores only tiny non-image profiles.",
-                            trailing = {
-                                Switch(
-                                    checked = ui.visualAssist,
-                                    onCheckedChange = viewModel::setVisualAssist,
-                                )
-                            },
+                            checked = ui.visualAssist,
+                            onCheckedChange = viewModel::setVisualAssist,
                         )
                     },
                     {
-                        CosmosRecordRow(
+                        CosmosToggleRow(
                             title = "Camera overlay",
                             subtitle = "Live camera behind the navigation HUD, with the landmark crop and mask.",
-                            trailing = {
-                                Switch(
-                                    checked = ui.cameraOverlayEnabled,
-                                    onCheckedChange = viewModel::setCameraOverlay,
-                                )
-                            },
+                            checked = ui.cameraOverlayEnabled,
+                            onCheckedChange = viewModel::setCameraOverlay,
                         )
                     },
                     {
-                        CosmosRecordRow(
+                        CosmosToggleRow(
                             title = "Turn heartbeat",
                             subtitle = "A tick that quickens over the last 8 m to a turn.",
-                            trailing = {
-                                Switch(
-                                    checked = ui.turnHeartbeat,
-                                    onCheckedChange = viewModel::setTurnHeartbeat,
-                                )
-                            },
+                            checked = ui.turnHeartbeat,
+                            onCheckedChange = viewModel::setTurnHeartbeat,
                         )
                     },
                     {
-                        CosmosRecordRow(
-                            title = "Sound cues",                                    subtitle = "Short tones at turns and when you mark a spot, panned to the arrow. Silent while a screen reader is on.",
-                            trailing = {
-                                Switch(
-                                    checked = ui.earcons,
-                                    onCheckedChange = viewModel::setEarcons,
-                                )
-                            },
+                        CosmosToggleRow(
+                            title = "Sound cues",
+                            subtitle = "Short tones at turns and when you mark a spot, panned to the arrow. Silent while a screen reader is on.",
+                            checked = ui.earcons,
+                            onCheckedChange = viewModel::setEarcons,
                         )
                     },
                 ),
@@ -210,16 +191,12 @@ fun SettingsScreen(
             CosmosRecordRows(
                 rows = listOf(
                     {
-                        CosmosRecordRow(
+                        CosmosToggleRow(
                             title = "Mobile data for landmarks",
                             subtitle = "When you choose to find landmarks while you walk, upload over mobile data " +
                                 "too, not only Wi-Fi. Never while roaming.",
-                            trailing = {
-                                Switch(
-                                    checked = ui.readyUploadMobileData,
-                                    onCheckedChange = viewModel::setReadyUploadMobileData,
-                                )
-                            },
+                            checked = ui.readyUploadMobileData,
+                            onCheckedChange = viewModel::setReadyUploadMobileData,
                         )
                     },
                     {
