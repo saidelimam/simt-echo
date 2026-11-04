@@ -40,8 +40,9 @@ class CameraPermissionGateUiTest {
             CameraPermissionGate { Text("secret-content") }
         }
         compose.onNodeWithText("Camera needed").assertIsDisplayed()
-        compose.onNodeWithText(cameraRationale()).assertIsDisplayed()
-        compose.onNodeWithText(cameraNotDeterminedMessage()).assertIsDisplayed()
+        // Both lines share the state's single body (review 0013 F5).
+        compose.onNodeWithText(cameraRationale(), substring = true).assertIsDisplayed()
+        compose.onNodeWithText(cameraNotDeterminedMessage(), substring = true).assertIsDisplayed()
         compose.onNodeWithText("Allow camera").assertIsDisplayed()
         compose.onNodeWithText("secret-content").assertDoesNotExist()
     }

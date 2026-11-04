@@ -137,7 +137,10 @@ class CosmosSurfacesTest {
         }
         compose.waitForIdle()
         compose.onNodeWithText("You are offline.").assertIsDisplayed()
-        compose.onNodeWithText("!").assertIsDisplayed()
+        // The mark is decoration: it is drawn, but spoken as the kind.
+        compose.onNodeWithText("!").assertDoesNotExist()
+        compose.onNodeWithContentDescription(CosmosBannerKind.Warning.spokenLabel)
+            .assertIsDisplayed()
         compose.onNodeWithText("Retry").performClick()
         assertTrue(acted)
     }
