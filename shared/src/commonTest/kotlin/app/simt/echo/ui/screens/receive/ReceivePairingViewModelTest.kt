@@ -9,9 +9,12 @@ import app.simt.echo.model.EchoSchemaVersion
 import app.simt.echo.platform.Endpoint
 import app.simt.echo.platform.FakeNfcPairingController
 import app.simt.echo.platform.FileSharing
+import app.simt.echo.platform.HapticPattern
+import app.simt.echo.platform.Haptics
 import app.simt.echo.platform.NfcCapabilities
 import app.simt.echo.platform.NfcEvent
 import app.simt.echo.platform.PeerTransport
+import app.simt.echo.platform.SilentHaptics
 import app.simt.echo.platform.TransferProgress
 import app.simt.echo.transfer.NfcReadiness
 import app.simt.echo.transfer.PairingFailure
@@ -89,6 +92,13 @@ class ReceivePairingViewModelTest {
         override fun stopOffer() = Unit
     }
 
+    private class RecordingHaptics : Haptics {
+        val played = mutableListOf<HapticPattern>()
+        override fun play(pattern: HapticPattern) {
+            played += pattern
+        }
+    }
+
     private class FakeSharing(private val picked: ByteArray? = null) : FileSharing {
         var picks = 0
         override suspend fun shareFile(path: Path, name: String, mime: String): Boolean = false
@@ -146,7 +156,8 @@ class ReceivePairingViewModelTest {
         rig: Rig,
         pairing: FakeNfcPairingController = FakeNfcPairingController(NfcCapabilities.NONE),
         sharing: FileSharing = FakeSharing(),
-    ) = ReceiveViewModel(rig.receiver, sharing, pairing = pairing)
+        haptics: Haptics = SilentHaptics,
+    ) = ReceiveViewModel(rig.receiver, sharing, haptics = haptics, pairing = pairing)
 
     @Test
     fun everyNewVisitStartsInQr() = runTest(dispatcher) {
@@ -342,6 +353,38 @@ class ReceivePairingViewModelTest {
         advanceUntilIdle()
         assertEquals(PairingFailure.InvalidInvitation, nfcVm.ui.value.pairingFailure)
     }
+
+    @Test
+    fun nfcReadingPulsesOnceAndAValidInvitationConfirmsAndRecordsTheSource() =
+        runTest(dispatcher) {
+            val rig = rig()
+            val uri = rig.offer()
+            val pairing = FakeNfcPairingController(
+                NfcCapabilities(canRead = true, canPresent = false, enabled = true),
+            )
+            val haptics = RecordingHaptics()
+            val vm = viewModel(rig, pairing, haptics = haptics)
+            advanceUntilIdle()
+            vm.selectMethod(PairingMethod.NFC)
+            advanceUntilIdle()
+            val attempt = vm.ui.value.generation.toLong()
+
+            // A reader connected: one short pulse and honest status, while
+            // the invitation chunks arrive (R14-08).
+            pairing.emit(NfcEvent.Reading(attempt))
+            advanceUntilIdle()
+            assertTrue(vm.ui.value.readingTap)
+            assertEquals(listOf(HapticPattern.TICK), haptics.played)
+
+            // A valid invitation confirms, once, and records how it arrived
+            // so the screen can say the phones may separate.
+            pairing.emit(NfcEvent.Invitation(attempt, uri))
+            advanceUntilIdle()
+            assertEquals(listOf(HapticPattern.TICK, HapticPattern.CONFIRM), haptics.played)
+            assertEquals(PairingSource.NFC, vm.ui.value.lastSource)
+            assertNotNull(vm.ui.value.preview)
+            assertFalse(vm.ui.value.readingTap, "the tap is over once the route is arriving")
+        }
 
     @Test
     fun aForeignQrIsRejectedAndRescanAcceptsTheNextCode() = runTest(dispatcher) {

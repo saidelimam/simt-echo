@@ -15,3 +15,12 @@ enum class HapticPattern {
 interface Haptics {
     fun play(pattern: HapticPattern)
 }
+
+/**
+ * No cues at all: the honest default for a host with no cue surface
+ * (previews, tests). Production wires the platform actual instead, so a
+ * missing wire is never mistaken for a design choice.
+ */
+object SilentHaptics : Haptics {
+    override fun play(pattern: HapticPattern) = Unit
+}

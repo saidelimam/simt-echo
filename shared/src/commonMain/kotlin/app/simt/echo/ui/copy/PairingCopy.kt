@@ -46,6 +46,8 @@ object PairingCopy {
     const val RECEIVE_SCAN_PROMPT = "Scan the other phone’s code"
     const val RECEIVE_CHOOSE_NFC = "Choose NFC to receive by tap."
     const val RECEIVE_FETCHING = "Fetching…"
+    const val RECEIVE_HOLD_STILL = "Hold still…"
+    const val RECEIVE_CONNECTED_SEPARATE = "Connected — you can separate the phones"
     const val RECEIVE_IMPORT_FILE = "Import file"
     const val RECEIVE_SAVE = "Save"
     const val RECEIVE_CANCEL = "Cancel"

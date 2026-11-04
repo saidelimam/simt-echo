@@ -8,8 +8,11 @@ import app.simt.echo.model.BundleBody
 import app.simt.echo.model.EchoSchemaVersion
 import app.simt.echo.model.NodeType
 import app.simt.echo.platform.FileSharing
+import app.simt.echo.platform.HapticPattern
+import app.simt.echo.platform.Haptics
 import app.simt.echo.platform.NfcEvent
 import app.simt.echo.platform.NfcPairingController
+import app.simt.echo.platform.SilentHaptics
 import app.simt.echo.platform.TransferProgress
 import app.simt.echo.platform.UnavailableNfcPairingController
 import app.simt.echo.platform.currentEpochMs
@@ -76,6 +79,10 @@ data class ReceiveUiState(
     val nfcReadiness: NfcReadiness = NfcReadiness.PREPARING,
     /** The reader is armed and waiting for a tap. */
     val nfcListening: Boolean = false,
+    /** A real reader connected and chunks are arriving (R14-08). */
+    val readingTap: Boolean = false,
+    /** How the invitation being fetched arrived; null before any attempt. */
+    val lastSource: PairingSource? = null,
     /**
      * Method switching is locked while a fetch or preview owns the screen:
      * abandoning it silently would strand a transfer.
@@ -102,6 +109,8 @@ const val UPDATE_ECHO_COPY = "Update ECHO to open this route."
 class ReceiveViewModel(
     private val service: TransferService,
     private val sharing: FileSharing,
+    /** Cues for a real contact; [SilentHaptics] when no surface is wired. */
+    private val haptics: Haptics = SilentHaptics,
     private val nowMs: () -> Long = { currentEpochMs() },
     /**
      * NFC acquisition for this visit (plan 0005 §4.1). The default reports
@@ -116,6 +125,8 @@ class ReceiveViewModel(
     val ui: StateFlow<ReceiveUiState> = _ui.asStateFlow()
 
     private var handledUri: String? = null
+    /** Attempt whose invitation already confirmed, so a chunk replay is silent. */
+    private var confirmedAttempt: Long? = null
     /** Last adapter state seen, so only a false -> true flip re-arms. */
     private var nfcWasEnabled: Boolean? = null
     private var previewBody: BundleBody? = null
@@ -187,6 +198,7 @@ class ReceiveViewModel(
             it.copy(
                 fetching = true,
                 methodLocked = true,
+                lastSource = source,
                 error = null,
                 pairingFailure = null,
                 progress = null,
@@ -211,6 +223,9 @@ class ReceiveViewModel(
             }
             return
         }
+        // A valid read is what the pulse confirms: the invitation parsed,
+        // so the phones are genuinely talking (R14-08).
+        if (_ui.value.lastSource == PairingSource.NFC) confirmTap(attemptId)
         try {
             val body = service.fetchPreview(invitation.getOrThrow().uri)
             if (!isAttempt(attemptId)) return
@@ -289,7 +304,7 @@ class ReceiveViewModel(
     private fun arm() {
         val next = _ui.value.generation + 1
         // A fresh attempt carries no previous failure: it is a new arm.
-        _ui.update { it.copy(generation = next, pairingFailure = null) }
+        _ui.update { it.copy(generation = next, pairingFailure = null, readingTap = false) }
         if (_ui.value.method == PairingMethod.NFC &&
             PairingPolicy.availableNow(PairingRole.RECEIVE, pairing.capabilities.value)
         ) {
@@ -304,7 +319,14 @@ class ReceiveViewModel(
         if (state.method == PairingMethod.NFC) {
             pairing.stopReading(state.generation.toLong())
         }
-        _ui.update { it.copy(nfcListening = false) }
+        _ui.update { it.copy(nfcListening = false, readingTap = false) }
+    }
+
+    /** One completion pulse per attempt, however many chunks replayed. */
+    private fun confirmTap(attemptId: Long) {
+        if (confirmedAttempt == attemptId) return
+        confirmedAttempt = attemptId
+        haptics.play(HapticPattern.CONFIRM)
     }
 
     private fun refreshReadiness() {
@@ -324,8 +346,11 @@ class ReceiveViewModel(
         if (closed) return
         val attempt = _ui.value.generation.toLong()
         when (event) {
+            // A reader connected: one short pulse, and the panel says what
+            // to do while the invitation arrives (R14-08).
             is NfcEvent.Reading -> if (event.attemptId == attempt) {
-                _ui.update { it.copy(nfcListening = true) }
+                if (!_ui.value.readingTap) haptics.play(HapticPattern.TICK)
+                _ui.update { it.copy(nfcListening = true, readingTap = true) }
             }
 
             is NfcEvent.Invitation -> onInvitation(event.uri, PairingSource.NFC, event.attemptId)
