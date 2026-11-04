@@ -299,3 +299,57 @@ describe("R10-12 (F11) error contract", () => {
     );
   });
 });
+
+describe("R12-11 rate-limit keys and response headers", () => {
+  class FakeLimiter {
+    keys: string[] = [];
+    constructor(private readonly ok: boolean) {}
+    async limit({ key }: { key: string }) {
+      this.keys.push(key);
+      return { success: this.ok };
+    }
+  }
+
+  it("never trusts X-Forwarded-For: a missing CF header is one bucket", async () => {
+    const limiter = new FakeLimiter(true);
+    const env = { RL: limiter, MEDIA: new FakeR2() } as unknown as Env;
+    await app.request("/v1/health", { headers: { "X-Forwarded-For": "1.1.1.1" } }, env);
+    await app.request("/v1/health", { headers: { "X-Forwarded-For": "2.2.2.2" } }, env);
+    expect(limiter.keys).toEqual(["pre:unknown", "pre:unknown"]);
+
+    await app.request("/v1/health", { headers: { "CF-Connecting-IP": "9.9.9.9" } }, env);
+    expect(limiter.keys.at(-1)).toBe("pre:9.9.9.9");
+  });
+
+  it("gives device minting its own stricter bucket", async () => {
+    const strict = new FakeLimiter(false);
+    const shared = new FakeLimiter(true);
+    const env = {
+      RL: shared,
+      RL_MINT: strict,
+      MEDIA: new FakeR2(),
+    } as unknown as Env;
+    const res = await app.request(
+      "/v1/device",
+      { method: "POST", headers: { "CF-Connecting-IP": "5.5.5.5" } },
+      env,
+    );
+    expect(res.status).toBe(429);
+    expect(strict.keys).toEqual(["mint:5.5.5.5"]);
+    // The shared bucket was not spent on a mint.
+    expect(shared.keys).toEqual([]);
+  });
+
+  it("sets nosniff on every response and no-store on the mint", async () => {
+    const ok = new FakeLimiter(true);
+    const env = { RL: ok, MEDIA: new FakeR2() } as unknown as Env;
+    const health = await app.request("/v1/health", {}, env);
+    expect(health.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    const minted = await app.request("/v1/device", { method: "POST" }, env);
+    expect(minted.status).toBe(200);
+    expect(minted.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(minted.headers.get("Cache-Control")).toBe("no-store");
+    const missing = await app.request("/v1/nope", {}, env);
+    expect(missing.headers.get("X-Content-Type-Options")).toBe("nosniff");
+  });
+});

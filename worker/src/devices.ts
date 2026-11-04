@@ -128,5 +128,8 @@ export async function postDevice(c: Context<AppEnv>): Promise<Response> {
     deviceKeyForId(id),
     new TextEncoder().encode(JSON.stringify(rec)),
   );
-  return c.json({ ok: true, device: key });
+  const res = c.json({ ok: true, device: key });
+  // R12-11: the body carries a credential — never cache it.
+  res.headers.set("Cache-Control", "no-store");
+  return res;
 }
