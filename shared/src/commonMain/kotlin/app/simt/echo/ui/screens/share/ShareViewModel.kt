@@ -225,14 +225,21 @@ class ShareViewModel(
             val items = service.describeExport(routeId)
             val selection = service.defaultSelectionFor(routeId)
             val summary = service.summaryFor(routeId, selection)
+            // The preview describes the route, not the offer: publish it
+            // before the offer completes, so a slow or failed offer can
+            // never leave "What others receive" on "Loading export…".
+            _ui.update {
+                it.copy(
+                    exportItems = items,
+                    selection = selection,
+                    summary = summary,
+                )
+            }
             val offer = service.offer(routeId, selection = selection)
             _ui.update {
                 it.copy(
                     qrUri = offer.qrUri,
                     relayAvailable = service.relayAvailable,
-                    exportItems = items,
-                    selection = selection,
-                    summary = summary,
                     offerGeneration = service.offerGeneration,
                     sent = false,
                     tapRead = false,
@@ -417,6 +424,15 @@ class ShareViewModel(
             val selection = _ui.value.selection
             val items = service.describeExport(routeId)
             val summary = service.summaryFor(routeId, selection)
+            // Preview first, offer second — same ordering as [start]: the
+            // route data must not wait on the offer's outcome.
+            _ui.update {
+                it.copy(
+                    exportItems = items,
+                    selection = selection,
+                    summary = summary,
+                )
+            }
             val offer = service.offer(
                 routeId,
                 useRelay = _ui.value.relayOffered,
@@ -426,9 +442,6 @@ class ShareViewModel(
                 it.copy(
                     qrUri = offer.qrUri,
                     relayAvailable = service.relayAvailable,
-                    exportItems = items,
-                    selection = selection,
-                    summary = summary,
                     offerGeneration = service.offerGeneration,
                     error = null,
                 )

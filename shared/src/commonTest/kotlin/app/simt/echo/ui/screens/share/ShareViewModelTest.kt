@@ -374,6 +374,23 @@ class ShareViewModelTest {
     }
 
     @Test
+    fun failedOfferLeavesTheExportPreviewLoaded() = runTest(dispatcher) {
+        val (service, transport) = serviceWithRoute()
+        transport.offerFails = true
+        val vm = ShareViewModel(Fixtures.L_ROUTE.routeId, service, FakeHaptics(), FakeFileSharing())
+        advanceUntilIdle()
+
+        // The offer failed: no QR, recoverable error…
+        assertNull(vm.ui.value.qrUri)
+        assertNotNull(vm.ui.value.error)
+        // …but "What others receive" describes the route, not the offer —
+        // it must not sit on "Loading export…" (summary null, items empty)
+        // until the user happens to change a setting.
+        assertTrue(vm.ui.value.exportItems.isNotEmpty())
+        assertNotNull(vm.ui.value.summary)
+    }
+
+    @Test
     fun retryOnPersistentFailureKeepsRecoverableError() = runTest(dispatcher) {
         val fileSystem = FakeFileSystem()
         val store = FileStore(fileSystem, "/data".toPath())
