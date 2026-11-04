@@ -16,8 +16,9 @@ class EchoApplication : Application() {
     val graph: AppGraph by lazy {
         AppGraph(
             platform = AndroidPlatform(dataDir = filesDir.absolutePath),
+            // R12-02: the bearer is minted per install and persisted; no
+            // shared app token is compiled into the build.
             apiBaseUrl = BuildConfig.WORKERS_API_BASE,
-            appToken = BuildConfig.ECHO_APP_TOKEN,
             // W5-01: a .litertlm pushed into the app's models directory
             // (adb) enables the on-phone provider; absent = LAN/manual.
             onPhoneModelPath = getExternalFilesDir("models")

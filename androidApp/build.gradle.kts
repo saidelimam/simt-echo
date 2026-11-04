@@ -21,7 +21,8 @@ android {
 
     defaultConfig {
         // Plan §0.6: BuildConfig constants from gitignored local.properties.
-        buildConfigField("String", "ECHO_APP_TOKEN", "\"" + (localProperties.getProperty("ECHO_APP_TOKEN", "") ?: "") + "\"")
+        // R12-02: no app token — the per-install device key is minted at
+        // first run and persisted in app-private storage.
         buildConfigField("String", "WORKERS_API_BASE", "\"" + (localProperties.getProperty("WORKERS_API_BASE", "") ?: "") + "\"")
         applicationId = "app.simt.echo"
         // W11-04: on-device evidence for the ML Kit face scanner.
@@ -58,18 +59,15 @@ android {
         release {
             // W9-01: release builds talk to production without developer
             // local.properties. WORKERS_API_BASE defaults to the deployed
-            // worker (env ECHO_PROD_API_BASE overrides); ECHO_APP_TOKEN
-            // comes ONLY from env ECHO_PROD_APP_TOKEN (never committed).
+            // worker (env ECHO_PROD_API_BASE overrides). R12-02: there is
+            // no app token to inject; the device key is minted at runtime.
             // Debug keeps the local.properties behaviour above.
             buildConfigField(
                 "String", "WORKERS_API_BASE",
                 "\"" + (System.getenv("ECHO_PROD_API_BASE")
                     ?: "https://api.echo.simt.app") + "\"",
             )
-            buildConfigField(
-                "String", "ECHO_APP_TOKEN",
-                "\"" + (System.getenv("ECHO_PROD_APP_TOKEN") ?: "") + "\"",
-            )            // W9-10 minify decision: stays OFF — see docs/release.md.
+            // W9-10 minify decision: stays OFF — see docs/release.md.
             // Keep rules are committed (proguard-rules.pro) for the future
             // enablement; the release smoke run below proves the shipped
             // configuration, not an untested minified one.

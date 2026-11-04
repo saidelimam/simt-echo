@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { app } from "./index";
+import { deviceIdForKey, deviceKeyForId, deviceVerifier } from "./devices";
 import { bearer, mintDevice, seedDevice } from "./testkit";
 
 // R10-01: the bearer is a per-install device key resolved against R2.
@@ -129,6 +130,68 @@ describe("W0-05 auth + rate limit gate (R10-01 device keys)", () => {
     const allowed = { limit: async () => ({ success: true }) };
     const res = await app.request("/v1/no-such-route", { headers: bearer(key) }, envFor(media, allowed));
     expect(res.status).toBe(404);
+  });
+
+  // R12-02 (review 0012, F2): the record holds a verifier digest, never the
+  // bearer, and a legacy plaintext record is upgraded on first use.
+  it("stores only a verifier hash for a minted key, never the bearer", async () => {
+    const media = new FakeR2();
+    const minted = await app.request("/v1/device", { method: "POST" }, envFor(media));
+    expect(minted.status).toBe(200);
+    const { device } = (await minted.json()) as { device: string };
+    const raw = new TextDecoder().decode(
+      media.store.get(deviceKeyForId(await deviceIdForKey(device)))!,
+    );
+    expect(raw).not.toContain(device);
+    expect(raw).not.toContain("dk_");
+    const rec = JSON.parse(raw) as Record<string, unknown>;
+    expect(Object.keys(rec).sort()).toEqual(["createdAt", "verifier"]);
+    expect(rec.verifier).toBe(await deviceVerifier(device));
+  });
+
+  it("upgrades a legacy plaintext record on first use", async () => {
+    const media = new FakeR2();
+    const id = await deviceIdForKey(KEY);
+    await media.put(
+      deviceKeyForId(id),
+      new TextEncoder().encode(JSON.stringify({ key: KEY, createdAt: 0 })),
+    );
+    const allowed = { limit: async () => ({ success: true }) };
+    // Reaching notFound proves the gate accepted the legacy key.
+    const res = await app.request(
+      "/v1/no-such-route",
+      { headers: bearer(KEY) },
+      envFor(media, allowed),
+    );
+    expect(res.status).toBe(404);
+    const raw = new TextDecoder().decode(media.store.get(deviceKeyForId(id))!);
+    expect(raw).not.toContain(KEY);
+    const rec = JSON.parse(raw) as Record<string, unknown>;
+    expect(rec.verifier).toBe(await deviceVerifier(KEY));
+    expect(rec.createdAt).toBe(0);
+  });
+
+  it("rejects a record whose verifier belongs to another key", async () => {
+    const media = new FakeR2();
+    const id = await deviceIdForKey(KEY);
+    await media.put(
+      deviceKeyForId(id),
+      new TextEncoder().encode(
+        JSON.stringify({ verifier: await deviceVerifier("dk_test_install_other"), createdAt: 0 }),
+      ),
+    );
+    const allowed = { limit: async () => ({ success: true }) };
+    const res = await app.request("/v1/jobs", { headers: bearer(KEY) }, envFor(media, allowed));
+    expect(res.status).toBe(401);
+  });
+
+  it("rejects a record with neither verifier nor key", async () => {
+    const media = new FakeR2();
+    const id = await deviceIdForKey(KEY);
+    await media.put(deviceKeyForId(id), new TextEncoder().encode(JSON.stringify({ createdAt: 0 })));
+    const allowed = { limit: async () => ({ success: true }) };
+    const res = await app.request("/v1/jobs", { headers: bearer(KEY) }, envFor(media, allowed));
+    expect(res.status).toBe(401);
   });
 
   it("ignores ECHO_APP_TOKEN entirely: the retired token authenticates nothing", async () => {
