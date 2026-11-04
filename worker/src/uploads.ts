@@ -414,6 +414,13 @@ export async function handleCreateJobV11(c: Context<AppEnv>): Promise<Response> 
           ? c.json({ ok: false, error: "upload_expired" }, 410)
           : c.json({ ok: false, error: "upload_not_found" }, 404);
       }
+      // R12-01 (review 0012, F1): a session of another install is
+      // indistinguishable from a missing one, and the check precedes every
+      // list, head, copy and consume below — a foreign create can neither
+      // read the staged media nor destroy the owner's session.
+      if (loaded.meta.owner !== c.get("deviceId")) {
+        return c.json({ ok: false, error: "upload_not_found" }, 404);
+      }
       loadedBySession.push({ id: sessionId, meta: loaded.meta });
     }
     const allowed = new Set(
