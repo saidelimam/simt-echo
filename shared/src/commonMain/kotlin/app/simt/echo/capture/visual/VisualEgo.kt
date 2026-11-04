@@ -15,6 +15,9 @@ class VisualEgo {
         internal set
     var yawSigmaRadPerSec = Double.POSITIVE_INFINITY
         internal set
+    /** Standard error of [expansionPerSec] from the fitted normal equations. */
+    var expansionSigmaPerSec = Double.POSITIVE_INFINITY
+        internal set
     /** Statistical distinction from zero, NOT a geometric/physical validity claim. */
     val yawResolved: Boolean get() = yawSigmaRadPerSec.isFinite() && abs(yawResidualRadPerSec) > 3.0 * yawSigmaRadPerSec
     var confidence01 = 0.0
@@ -32,6 +35,7 @@ class VisualEgo {
         foeY = Double.NaN
         yawResidualRadPerSec = 0.0
         yawSigmaRadPerSec = Double.POSITIVE_INFINITY
+        expansionSigmaPerSec = Double.POSITIVE_INFINITY
         confidence01 = 0.0
         inliers = 0
         hasFoe = false
