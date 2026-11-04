@@ -19,6 +19,7 @@ import app.simt.echo.transfer.PairingFailure
 import app.simt.echo.transfer.PairingMethod
 import app.simt.echo.transfer.QrPayload
 import app.simt.echo.transfer.RelayClient
+import app.simt.echo.transfer.START_PHOTO_ITEM_ID
 import app.simt.echo.transfer.TransferService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -380,7 +381,7 @@ class SharePairingViewModelTest {
     }
 
     @Test
-    fun stoppingPublishesNothingAndStaysReusable() = runTest(dispatcher) {
+    fun pausingWithdrawsNfcButKeepsServingTheLiveOffer() = runTest(dispatcher) {
         val rig = rig()
         val pairing = FakeNfcPairingController(capabilities())
         val vm = viewModel(rig, pairing)
@@ -393,16 +394,52 @@ class SharePairingViewModelTest {
         advanceUntilIdle()
         assertFalse(vm.ui.value.readyToTap, "a paused screen is never ready to tap")
         assertEquals(listOf(first.offerGeneration), pairing.clearedGenerations)
-        assertEquals(1, rig.transport.stopCalls)
+        // The peer may be mid-download after a tap: pausing Share must not
+        // tear down the LAN server under it (R14-05).
+        assertEquals(0, rig.transport.stopCalls)
+        assertEquals(first.qrUri, vm.ui.value.qrUri)
 
-        // The destination survived: coming back offers afresh.
+        // The destination survived: coming back re-presents the same offer.
         vm.onResumed()
         advanceUntilIdle()
         val resumed = vm.ui.value
-        assertNotNull(resumed.qrUri)
-        assertEquals(2, rig.transport.offers)
-        assertTrue(resumed.offerGeneration > first.offerGeneration)
+        assertEquals(first.qrUri, resumed.qrUri, "resume is not a re-seal")
+        assertEquals(first.offerGeneration, resumed.offerGeneration)
+        assertEquals(1, rig.transport.offers)
+        assertEquals(2, pairing.published.size, "the offer is published again for a tap")
+        assertEquals(first.offerGeneration, pairing.published.last().first)
         assertFalse(resumed.sent)
+    }
+
+    @Test
+    fun aPauseAndResumeKeepsTheUsersExportChoices() = runTest(dispatcher) {
+        val rig = rig()
+        val pairing = FakeNfcPairingController(capabilities())
+        val vm = viewModel(rig, pairing)
+        advanceUntilIdle()
+        val included = vm.ui.value.selection.includeStartPhoto
+
+        vm.toggleAsset(START_PHOTO_ITEM_ID, !included)
+        advanceUntilIdle()
+        val offered = vm.ui.value
+        assertEquals(!included, offered.selection.includeStartPhoto)
+        pairing.confirmPublished(offered.offerGeneration)
+        advanceUntilIdle()
+
+        vm.onPaused()
+        advanceUntilIdle()
+        vm.onResumed()
+        advanceUntilIdle()
+
+        val resumed = vm.ui.value
+        assertEquals(
+            !included,
+            resumed.selection.includeStartPhoto,
+            "a resume must not silently re-apply the privacy defaults",
+        )
+        assertEquals(offered.qrUri, resumed.qrUri)
+        assertEquals(offered.offerGeneration, resumed.offerGeneration)
+        assertEquals(2, rig.transport.offers, "first offer plus the toggle's replacement")
     }
 
     @Test
