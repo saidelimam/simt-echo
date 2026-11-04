@@ -18,6 +18,7 @@ import app.simt.echo.host.HostTestResourcesShadow
 import app.simt.echo.host.RobolectricActivityRule
 import app.simt.echo.media.CropBox
 import app.simt.echo.Fixtures
+import app.simt.echo.ui.components.CosmosButtonTag
 import okio.Path.Companion.toPath
 import org.junit.Rule
 import org.junit.Test
@@ -40,7 +41,15 @@ import kotlin.test.assertTrue
  * independent of the production formula.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36], manifest = Config.NONE, shadows = [HostTestResourcesShadow::class])
+@Config(
+    sdk = [36],
+    manifest = Config.NONE,
+    shadows = [HostTestResourcesShadow::class],
+    // Phone-sized window: the overlay's canvas is a weight below its form,
+    // so the default 470 dp Robolectric window leaves too little room for
+    // the drag the test is about.
+    qualifiers = "w411dp-h891dp",
+)
 class DrawOverlayUiTest {
 
     private val activityRule = RobolectricActivityRule()
@@ -67,7 +76,10 @@ class DrawOverlayUiTest {
         }
         // Action buttons sit below the canvas, never overlapping the photo.
         val canvasBounds = compose.onNodeWithTag(DrawCanvasTag).getUnclippedBoundsInRoot()
-        val clearBounds = compose.onNodeWithText("Clear").getUnclippedBoundsInRoot()
+        // The name field now also offers a Clear button, so address the
+        // overlay's own command by tag.
+        val clearNode = compose.onNodeWithTag("$CosmosButtonTag:Clear")
+        val clearBounds = clearNode.getUnclippedBoundsInRoot()
         val useBoxBounds = compose.onNodeWithText("Use box").getUnclippedBoundsInRoot()
         assertTrue(clearBounds.top >= canvasBounds.bottom, "Clear button must sit below the canvas")
         assertTrue(useBoxBounds.top >= canvasBounds.bottom, "Use box button must sit below the canvas")
@@ -86,7 +98,7 @@ class DrawOverlayUiTest {
         }
         // The drag must arm the confirm action; a disabled "Use box" is a
         // no-op click, so assert the gesture registered before confirming.
-        compose.onNodeWithText("Clear").assertIsEnabled()
+        clearNode.assertIsEnabled()
         compose.onNodeWithText("Use box").performClick()
 
         val box = assertNotNull(captured, "confirm must report the drawn box")

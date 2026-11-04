@@ -74,6 +74,10 @@ const val HealthHeaderTag = "healthHeader"
 /** Semantics tag for the full-screen keyframe inspector. */
 const val InspectorTag = "keyframeInspector"
 
+private const val INSPECTOR_ZOOM_MIN = 1f
+private const val INSPECTOR_ZOOM_MAX = 5f
+private const val INSPECTOR_ZOOM_STEP = 1f
+
 /**
  * Shared-element key for a node's keyframe: the film-strip cell and the
  * full-screen inspector both name it, so the frame flies between them on
@@ -423,7 +427,10 @@ fun KeyframeInspector(
             .fillMaxSize()
             .padding(24.dp)
             .testTag(InspectorTag)
-            .semantics { contentDescription = "Full-frame inspector: $title. Pinch to zoom" },
+            .semantics {
+                contentDescription =
+                    "Full-frame inspector: $title. Pinch or use the zoom buttons"
+            },
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(text = title, style = MaterialTheme.typography.titleLarge)
@@ -457,6 +464,40 @@ fun KeyframeInspector(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        // Pinch is a shortcut, never the only way in: the same range is on
+        // three commands a keyboard, switch or TalkBack user can activate
+        // (review 0013 F3).
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            CosmosSecondaryButton(
+                label = "Zoom out",
+                onClick = {
+                    scale = (scale - INSPECTOR_ZOOM_STEP).coerceIn(INSPECTOR_ZOOM_MIN, INSPECTOR_ZOOM_MAX)
+                    if (scale == INSPECTOR_ZOOM_MIN) offset = Offset.Zero
+                },
+                enabled = scale > INSPECTOR_ZOOM_MIN,
+                modifier = Modifier.weight(1f),
+            )
+            CosmosSecondaryButton(
+                label = "Reset zoom",
+                onClick = {
+                    scale = INSPECTOR_ZOOM_MIN
+                    offset = Offset.Zero
+                },
+                enabled = scale > INSPECTOR_ZOOM_MIN || offset != Offset.Zero,
+                modifier = Modifier.weight(1f),
+            )
+            CosmosSecondaryButton(
+                label = "Zoom in",
+                onClick = {
+                    scale = (scale + INSPECTOR_ZOOM_STEP).coerceIn(INSPECTOR_ZOOM_MIN, INSPECTOR_ZOOM_MAX)
+                },
+                enabled = scale < INSPECTOR_ZOOM_MAX,
+                modifier = Modifier.weight(1f),
+            )
+        }
         CosmosSecondaryButton(label = "Close", onClick = onClose, modifier = Modifier.fillMaxWidth())
     }
 }

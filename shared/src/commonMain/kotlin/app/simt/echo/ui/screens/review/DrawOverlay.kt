@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -29,6 +28,9 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -37,10 +39,19 @@ import app.simt.echo.media.cropBoxFromRect
 import app.simt.echo.platform.decodeImage
 import app.simt.echo.ui.components.CosmosPrimaryButton
 import app.simt.echo.ui.components.CosmosSecondaryButton
+import app.simt.echo.ui.components.CosmosTextField
 import kotlin.math.roundToInt
 
 /** Semantics tag for the draw canvas (headless UI gate target). */
 const val DrawCanvasTag = "drawCanvas"
+
+/** Preset crop covering [fraction] of each axis, centred, in canvas pixels. */
+internal fun presetCropBox(fraction: Float, widthPx: Float, heightPx: Float): Rect {
+    val f = fraction.coerceIn(0.05f, 1f)
+    val insetW = widthPx * (1f - f) / 2f
+    val insetH = heightPx * (1f - f) / 2f
+    return Rect(insetW, insetH, widthPx - insetW, heightPx - insetH)
+}
 
 /**
  * Full-screen draw overlay: drag a rectangle over the hero, name it,
@@ -67,7 +78,7 @@ internal fun DrawOverlay(
     val current = box
     val helperCopy = when {
         bitmap == null -> "No keyframe is available for this spot yet."
-        current == null -> "Drag a rectangle on the photo around the landmark."
+        current == null -> "Drag around the landmark, or start with a preset box."
         title.isBlank() -> "Enter a landmark name below to enable Use box."
         else -> "Landmark framed and named — tap Use box to save."
     }
@@ -130,6 +141,10 @@ internal fun DrawOverlay(
                         modifier = Modifier
                             .fillMaxSize()
                             .testTag(DrawCanvasTag)
+                            .semantics {
+                                contentDescription = "Photo for landmark framing"
+                                stateDescription = if (current == null) "No box yet" else "Box set"
+                            }
                             .pointerInput(nodeId) {
                                 detectDragGestures(
                                     onDragStart = { offset ->
@@ -186,13 +201,29 @@ internal fun DrawOverlay(
                 }
             }
         }
-        OutlinedTextField(
+        // Presets give keyboard, switch-access and TalkBack users a way to
+        // frame a landmark without a two-pointer drag (review 0013 F3).
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            CosmosSecondaryButton(
+                label = "Frame centre",
+                onClick = { box = presetCropBox(0.6f, canvasWidthPx, canvasHeightPx) },
+                enabled = bitmap != null,
+                modifier = Modifier.weight(1f),
+            )
+            CosmosSecondaryButton(
+                label = "Wide box",
+                onClick = { box = presetCropBox(0.85f, canvasWidthPx, canvasHeightPx) },
+                enabled = bitmap != null,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        CosmosTextField(
+            label = "Landmark name",
             value = title,
             onValueChange = onTitle,
-            label = { Text(text = "Landmark name") },
-            singleLine = true,
-            shape = MaterialTheme.shapes.small,
-            modifier = Modifier.fillMaxWidth(),
         )
         Row(
             modifier = Modifier.fillMaxWidth(),
