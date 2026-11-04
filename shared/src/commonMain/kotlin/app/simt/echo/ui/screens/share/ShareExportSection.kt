@@ -5,9 +5,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -28,7 +27,9 @@ import app.simt.echo.transfer.PERCEPTION_DISCLOSURE
 import app.simt.echo.transfer.START_PHOTO_ITEM_ID
 import app.simt.echo.ui.atmosphere.CanopyPanel
 import app.simt.echo.ui.atmosphere.CanopyVariant
+import app.simt.echo.ui.components.CosmosRadioRow
 import app.simt.echo.ui.components.CosmosTertiaryButton
+import app.simt.echo.ui.components.CosmosToggleRow
 import app.simt.echo.ui.copy.UNTITLED_WALK
 import app.simt.echo.ui.copy.createdCopy
 import app.simt.echo.ui.copy.expiryCopy
@@ -37,6 +38,7 @@ import app.simt.echo.ui.theme.EchoSpace8
 
 const val ShareExportSectionTag = "ShareExportSection"
 const val ShareExportToggleTag = "ShareExportToggle"
+const val ShareExportItemTag = "ShareExportItem"
 const val SharePerceptionDisclosureTag = "SharePerceptionDisclosure"
 
 /**
@@ -189,22 +191,13 @@ private fun ExportPreview(
             } else {
                 item.id !in selection.excludedCropIds
             }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(EchoSpace8),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(text = item.label, style = MaterialTheme.typography.bodyLarge)
-                    if (item.privacyRisk) {
-                        Text(
-                            text = "May show people or screens — off by default",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                    }
-                }
-                Switch(checked = included, onCheckedChange = { onToggle(item.id, it) })
-            }
+            CosmosToggleRow(
+                title = item.label,
+                subtitle = if (item.privacyRisk) "May show people or screens — off by default" else null,
+                checked = included,
+                onCheckedChange = { onToggle(item.id, it) },
+                modifier = Modifier.testTag("$ShareExportItemTag:${item.id}"),
+            )
         }
         Text(
             text = "Link expires",
@@ -217,17 +210,13 @@ private fun ExportPreview(
             add(ExpiryOption.HOURS_24)
             add(ExpiryOption.DAYS_7)
         }
-        expiryOptions.forEach { option ->
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(EchoSpace8),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                RadioButton(
+        Column(modifier = Modifier.selectableGroup()) {
+            expiryOptions.forEach { option ->
+                CosmosRadioRow(
+                    label = expiryLabel(option),
                     selected = selection.expiry == option,
-                    onClick = { onExpiry(option) },
+                    onSelect = { onExpiry(option) },
                 )
-                Text(text = expiryLabel(option), style = MaterialTheme.typography.bodyLarge)
             }
         }
         Text(text = RAW_VIDEO_NOTE, style = MaterialTheme.typography.bodyMedium)

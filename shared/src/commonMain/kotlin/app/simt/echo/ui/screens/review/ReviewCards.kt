@@ -16,7 +16,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
@@ -34,6 +33,7 @@ import app.simt.echo.ui.components.CosmosPrimaryButton
 import app.simt.echo.ui.components.CosmosRecordRow
 import app.simt.echo.ui.components.CosmosSecondaryButton
 import app.simt.echo.ui.components.CosmosTextField
+import app.simt.echo.ui.components.CosmosToggleRow
 import app.simt.echo.ui.components.CropImage
 import app.simt.echo.ui.motion.revealOnEnter
 import app.simt.echo.ui.theme.EchoExtras
@@ -310,20 +310,11 @@ fun LandmarkRow(
                 value = landmark.cue,
                 onValueChange = { onEdit(landmark.id, landmark.title, it, landmark.privacyRisk) },
             )
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "Sensitive (people, plates, screens)",
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.weight(1f),
-                )
-                Switch(
-                    checked = landmark.privacyRisk,
-                    onCheckedChange = { onEdit(landmark.id, landmark.title, landmark.cue, it) },
-                )
-            }
+            CosmosToggleRow(
+                title = "Sensitive (people, plates, screens)",
+                checked = landmark.privacyRisk,
+                onCheckedChange = { onEdit(landmark.id, landmark.title, landmark.cue, it) },
+            )
             CosmosSecondaryButton(label = "Delete", onClick = { onDelete(landmark.id) })
         }
     }
