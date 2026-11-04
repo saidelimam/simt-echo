@@ -39,8 +39,10 @@ private class AgslEchoField : EchoFieldRenderer {
     private val brush = ShaderBrush(shader)
 
     override fun draw(scope: DrawScope, uniforms: EchoFieldUniforms) = with(scope) {
+        if (size.width <= 0f || size.height <= 0f) return@with
         shader.setFloatUniform("uSize", size.width, size.height)
         shader.setFloatUniform("uTime", uniforms.timeSec)
+        shader.setFloatUniform("uLoop", uniforms.loopSec)
         shader.setFloatUniform("uTilt", uniforms.tilt.x, uniforms.tilt.y)
         shader.setFloatUniform("uHorizon", uniforms.horizon)
         shader.setFloatUniform("uFloor", uniforms.floor)
@@ -62,6 +64,7 @@ private class AgslEchoField : EchoFieldRenderer {
 private const val ECHO_FIELD_AGSL = """
 uniform float2 uSize;
 uniform float uTime;
+uniform float uLoop;
 uniform float2 uTilt;
 uniform float uHorizon;
 uniform float uFloor;
@@ -102,6 +105,7 @@ float fbm(float2 p) {
 
 half4 main(float2 fc) {
     float w = uSize.x;
+    if (w <= 0.0 || uSize.y <= 0.0) return uVoid;
     float2 disp = float2(0.0);
     float glow = 0.0;
     for (int i = 0; i < 4; i++) {
@@ -109,29 +113,41 @@ half4 main(float2 fc) {
         if (r.w > 0.0) {
             float2 dv = fc - r.xy;
             float d = length(dv);
-            float k = (d - r.z) / (w * 0.035);
+            float k = (d - r.z) / max(w * 0.035, 1.0);
             float band = exp(-k * k) * r.w;
             glow += band;
             disp += (dv / max(d, 1.0)) * band * w * 0.04;
         }
     }
     float2 p = (fc + disp) / w + uTilt * 0.035;
-    float t = uTime;
-    float2 q = float2(fbm(p * 1.8 + float2(0.0, t * 0.05)), fbm(p * 1.8 + float2(5.2, -t * 0.04)));
+    // Seamless loop: every time-dependent offset rides one circle whose
+    // period is uLoop, so the last frame of a loop is the first frame and the
+    // field's motion is identical at both ends (no seam, no jumps).
+    float loopA = 6.2831853 * uTime / max(uLoop, 1.0);
+    float2 orbit = float2(cos(loopA), sin(loopA));
+    float2 q = float2(
+        fbm(p * 1.8 + orbit * 0.30 + float2(0.0, 0.02)),
+        fbm(p * 1.8 + float2(5.2, 0.0) - orbit.yx * 0.24)
+    );
     // Curtains: noise stretched vertically reads as hanging aurora folds.
-    float n = fbm(float2(p.x * 3.4, p.y * 0.55) + q * 1.3 + float2(t * 0.03, 0.0));
+    float n = fbm(float2(p.x * 3.4, p.y * 0.55) + q * 1.3 + orbit * 0.30);
     float y = fc.y / uSize.y;
     float edge = uHorizon * (0.75 + 0.5 * q.y) + (n - 0.5) * 0.10;
-    float sky = 1.0 - smoothstep(edge * 0.15, edge, y);
+    // smoothstep needs edge0 < edge1: keep the band strictly positive.
+    float skyEdge = max(edge, 0.02);
+    float sky = 1.0 - smoothstep(skyEdge * 0.15, skyEdge, y);
     // An aurora is brightest along its lower hem.
     float hemK = (y - edge * 0.78) / 0.045;
     float hem = exp(-hemK * hemK);
-    float ground = smoothstep(1.0 - uFloor, 1.0, y) * 0.6;
+    // Dawn sets uFloor = 0; smoothstep(1.0, 1.0, y) is undefined and leaked NaN.
+    float ground = uFloor > 0.0 ? smoothstep(1.0 - uFloor, 1.0, y) * 0.6 : 0.0;
     float curtain = smoothstep(0.32, 0.78, n);
     half3 aur = mix(uCool.rgb, uRose.rgb, half(smoothstep(0.3, 0.7, q.x)));
     aur = mix(aur, uWarm.rgb, half(smoothstep(0.5, 0.85, n)));
     float a = (sky * (0.2 + 0.8 * curtain) + hem * curtain * 0.9 + ground * curtain) * uIntensity + glow * 0.5;
-    return half4(mix(uVoid.rgb, aur, half(clamp(a, 0.0, 1.0))), 1.0);
+    // A non-positive comparison also maps a NaN to 0, so no NaN can reach the pixel.
+    a = clamp(a > 0.0 ? a : 0.0, 0.0, 1.0);
+    return half4(mix(uVoid.rgb, aur, half(a)), 1.0);
 }
 """
 

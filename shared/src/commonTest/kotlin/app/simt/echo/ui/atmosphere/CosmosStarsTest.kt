@@ -81,6 +81,23 @@ class CosmosStarsTest {
     }
 
     @Test
+    fun twinkleHasNoPopAcrossThePhaseWrap() {
+        // Offset 0.31 makes the phase cross 1.0 mid-sweep: the old sawtooth
+        // dropped from ~1.0 to 0.55 alpha there, a visible once-per-sweep pop.
+        val star = CosmosStar(0.05f, 0.05f, 1.6f, 0.95f, 2, twinkleOffset = 0.31f, spike = false)
+        var previous = twinkleAlpha(star, 0)
+        for (step in 1..COSMOS_TWINKLE_STEPS * 4) {
+            val next = twinkleAlpha(star, step)
+            assertTrue(
+                kotlin.math.abs(next - previous) < 0.45f * star.alpha * 0.2f,
+                "step $step jumps from $previous to $next",
+            )
+            previous = next
+        }
+        assertEquals(twinkleAlpha(star, 0), twinkleAlpha(star, COSMOS_TWINKLE_STEPS), 1e-4f)
+    }
+
+    @Test
     fun onlyAccentStarsTwinkle() {
         val stars = generateCosmosStars(400f, 800f, CosmosVariant.Home, lowPower = false)
         val accents = stars.filter { it.twinkles() }

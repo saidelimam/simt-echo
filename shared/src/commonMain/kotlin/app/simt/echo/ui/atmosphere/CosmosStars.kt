@@ -1,5 +1,6 @@
 package app.simt.echo.ui.atmosphere
 
+import kotlin.math.cos
 import kotlin.random.Random
 
 // Pure edge-band starfield model, docs/research/cosmos-echo-freeze.md §9.3
@@ -125,9 +126,17 @@ internal fun twinkleStep(phase: Float): Int =
 /** True for the accent stars that twinkle (kinds 2 and 3); dust and ink stars never change. */
 internal fun CosmosStar.twinkles(): Boolean = kind >= 2
 
-/** Alpha of [star] at a quantised twinkle [step]; non-twinkling stars keep their own alpha. */
+private const val TWO_PI = 6.2831855f
+
+/**
+ * Alpha of [star] at a quantised twinkle [step]; non-twinkling stars keep
+ * their own alpha. The wave is a raised cosine rather than a sawtooth: it is
+ * periodic and continuous across the phase wrap, so an accent star never
+ * pops once per sweep when `phase` crosses 1.0.
+ */
 internal fun twinkleAlpha(star: CosmosStar, step: Int): Float {
     if (!star.twinkles()) return star.alpha
-    val phase = (step.toFloat() / COSMOS_TWINKLE_STEPS + star.twinkleOffset) % 1f
-    return star.alpha * (0.55f + 0.45f * phase)
+    val phase = step.toFloat() / COSMOS_TWINKLE_STEPS + star.twinkleOffset
+    val wave = 0.5f - 0.5f * cos(TWO_PI * phase)
+    return star.alpha * (0.55f + 0.45f * wave)
 }

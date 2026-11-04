@@ -16,6 +16,10 @@ class EchoFieldUniforms {
     var horizon: Float = 0.30f
     var floor: Float = 0.16f
     var intensity: Float = 0.35f
+
+    /** Seamless-loop period; the shader's time-dependent offsets are periodic in it. */
+    var loopSec: Float = ECHO_FIELD_LOOP_SEC
+
     var void: Color = Color.Black
     var warm: Color = Color.Black
     var rose: Color = Color.Black

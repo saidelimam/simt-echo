@@ -40,6 +40,23 @@ const val EchoFieldTestTag = "EchoField"
 /** Idle aurora frame interval: the field breathes at 30 fps, not display rate. */
 internal const val ECHO_FIELD_IDLE_FRAME_MS = 33L
 
+/** Seamless echo-field loop: the shader's motion returns to its first frame here. */
+internal const val ECHO_FIELD_LOOP_SEC = 60f
+
+/** [ECHO_FIELD_LOOP_SEC] in milliseconds, for the frame clock. */
+internal const val ECHO_FIELD_LOOP_MS = 60_000L
+
+/**
+ * Shader time, wrapped to [ECHO_FIELD_LOOP_SEC]. Bounding it keeps a field
+ * left running for days from losing float precision (which showed up as a
+ * stuttering, then frozen, aurora), and the shader is periodic in this
+ * period, so the wrap itself is invisible.
+ */
+internal fun echoFieldLoopSec(nowMs: Long): Float {
+    val wrapped = ((nowMs % ECHO_FIELD_LOOP_MS) + ECHO_FIELD_LOOP_MS) % ECHO_FIELD_LOOP_MS
+    return wrapped / 1000f
+}
+
 /** Star parallax: degrees of starfield rotation per unit of tilt. */
 private const val TILT_STAR_DEGREES = 1.2f
 
@@ -94,7 +111,7 @@ fun EchoField(
     Box(modifier = modifier.fillMaxSize()) {
         Canvas(modifier = Modifier.fillMaxSize().testTag(EchoFieldTestTag)) {
             val now = frameMs.longValue
-            uniforms.timeSec = if (animated) now / 1000f else 0f
+            uniforms.timeSec = if (animated) echoFieldLoopSec(now) else 0f
             uniforms.tilt = tilt.value
             if (animated && ripples != null) {
                 ripples.writeUniforms(now, minOf(size.width, size.height), uniforms.ripples)
@@ -120,6 +137,7 @@ fun EchoField(
  */
 internal class CanvasEchoField : EchoFieldRenderer {
     override fun draw(scope: DrawScope, uniforms: EchoFieldUniforms) = with(scope) {
+        if (size.width <= 0f || size.height <= 0f) return@with
         drawRect(color = uniforms.void)
         val horizonPx = size.height * uniforms.horizon
         val a = uniforms.intensity

@@ -23,6 +23,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
@@ -44,6 +45,18 @@ class EchoFieldTest {
     val compose: AndroidComposeTestRule<RobolectricActivityRule, *> =
         AndroidComposeTestRule(activityRule, EmptyCoroutineContext) { it.activity }
 
+
+    @Test
+    fun fieldTimeIsBoundedAndLoopsOnTheShaderPeriod() {
+        assertEquals(0f, echoFieldLoopSec(0L))
+        assertEquals(0f, echoFieldLoopSec(ECHO_FIELD_LOOP_MS))
+        assertEquals(ECHO_FIELD_LOOP_SEC / 2f, echoFieldLoopSec(ECHO_FIELD_LOOP_MS / 2), 1e-3f)
+        // Days of uptime must not grow the uniform (float precision decay).
+        val late = echoFieldLoopSec(ECHO_FIELD_LOOP_MS * 86_400L)
+        assertTrue(late >= 0f && late < ECHO_FIELD_LOOP_SEC, "time must stay bounded, was $late")
+        // A clock before the epoch (test clocks) still maps into the period.
+        assertTrue(echoFieldLoopSec(-1L) >= 0f)
+    }
 
     private fun assertNoAccessibleContent() {
         val root: SemanticsNode = compose.onNode(isRoot(), useUnmergedTree = true).fetchSemanticsNode()
