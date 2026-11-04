@@ -4,6 +4,7 @@ import { reserveDailySpend, spendDisabled } from "./spend";
 import {
   CreateJobV11RequestSchema,
   CreateUploadRequestSchema,
+  MIN_FRAMES_PER_CHECKPOINT,
   MAX_SAM_FRAMES,
   MAX_UPLOAD_BYTES,
   UploadPutParamsSchema,
@@ -24,6 +25,9 @@ import {
 // The v1 multipart path in jobs.ts is untouched; JSON job creates dispatch here.
 
 export const STAGING_TTL_MS = 3_600_000;
+/** R12-06 (F6.2): sessions one install may hold at once. Staging is
+ * otherwise uncapped: 80 MB per session with only a per-IP rate limit. */
+export const MAX_ACTIVE_STAGING_SESSIONS = 12;
 
 const stagingPrefix = (uploadId: string) => `jobs/staging/${uploadId}/`;
 const stagingMetaKey = (uploadId: string) => `jobs/staging/${uploadId}/meta.json`;
@@ -524,11 +528,19 @@ export async function handleCreateJobV11(c: Context<AppEnv>): Promise<Response> 
     }
   }
 
-  // R10-05 (F4): reserve the declared budget (or the hard ceiling) before
-  // the move consumes staging. A later failure leaves the reservation
-  // standing — over-reserving toward the cap, never under. Over the cap
-  // is 503; a contention storm is 500 — nothing was written.
-  const reserve = await reserveDailySpend(c.env, budget?.maxSamFrames ?? MAX_SAM_FRAMES);
+  // R10-05 (F4): reserve the job's worst case before the move consumes
+  // staging. A later failure leaves the reservation standing —
+  // over-reserving toward the cap, never under. Over the cap is 503; a
+  // contention storm or a corrupt ledger is 500 — nothing was written.
+  // R12-06 (F6.1): the worst case is the larger of the declared SAM budget
+  // and one floor per checkpoint, because scout runs over every checkpoint
+  // regardless of the budget. `maxSamFrames: 1` over 40 checkpoints used to
+  // reserve one frame for 40 checkpoints of vendor calls.
+  const reserveFrames = Math.max(
+    budget?.maxSamFrames ?? MAX_SAM_FRAMES,
+    manifest.checkpoints.length * MIN_FRAMES_PER_CHECKPOINT,
+  );
+  const reserve = await reserveDailySpend(c.env, reserveFrames);
   if (!reserve.ok) {
     return reserve.reason === "over_cap"
       ? c.json({ ok: false, error: "daily_budget_exceeded" }, 503)
@@ -603,8 +615,42 @@ export async function handleCreateJobV11(c: Context<AppEnv>): Promise<Response> 
   }
 }
 
+/** Live staged sessions this install holds. Counting metas is O(sessions),
+ * and the cap keeps that small (R12-06). */
+async function activeStagingSessions(
+  env: Env,
+  deviceId: string,
+  now: number,
+): Promise<number> {
+  let count = 0;
+  let cursor: string | undefined;
+  for (;;) {
+    const page = await env.MEDIA.list({ prefix: "jobs/staging/", cursor });
+    for (const o of page.objects) {
+      if (!o.key.endsWith("/meta.json")) continue;
+      const meta = await readJson<StoredUploadMeta>(env, o.key);
+      if (meta?.owner === deviceId && !isExpired(meta.createdAt, now)) count++;
+    }
+    if (!page.truncated) break;
+    cursor = page.cursor;
+  }
+  return count;
+}
+
 export function registerUploadRoutes(app: Hono<AppEnv>): void {
   app.post("/v1/uploads", async (c) => {
+    // R12-06 (F6.2): the kill switch is account-wide, so it stops staging
+    // too — otherwise a halted deployment still accepts 80 MB per session.
+    if (spendDisabled(c.env)) {
+      return c.json({ ok: false, error: "spend_disabled" }, 503);
+    }
+    // R12-06 (F6.2): a per-install ceiling on live sessions, enforced before
+    // the body is read. Expired sessions are outside the window and swept, so
+    // they do not count.
+    const active = await activeStagingSessions(c.env, c.get("deviceId"), Date.now());
+    if (active >= MAX_ACTIVE_STAGING_SESSIONS) {
+      return c.json({ ok: false, error: "staging_quota_exceeded" }, 429);
+    }
     let body: unknown;
     try {
       body = await c.req.json();
@@ -663,6 +709,10 @@ export function registerUploadRoutes(app: Hono<AppEnv>): void {
   });
 
   app.put("/v1/uploads/:uploadId/:name", async (c) => {
+    // R12-06 (F6.2): the kill switch also stops writes into live sessions.
+    if (spendDisabled(c.env)) {
+      return c.json({ ok: false, error: "spend_disabled" }, 503);
+    }
     const params = UploadPutParamsSchema.safeParse({
       uploadId: c.req.param("uploadId"),
       name: c.req.param("name"),

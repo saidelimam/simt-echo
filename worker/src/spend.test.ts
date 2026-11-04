@@ -164,10 +164,29 @@ describe("reserveDailySpend (R10-05)", () => {
     expect(r2.ledger()).toEqual({ reserved: 101 });
   });
 
-  it("reads a corrupt ledger as 0 and reserves from a clean slate", async () => {
+  it("fails closed on a corrupt ledger instead of resetting the day", async () => {
     const r2 = new LedgerR2();
     await r2.put(`spend/daily/${today()}.json`, "{not json");
-    expect(await reserveDailySpend(envFor(r2, "1200"), 240)).toEqual({ ok: true });
-    expect(r2.ledger()).toEqual({ reserved: 240 });
+    expect(await reserveDailySpend(envFor(r2, "1200"), 240)).toEqual({
+      ok: false,
+      reason: "contention",
+    });
+    // No put was attempted: the corrupt object is neither read as 0 nor
+    // overwritten, so the day's reservation cannot be spent twice.
+    expect(r2.conditionalPuts).toBe(0);
+    expect(await reserveDailySpend(envFor(r2, "1200"), 1)).toEqual({
+      ok: false,
+      reason: "contention",
+    });
+  });
+
+  it("fails closed on a ledger of the wrong shape", async () => {
+    const r2 = new LedgerR2();
+    await r2.put(`spend/daily/${today()}.json`, JSON.stringify({ reserved: -5 }));
+    expect(await reserveDailySpend(envFor(r2, "1200"), 10)).toEqual({
+      ok: false,
+      reason: "contention",
+    });
+    expect(r2.conditionalPuts).toBe(0);
   });
 });

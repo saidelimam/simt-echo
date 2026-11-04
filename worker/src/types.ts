@@ -311,6 +311,15 @@ export type UploadPutParams = z.infer<typeof UploadPutParamsSchema>;
 /** Hard SAM frame ceiling: the schema maximum, and the cap the lens applies
  * when a job carries no readable budget. */
 export const MAX_SAM_FRAMES = 240;
+
+/**
+ * R12-06 (review 0012, F6.1): the frame ceiling's average share of one
+ * checkpoint. The SAM governor runs per checkpoint, but a create reserves
+ * once, so a manifest with many checkpoints and a tiny declared budget used
+ * to reserve almost nothing while every checkpoint still ran scout and SAM
+ * work. The reserve counts at least this many frames per checkpoint.
+ */
+export const MIN_FRAMES_PER_CHECKPOINT = Math.ceil(MAX_SAM_FRAMES / MAX_CHECKPOINTS);
 export const JobBudgetSchema = z.object({
   maxSamFrames: z.number().int().positive().max(MAX_SAM_FRAMES),
 });

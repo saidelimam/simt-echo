@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { app, type Env } from "./index";
-import { MAX_UPLOAD_BYTES } from "./types";
-import { sweepExpiredUploads } from "./uploads";
+import { MAX_UPLOAD_BYTES, MIN_FRAMES_PER_CHECKPOINT } from "./types";
+import { MAX_ACTIVE_STAGING_SESSIONS, sweepExpiredUploads } from "./uploads";
 import { bearer, seedDevice } from "./testkit";
 
 // W11-09 ready-on-arrival: per-window staged sessions, multi-session job
@@ -1074,5 +1074,72 @@ describe("R12-05 idempotency scope", () => {
     expect(replay.status).toBe(202);
     expect(((await replay.json()) as { jobId: string }).jobId).toBe(jobA);
     expect(pipeline.instances.size).toBe(1);
+  });
+});
+
+describe("R12-06 spend guards and staging quota", () => {
+  it("halts staging on the kill switch before parsing the body", async () => {
+    const media = new FakeR2();
+    const env = await envFor(media, new FakePipeline());
+    const res = await app.request(
+      "/v1/uploads",
+      { method: "POST", headers: jsonAuth, body: "not json" },
+      { ...(env as Record<string, unknown>), SPEND_KILL_SWITCH: "on" } as never,
+    );
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ ok: false, error: "spend_disabled" });
+    expect([...media.store.keys()].filter((k) => k.startsWith("jobs/staging/"))).toEqual([]);
+  });
+
+  it("halts writes into a live session on the kill switch", async () => {
+    const media = new FakeR2();
+    const env = await envFor(media, new FakePipeline());
+    const uploadId = await createUploadFor(env, [{ name: "kf_n2_0", data: [1, 2, 3] }]);
+    const res = await putBlob(
+      { ...(env as Record<string, unknown>), SPEND_KILL_SWITCH: "on" } as never,
+      uploadId,
+      "kf_n2_0",
+      [1, 2, 3],
+    );
+    expect(res.status).toBe(503);
+    expect(media.store.has(`jobs/staging/${uploadId}/kf_n2_0`)).toBe(false);
+  });
+
+  it("caps live staged sessions per install at 12", async () => {
+    const media = new FakeR2();
+    const env = await envFor(media, new FakePipeline());
+    for (let i = 0; i < MAX_ACTIVE_STAGING_SESSIONS; i++) {
+      await createUploadFor(env, [{ name: "kf_n2_0", data: [i] }]);
+    }
+    // The 13th is refused before any body work: 12 sessions of up to 80 MB
+    // is what one install may hold in R2.
+    const res = await app.request(
+      "/v1/uploads",
+      { method: "POST", headers: jsonAuth, body: "not json" },
+      env,
+    );
+    expect(res.status).toBe(429);
+    expect(await res.json()).toEqual({ ok: false, error: "staging_quota_exceeded" });
+  });
+
+  it("reserves a frame floor per checkpoint, not the declared budget alone", async () => {
+    const media = new FakeR2();
+    const env = await envFor(media, new FakePipeline());
+    const uploadId = await stageFullUpload(env);
+    // A one-frame budget used to reserve 1 while the scout ran every
+    // checkpoint of the manifest.
+    const res = await postJobJson(env, {
+      manifest: validManifest(),
+      uploadId,
+      budget: { maxSamFrames: 1 },
+    });
+    expect(res.status).toBe(202);
+    const key = `spend/daily/${new Date().toISOString().slice(0, 10)}.json`;
+    const entry = media.store.get(key);
+    expect(entry).toBeDefined();
+    const reserved = (JSON.parse(new TextDecoder().decode(entry!.body)) as { reserved: number })
+      .reserved;
+    expect(reserved).toBeGreaterThanOrEqual(MIN_FRAMES_PER_CHECKPOINT);
+    expect(reserved % MIN_FRAMES_PER_CHECKPOINT).toBe(0);
   });
 });
