@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="wear_arrow" type="id" />
+    <item name="wear_distance" type="id" />
+    <item name="wear_cue" type="id" />
+    <item name="wear_content" type="id" />
+    <item name="wear_scroll" type="id" />
+</resources>

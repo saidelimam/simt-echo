@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- W10-07: "Echo Step" brand mark (docs/research/luminous-freeze.md §2).
+     Foreground/monochrome PNGs are rendered from res/design/echo-step.svg
+     (recipe in res/design/README.md); the field is a vector gradient. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+    <monochrome android:drawable="@mipmap/ic_launcher_monochrome" />
+</adaptive-icon>
