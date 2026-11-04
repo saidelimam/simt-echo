@@ -21,6 +21,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -28,6 +29,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.simt.echo.ui.components.CosmosDestructiveButton
@@ -329,12 +331,15 @@ internal fun SimtPromoBanner(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(
-            text = "simt.app →",
+            text = "simt.app ${promoArrow(LocalLayoutDirection.current == LayoutDirection.Rtl)}",
             style = MaterialTheme.typography.labelLarge,
             color = extras.ember,
         )
     }
 }
+
+/** The promo arrow points forward in both scripts. */
+internal fun promoArrow(isRtl: Boolean): String = if (isRtl) "←" else "→"
 
 /**
  * One footer fact: muted label left, value right-aligned on the same line.

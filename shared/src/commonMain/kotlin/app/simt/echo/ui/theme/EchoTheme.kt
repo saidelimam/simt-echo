@@ -8,6 +8,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.ui.text.intl.Locale
 
 // Semantic schemes from the freeze token tables (§2 Deep Space, §3 Daylight
 // Nebula). Slots without a published role use the nearest frozen surface,
@@ -109,13 +110,20 @@ fun EchoTheme(
     // scheme's on-background ink once, here; components that set
     // explicit colors are unaffected.
     val scheme = if (darkTheme) EchoDarkScheme else EchoLightScheme
+    // Arabic has no glyphs in Space Grotesk: the whole scale switches to
+    // El Messiri for an Arabic locale instead of drawing tofu (review 0013 F9).
+    val typography = if (Locale.current.language == "ar") {
+        rememberEchoArabicTypography()
+    } else {
+        rememberEchoTypography()
+    }
     CompositionLocalProvider(
         LocalEchoExtraColors provides if (darkTheme) EchoDarkExtras else EchoLightExtras,
         LocalContentColor provides scheme.onBackground,
     ) {
         MaterialTheme(
             colorScheme = scheme,
-            typography = rememberEchoTypography(),
+            typography = typography,
             shapes = EchoShapes,
             content = content,
         )

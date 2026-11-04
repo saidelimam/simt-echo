@@ -7,6 +7,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,13 +29,20 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.invisibleToUser
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -51,6 +59,7 @@ import app.simt.echo.ui.components.CosmosPrimaryButton
 import app.simt.echo.ui.components.CosmosSecondaryButton
 import app.simt.echo.ui.icons.EchoIcons
 import app.simt.echo.ui.motion.LuminousSprings
+import app.simt.echo.ui.theme.EchoExtras
 
 // App shell & navigation grammar (plan W8-05, freeze §9.2 tool-deck/top-chrome
 // grammar — the orbital-dock pattern does not apply: ECHO has 2 persistent
@@ -225,6 +234,10 @@ private fun TopChrome(
     LaunchedEffect(config.title) {
         focusRequester.requestFocus()
     }
+    var headingFocused by remember { mutableStateOf(false) }
+    // Programmatic heading focus is for announcements, not a permanent
+    // gold box: the ring appears only while input is keyboard-driven.
+    val keyboardInput = LocalInputModeManager.current.inputMode == InputMode.Keyboard
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -260,7 +273,11 @@ private fun TopChrome(
                     text = "ECHO",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.testTag(EchoShellWordmarkTag),
+                    // The eyebrow is decoration: the route title below says
+                    // where the user is (review 0013 F9).
+                    modifier = Modifier
+                        .testTag(EchoShellWordmarkTag)
+                        .semantics { invisibleToUser() },
                 )
             }
             Text(
@@ -269,7 +286,20 @@ private fun TopChrome(
                 modifier = Modifier
                     .testTag(EchoShellHeadingTag)
                     .focusRequester(focusRequester)
+                    .onFocusChanged { headingFocused = it.isFocused }
                     .focusable()
+                    .padding(4.dp)
+                    .then(
+                        if (headingFocused && keyboardInput) {
+                            Modifier.border(
+                                2.dp,
+                                EchoExtras.gold,
+                                MaterialTheme.shapes.small,
+                            )
+                        } else {
+                            Modifier
+                        },
+                    )
                     .semantics { heading() },
             )
         }
