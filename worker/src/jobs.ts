@@ -257,7 +257,7 @@ export function registerJobsRoutes(app: Hono<AppEnv>): void {
     }
     let form: FormData;
     let manifest: Manifest;
-    let files: Array<{ name: string; file: File }>;
+    let files: Array<{ name: string; file: File; mediaType: string }>;
     let totalBytes: number;
     // R12-10 (review 0012, F10): bound the multipart stream before it is
     // buffered. `formData()` reads to the end of the stream, so a 128 MB
@@ -309,15 +309,18 @@ export function registerJobsRoutes(app: Hono<AppEnv>): void {
         if (partSeen.has(name)) {
           return c.json({ ok: false, error: "duplicate_file", file: name }, 400);
         }
-        partSeen.add(name);
-        files.push({ name, file: v });
-        totalBytes += v.size;
-        // R12-10 (F10): the multipart part's declared type has to survive a
-        // look at the bytes; a mislabelled part never reaches storage.
+        // R12-10 (F10): the part's declared type has to survive a look at the
+        // bytes, and the sniffed type is what gets stored. Checked here, before
+        // the spend reserve and before any write, so a mislabelled part can
+        // never leave a half-written job behind.
         const head = new Uint8Array(await v.slice(0, 8).arrayBuffer());
-        if (acceptedMediaType(head, v.type) === null) {
+        const mediaType = acceptedMediaType(head, v.type);
+        if (mediaType === null) {
           return c.json({ ok: false, error: "unsupported_media_type", file: name }, 415);
         }
+        partSeen.add(name);
+        files.push({ name, file: v, mediaType });
+        totalBytes += v.size;
       }
     }
     if (files.length > MAX_FILES) {
@@ -340,13 +343,8 @@ export function registerJobsRoutes(app: Hono<AppEnv>): void {
     // so reporting invalid_manifest here would mask an outage.
     const jobId = crypto.randomUUID();
     try {
-      for (const { name, file } of files) {
-        const body = await file.arrayBuffer();
-        const mediaType = acceptedMediaType(new Uint8Array(body), file.type);
-        if (mediaType === null) {
-          return c.json({ ok: false, error: "unsupported_media_type", file: name }, 415);
-        }
-        await c.env.MEDIA.put(inputKey(jobId, name), body, {
+      for (const { name, file, mediaType } of files) {
+        await c.env.MEDIA.put(inputKey(jobId, name), await file.arrayBuffer(), {
           httpMetadata: { contentType: mediaType },
         });
       }
