@@ -48,14 +48,14 @@ const val FRAME_QUALITY_BAD = "bad"
  * Per-frame upload flags (plan W11-04), keyed by keyframe id. The worker
  * (`samLens.frameFailsFlags`) drops a candidate before any SAM spend when
  * `faceFree == false`, `quality == "bad"`, or `exposureOk == false` —
- * keeps it when the flags are absent. Defaults are therefore keep: a
- * keyframe with no scan behind it (e.g. video fallback) uploads exactly
- * as before, and only a frame the on-device detector actually failed is
- * flagged.
+ * keeps it when the flag is absent. R12-08: `faceFree` defaults to null —
+ * "no scan behind this frame" — and the manifest omits it, because a
+ * platform without a scanner (iOS today) cannot honestly claim `true`.
+ * Only the on-device detector writes `true`/`false`.
  */
 data class FrameFlags(
     val quality: String = FRAME_QUALITY_GOOD,
-    val faceFree: Boolean = true,
+    val faceFree: Boolean? = null,
     val exposureOk: Boolean = true,
 )
 
@@ -65,8 +65,9 @@ data class ManifestKeyframe(
     val tMs: Long,
     /** [FRAME_QUALITY_GOOD] unless the frame carries no usable signal. */
     val quality: String = FRAME_QUALITY_GOOD,
-    /** False when the on-device scan found (or could not rule out) a face. */
-    val faceFree: Boolean = true,
+    /** False when the on-device scan found (or could not rule out) a face;
+     *  null (omitted on the wire) when no scan ran at all (R12-08). */
+    val faceFree: Boolean? = null,
     /** False when the frame failed the on-device exposure gate. */
     val exposureOk: Boolean = true,
 )
@@ -235,7 +236,7 @@ object ManifestBuilder {
         // A keyframe flagged `faceFree = false` is withheld from the upload,
         // so it must not be listed either: the worker rejects a manifest id
         // with no staged bytes (400 `upload_incomplete`).
-        val kept = spec.timesMs.indices.filter { i -> (frameFlags[keyframeId(spec, i)] ?: FrameFlags()).faceFree }
+        val kept = spec.timesMs.indices.filter { i -> (frameFlags[keyframeId(spec, i)] ?: FrameFlags()).faceFree != false }
         if (kept.isEmpty()) return null
         val keyframes = kept.map { i ->
             val flags = frameFlags[keyframeId(spec, i)] ?: FrameFlags()

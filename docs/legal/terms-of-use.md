@@ -46,7 +46,7 @@ When replaying a shared spatial memory ("Route Follower"), you acknowledge and a
 
 ## 4. AI Feature Limitations and Human Verification Requirement
 
-SIMT ECHO integrates multimodal artificial intelligence models—including Meta Llama 4 Scout, Muse Spark 1.3, and SAM 3.1 via Cloudflare Worker pipelines—to propose recognizable landmark descriptions (such as identifying a "red pillar").
+SIMT ECHO integrates multimodal artificial intelligence models—including Meta Llama 4 Scout (with Google Gemma 4 as its automatic fallback), Meta Muse Spark 1.3, and SAM 3.1 via Cloudflare Worker pipelines—to propose recognizable landmark descriptions (such as identifying a "red pillar"). Google Gemma 4 runs only when Llama 4 Scout times out or returns output that fails validation, and receives the same consented asset subset.
 
 ### 4.1 Strict Geometry Boundary
 In accordance with the fundamental architectural contracts of the Platform, artificial intelligence components are strictly prohibited from generating, modifying, adding, or deleting physical spatial coordinates, path points, or turn angles. All metric coordinates and trajectory geometries are derived exclusively from hardware sensors.

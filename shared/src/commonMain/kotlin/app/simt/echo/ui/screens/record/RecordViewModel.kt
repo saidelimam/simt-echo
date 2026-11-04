@@ -49,7 +49,9 @@ data class ReadyOptInUiState(
     val consentBody: String
         get() = "As each checkpoint window closes, face-filtered strips upload " +
             (if (mobileData) "over Wi-Fi, or mobile data when there is no Wi-Fi (never while roaming) " else "over Wi-Fi only ") +
-            "so landmarks are ready when you finish. " +
+            "to Cloudflare R2 so landmarks are ready when you finish. " +
+            "Staged strips are deleted within 1 hour; the processing job's media within 24 hours. " +
+            "Landmarks are proposed by Meta Llama 4 Scout (Google Gemma 4 fallback) on Workers AI. " +
             "Nothing sends before you allow it. " +
             "Cancel or discard deletes staged uploads."
 }
