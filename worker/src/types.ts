@@ -72,6 +72,12 @@ export const MAX_KEYFRAMES_PER_CHECKPOINT = 8;
 export const MAX_APPROACH_SAMPLES = 16;
 export const MAX_DRAFT_ID_LENGTH = 128;
 export const MAX_ROUTE_CONTEXT_LENGTH = 200;
+/** R12-12 (review 0012, F12): bounds on the model-facing text a manifest or a
+ * model reply can carry. A prompt is assembled from these strings, so an
+ * unbounded one is an injection surface and a token bill. */
+export const MAX_CANDIDATE_TITLE_CHARS = 80;
+export const MAX_CANDIDATE_TEXT_CHARS = 300;
+export const MAX_MASK_SVG_PATH_CHARS = 65_536;
 
 /** One non-START route node with its media refs (plan §5.5 `checkpoints[]`). */
 export const CheckpointSchema = z
@@ -98,7 +104,14 @@ export const ManifestSchema = z
     schema: z.literal(1),
     draftId: z.string().min(1).max(MAX_DRAFT_ID_LENGTH),
     consent: ConsentSchema,
-    routeContext: z.string().min(1).max(MAX_ROUTE_CONTEXT_LENGTH),
+    // R12-12: one line only. A newline is how a manifest smuggles new
+    // instructions into `checkpointContext`; the client builder emits a
+    // single line, so nothing legitimate is refused.
+    routeContext: z
+      .string()
+      .min(1)
+      .max(MAX_ROUTE_CONTEXT_LENGTH)
+      .refine((v) => !/[\r\n]/.test(v), { message: "routeContext must be one line" }),
     checkpoints: z.array(CheckpointSchema).min(1).max(MAX_CHECKPOINTS),
   })
   .superRefine((m, ctx) => {
@@ -161,11 +174,11 @@ export type Manifest = z.infer<typeof ManifestSchema>;
  * trackability or visibility distance. */
 export const CandidateSchema = z.object({
   candidateId: z.string().min(1),
-  title: z.string().min(1),
-  description: z.string().min(1),
-  cue: z.string().min(1),
-  samPhrase: z.string().min(1),
-  signText: z.string().nullable(),
+  title: z.string().min(1).max(MAX_CANDIDATE_TITLE_CHARS),
+  description: z.string().min(1).max(MAX_CANDIDATE_TEXT_CHARS),
+  cue: z.string().min(1).max(MAX_CANDIDATE_TEXT_CHARS),
+  samPhrase: z.string().min(1).max(MAX_CANDIDATE_TITLE_CHARS),
+  signText: z.string().max(MAX_CANDIDATE_TEXT_CHARS).nullable(),
   privacyRisk: z.boolean(),
   keyframeId: JobIdSchema,
   box: z.tuple([
@@ -176,7 +189,7 @@ export const CandidateSchema = z.object({
   ]),
   frameW: z.number().int().positive(),
   frameH: z.number().int().positive(),
-  maskSvgPath: z.string().nullable(),
+  maskSvgPath: z.string().max(MAX_MASK_SVG_PATH_CHARS).nullable(),
   maskW: z.number().int().positive().nullable(),
   maskH: z.number().int().positive().nullable(),
   samConfidence: z.number().min(0).max(1).nullable(),

@@ -60,3 +60,11 @@ disappears two days after the day it covered.
 - `500 job_create_failed` spikes: contention storm — check create-rate
   bursts; sustained recurrence means `MAX_ATTEMPTS` is too small for the
   load.
+
+## AI Gateway caching and logging
+
+Scout calls set `skipCache: true` on the Workers AI gateway binding (R12-12):
+a cached model reply would answer one job with another job's prompt context.
+Log collection on the gateway must stay **off** for the same reason — prompt
+text carries route context and candidate text. Verify it in the gateway's
+settings before a production deploy; it is a dashboard setting, not a binding.
