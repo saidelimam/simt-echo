@@ -161,21 +161,32 @@ interface CloudApi {
 
 /**
  * Cloud API client (plan W3-02): multipart manifest+files upload, job
- * polling, deletion — all behind `Authorization: Bearer <appToken>`.
+ * polling, deletion — all behind `Authorization: Bearer <device key>`.
  * Pure orchestration over an injected [HttpClient]: [EchoApiClientTest]
  * drives it with a mock engine, production passes the platform engine.
- * Fail-closed: an empty token or base URL never sends a byte.
+ * Fail-closed: a blank bearer or base URL never sends a byte.
+ *
+ * R12-02 (review 0012, F2): the bearer is resolved per request from
+ * [tokenProvider] — the persisted per-install key — never a compiled-in
+ * shared token. The fixed-token constructor remains for tests and local
+ * tooling.
  */
 class EchoApiClient(
     private val http: HttpClient,
     private val baseUrl: String,
-    private val appToken: String,
+    private val tokenProvider: suspend () -> String,
 ) : CloudApi, V11CloudApi {
-    private fun configured() {
-        if (baseUrl.isBlank() || appToken.isBlank()) throw EchoApiError.NotConfigured()
+    constructor(http: HttpClient, baseUrl: String, token: String) :
+        this(http, baseUrl, { token })
+
+    /** Validates configuration and returns the bearer this call must send. */
+    private suspend fun configured(): String {
+        val token = tokenProvider()
+        if (baseUrl.isBlank() || token.isBlank()) throw EchoApiError.NotConfigured()
         // The bearer token and the photos travel together: never in
         // cleartext. Loopback stays allowed for local worker development.
         if (!isAllowedBaseUrl(baseUrl)) throw EchoApiError.NotConfigured()
+        return token
     }
 
     /**
@@ -183,7 +194,7 @@ class EchoApiClient(
      * then one field per file id). Returns the server's job id (202).
      */
     override suspend fun submit(manifestJson: String, files: List<UploadFile>): String {
-        configured()
+        val token = configured()
         val response = try {
             http.submitFormWithBinaryData(
                 url = "$baseUrl/v1/jobs",
@@ -205,7 +216,7 @@ class EchoApiClient(
                     }
                 },
             ) {
-                headers.append(HttpHeaders.Authorization, "Bearer $appToken")
+                headers.append(HttpHeaders.Authorization, "Bearer $token")
             }
         } catch (e: CancellationException) {
             throw e
@@ -223,10 +234,10 @@ class EchoApiClient(
 
     /** GETs one poll answer. 404 surfaces as [EchoApiError.JobNotFound]. */
     override suspend fun get(jobId: String): JobPoll {
-        configured()
+        val token = configured()
         val response = try {
             http.get("$baseUrl/v1/jobs/$jobId") {
-                headers.append(HttpHeaders.Authorization, "Bearer $appToken")
+                headers.append(HttpHeaders.Authorization, "Bearer $token")
             }
         } catch (e: CancellationException) {
             throw e
@@ -246,10 +257,10 @@ class EchoApiClient(
      * 404 both mean gone.
      */
     override suspend fun delete(jobId: String) {
-        configured()
+        val token = configured()
         val response = try {
             http.delete("$baseUrl/v1/jobs/$jobId") {
-                headers.append(HttpHeaders.Authorization, "Bearer $appToken")
+                headers.append(HttpHeaders.Authorization, "Bearer $token")
             }
         } catch (e: CancellationException) {
             throw e
@@ -279,12 +290,12 @@ class EchoApiClient(
      * plus the files the server still needs.
      */
     override suspend fun createUpload(files: List<UploadFileRef>): CreatedUpload {
-        configured()
+        val token = configured()
         val request = CreateUploadRequest(files.map { UploadFileRefDto(it.name, it.sha256, it.bytes) })
         val response = try {
             http.post("$baseUrl/v1/uploads") {
                 contentType(ContentType.Application.Json)
-                headers.append(HttpHeaders.Authorization, "Bearer $appToken")
+                headers.append(HttpHeaders.Authorization, "Bearer $token")
                 setBody(apiJson.encodeToString(CreateUploadRequest.serializer(), request))
             }
         } catch (e: CancellationException) {
@@ -302,10 +313,10 @@ class EchoApiClient(
 
     /** Files the server does not hold yet (`GET /v1/uploads/:id`). */
     override suspend fun uploadMissing(uploadId: String): List<String> {
-        configured()
+        val token = configured()
         val response = try {
             http.get("$baseUrl/v1/uploads/$uploadId") {
-                headers.append(HttpHeaders.Authorization, "Bearer $appToken")
+                headers.append(HttpHeaders.Authorization, "Bearer $token")
             }
         } catch (e: CancellationException) {
             throw e
@@ -327,11 +338,11 @@ class EchoApiClient(
      * [EchoApiError.UploadStale].
      */
     override suspend fun putUploadFile(uploadId: String, file: UploadFile) {
-        configured()
+        val token = configured()
         val deadlineMs = uploadTimeoutMs(file.bytes.size.toLong())
         val response = try {
             http.put("$baseUrl/v1/uploads/$uploadId/${file.id}") {
-                headers.append(HttpHeaders.Authorization, "Bearer $appToken")
+                headers.append(HttpHeaders.Authorization, "Bearer $token")
                 contentType(ContentType.parse(file.mime))
                 setBody(file.bytes)
                 timeout { requestTimeoutMillis = deadlineMs }
@@ -355,7 +366,7 @@ class EchoApiClient(
         idempotencyKey: String,
         resumeOf: String?,
     ): String {
-        configured()
+        val token = configured()
         val manifest = runCatching { apiJson.parseToJsonElement(manifestJson) }.getOrNull()
             ?: throw EchoApiError.InvalidManifest("unparseable manifest")
         val request = apiJson.encodeToString(
@@ -368,7 +379,7 @@ class EchoApiClient(
                 resumeOf = resumeOf,
             ),
         )
-        return postJobCreate(request)
+        return postJobCreate(request, token)
     }
 
     /**
@@ -376,10 +387,10 @@ class EchoApiClient(
      * plan W11-09 discard). 204 and 404 both mean gone.
      */
     override suspend fun deleteUpload(uploadId: String) {
-        configured()
+        val token = configured()
         val response = try {
             http.delete("$baseUrl/v1/uploads/$uploadId") {
-                headers.append(HttpHeaders.Authorization, "Bearer $appToken")
+                headers.append(HttpHeaders.Authorization, "Bearer $token")
             }
         } catch (e: CancellationException) {
             throw e
@@ -401,7 +412,7 @@ class EchoApiClient(
         uploadIds: List<String>,
         idempotencyKey: String,
     ): String {
-        configured()
+        val token = configured()
         require(uploadIds.isNotEmpty()) { "createJobFromStaged: no staged uploads" }
         val manifest = runCatching { apiJson.parseToJsonElement(manifestJson) }.getOrNull()
             ?: throw EchoApiError.InvalidManifest("unparseable manifest")
@@ -414,7 +425,7 @@ class EchoApiClient(
                 idempotencyKey = idempotencyKey,
             ),
         )
-        return postJobCreate(request)
+        return postJobCreate(request, token)
     }
 
     /**
@@ -430,7 +441,7 @@ class EchoApiClient(
      * job.
      */
     override fun watchEvents(jobId: String, lastEventId: String?): Flow<JobEvent> = flow {
-        configured()
+        val token = configured()
         var downstream: Throwable? = null
         suspend fun deliver(frame: String) {
             for (event in parseSseEvents(frame)) {
@@ -446,7 +457,7 @@ class EchoApiClient(
             http.prepareGet("$baseUrl/v1/jobs/$jobId/events") {
                 headers.append(HttpHeaders.Accept, "text/event-stream")
                 if (lastEventId != null) headers.append("Last-Event-ID", lastEventId)
-                headers.append(HttpHeaders.Authorization, "Bearer $appToken")
+                headers.append(HttpHeaders.Authorization, "Bearer $token")
                 timeout { requestTimeoutMillis = EVENT_STREAM_TIMEOUT_MS }
             }.execute { response ->
                 val status = response.status.value
@@ -482,11 +493,11 @@ class EchoApiClient(
     private fun errorCode(body: String): String? =
         runCatching { apiJson.decodeFromString<ErrorResponse>(body).error }.getOrNull()
 
-    private suspend fun postJobCreate(request: String): String {
+    private suspend fun postJobCreate(request: String, token: String): String {
         val response = try {
             http.post("$baseUrl/v1/jobs") {
                 contentType(ContentType.Application.Json)
-                headers.append(HttpHeaders.Authorization, "Bearer $appToken")
+                headers.append(HttpHeaders.Authorization, "Bearer $token")
                 setBody(request)
             }
         } catch (e: CancellationException) {

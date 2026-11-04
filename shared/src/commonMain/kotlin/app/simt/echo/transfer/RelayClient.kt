@@ -42,16 +42,18 @@ private data class RelayUploadResponse(val code: String, val expiresAt: Long)
 /**
  * [RelayClient] over the Worker's `/v1/relay` endpoints.
  *
- * Endpoint and app token are injected — never hard-coded — so W3-02's
- * API configuration owns where these values come from; until then
- * [app.simt.echo.AppGraph] leaves the relay unconfigured and Share simply
- * does not offer it.
+ * Endpoint and bearer are injected — never hard-coded. R12-02 (review 0012,
+ * F2): the bearer is the per-install device key resolved per request, the
+ * same credential every other worker call uses.
  */
 class KtorRelayClient(
     private val client: HttpClient,
     baseUrl: String,
-    private val appToken: String,
+    private val tokenProvider: suspend () -> String,
 ) : RelayClient {
+    /** Fixed-token construction (tests, local tooling). */
+    constructor(client: HttpClient, baseUrl: String, token: String) :
+        this(client, baseUrl, { token })
 
     private val relayUrl = baseUrl.trimEnd('/') + "/v1/relay"
     private val json = Json { ignoreUnknownKeys = true }
@@ -63,7 +65,7 @@ class KtorRelayClient(
     override suspend fun upload(sealed: ByteArray): String {
         val total = sealed.size.toLong()
         val response = client.post(relayUrl) {
-            header(HttpHeaders.Authorization, "Bearer $appToken")
+            header(HttpHeaders.Authorization, "Bearer ${tokenProvider()}")
             setBody(sealed)
         }
         check(response.status.isSuccess()) { "relay upload failed: ${response.status}" }
@@ -75,7 +77,7 @@ class KtorRelayClient(
 
     override suspend fun download(code: String): ByteArray {
         val response = client.get("$relayUrl/$code") {
-            header(HttpHeaders.Authorization, "Bearer $appToken")
+            header(HttpHeaders.Authorization, "Bearer ${tokenProvider()}")
         }
         check(response.status.isSuccess()) { "relay download failed: ${response.status}" }
         return response.readWithProgress { progressFlow.tryEmit(it) }

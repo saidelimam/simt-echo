@@ -34,7 +34,6 @@ class AppGraphReadyConsentTest {
                 AppGraph(
                     platform = platform,
                     apiBaseUrl = if (cloud) "https://worker.test" else "",
-                    appToken = if (cloud) "token" else "",
                     networkGate = gate ?: OfflineNetworkGate,
                     faceScanner = scanner,
                 ),

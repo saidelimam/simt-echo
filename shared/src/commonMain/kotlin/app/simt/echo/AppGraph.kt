@@ -22,8 +22,11 @@ import app.simt.echo.platform.createPeerTransport
 import app.simt.echo.platform.createPlatform
 import app.simt.echo.platform.currentEpochMs
 import app.simt.echo.platform.platformIoDispatcher
+import app.simt.echo.transfer.DeviceCredentials
 import app.simt.echo.transfer.EchoApiClient
+import app.simt.echo.transfer.FileDeviceCredentials
 import app.simt.echo.transfer.KtorRelayClient
+import app.simt.echo.transfer.mintDeviceKey
 import app.simt.echo.transfer.NetworkGate
 import app.simt.echo.transfer.OfflineNetworkGate
 import app.simt.echo.transfer.ReadyUploadConsent
@@ -47,12 +50,11 @@ import okio.Path.Companion.toPath
 class AppGraph(
     val platform: Platform = createPlatform(),
     /**
-     * Cloud API base URL + app token (plan §0.6: secrets never ship in
-     * git). Empty in previews/tests; `EchoApiClient` fails closed then.
-     * Production passes androidApp BuildConfig values (local.properties).
+     * Cloud API base URL (plan §0.6: no secret ships in git). Empty in
+     * previews/tests; `EchoApiClient` fails closed then. Production passes
+     * the androidApp BuildConfig value (local.properties).
      */
     val apiBaseUrl: String = "",
-    val appToken: String = "",
     /** On-phone LiteRT model file (W5-01), found by the platform entry
      * point in its models directory; null when none was pushed. */
     val onPhoneModelPath: String? = null,
@@ -157,19 +159,32 @@ class AppGraph(
     /** Field-protocol trials (W4-01): baseline/drift logging + CSV export. */
     val trialRepository: TrialRepository by lazy { TrialRepository(fileStore) }
 
+    /** One HTTP engine for every worker client (API, relay, device mint). */
+    private val httpClient by lazy { createHttpClient() }
+
+    /**
+     * The per-install bearer (review 0012, R12-02): minted once via
+     * `POST /v1/device` on first use and persisted in app-private storage.
+     * The retired shared `ECHO_APP_TOKEN` is never read.
+     */
+    val deviceCredentials: DeviceCredentials by lazy {
+        FileDeviceCredentials(fileStore) { mintDeviceKey(httpClient, apiBaseUrl) }
+    }
+
     /** Cloud API client (W3-02): consent upload, job polling, deletion. */
     val apiClient: EchoApiClient by lazy {
-        EchoApiClient(createHttpClient(), apiBaseUrl, appToken)
+        EchoApiClient(httpClient, apiBaseUrl, deviceCredentials::bearer)
     }
 
     /**
      * Cloud AI config status (plan W7-07): false on every fresh install
      * until W9-01 config exists. Processing and Settings read this —
      * never a network probe — so the unconfigured state stays honest
-     * and no fake "cloud" progress ever renders.
+     * and no fake "cloud" progress ever renders. R12-02: the bearer is
+     * minted per install, so only the base URL gates configuration.
      */
     val cloudAiConfigured: Boolean
-        get() = apiBaseUrl.isNotBlank() && appToken.isNotBlank()
+        get() = apiBaseUrl.isNotBlank()
 
     /**
      * The configured local vision provider (W5-01), or null: a LAN
@@ -206,7 +221,7 @@ class AppGraph(
      * [TransferService.relayAvailable] stays false on unconfigured builds.
      */
     val relayClient: RelayClient? by lazy {
-        if (cloudAiConfigured) KtorRelayClient(createHttpClient(), apiBaseUrl, appToken) else null
+        if (cloudAiConfigured) KtorRelayClient(httpClient, apiBaseUrl, deviceCredentials::bearer) else null
     }
 
     val transferService: TransferService by lazy {
