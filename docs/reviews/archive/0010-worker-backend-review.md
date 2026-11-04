@@ -1,6 +1,6 @@
 # Review 0010 — Worker / backend full code review (bugs, over-spending, API, performance, security)
 
-Status: **complete** · created 2026-11-02 · Verdict: **BLOCK**
+Status: **closed** — 14 row(s): 1 Queued, 13 Complete · 2026-11-04
 
 Scope: all of `worker/` at repo HEAD `b4a90b7` — every non-test source
 file (`index`, `jobs`, `uploads`, `relay`, `pipeline`, `scout`, `ground`,
