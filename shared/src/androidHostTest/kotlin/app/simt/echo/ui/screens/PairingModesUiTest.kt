@@ -7,6 +7,7 @@ import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -25,6 +26,7 @@ import app.simt.echo.platform.NfcEvent
 import app.simt.echo.platform.NfcPairingController
 import app.simt.echo.platform.NfcPublication
 import app.simt.echo.platform.PeerTransport
+import app.simt.echo.transfer.PairingFailure
 import app.simt.echo.transfer.TransferService
 import app.simt.echo.ui.components.NfcTapPanelTag
 import app.simt.echo.ui.components.PairingMethodNfcTag
@@ -86,14 +88,24 @@ class PairingModesUiTest {
     private class ReadyNfc(capabilities: NfcCapabilities) : NfcPairingController {
         private val caps = MutableStateFlow(capabilities)
         private val pub = MutableStateFlow(NfcPublication())
+        private val bus = MutableSharedFlow<NfcEvent>(extraBufferCapacity = 8)
+        var startedAttempt: Long = 0L
+            private set
         override val capabilities: StateFlow<NfcCapabilities> = caps
         override val publication: StateFlow<NfcPublication> = pub
-        override val events: Flow<NfcEvent> = MutableSharedFlow()
+        override val events: Flow<NfcEvent> = bus
         override fun publish(invitation: String, offerGeneration: Long) {
             pub.value = NfcPublication(generation = offerGeneration, ready = true)
         }
 
-        override fun startReading(attemptId: Long) = Unit
+        override fun startReading(attemptId: Long) {
+            startedAttempt = attemptId
+        }
+
+        /** The reader's idle window closed with no tap. */
+        fun timeOut() {
+            bus.tryEmit(NfcEvent.ReadFailed(startedAttempt, PairingFailure.Timeout))
+        }
         override fun stopReading(attemptId: Long) = Unit
         override fun clearPublishedOffer(offerGeneration: Long) {
             pub.value = NfcPublication.IDLE
@@ -224,6 +236,39 @@ class PairingModesUiTest {
 
         compose.onNodeWithTag(NfcTapPanelTag).assertIsDisplayed()
         compose.onNodeWithTag(ReceiveScannerTag).assertDoesNotExist()
+        compose.onNodeWithText("Ready to receive a tap").assertIsDisplayed()
+    }
+
+    @Test
+    fun receiveTimeoutOffersTryTapAgainAndQrInstead() {
+        val nfc = ReadyNfc(NfcCapabilities(canRead = true, canPresent = true, enabled = true))
+        compose.setContent {
+            EchoTheme(darkTheme = true) {
+                ReceiveScreen(
+                    service = receiveService(),
+                    sharing = QuietSharing(),
+                    onImported = {},
+                    pairing = nfc,
+                )
+            }
+        }
+
+        compose.onNodeWithTag(PairingMethodNfcTag).performScrollTo().performClick()
+        awaitTag(NfcTapPanelTag)
+        compose.onNodeWithText("Ready to receive a tap").assertIsDisplayed()
+
+        // Twenty seconds with no tap: polling stops, and the panel says so
+        // with a way back instead of a dead "Preparing to receive…".
+        nfc.timeOut()
+        compose.waitUntil(timeoutMillis = 10_000) {
+            compose.onAllNodesWithText("Tap timed out").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithText("Try tap again").assertIsDisplayed()
+        compose.onNodeWithText("Use QR instead").performScrollTo().assertIsDisplayed()
+
+        val before = nfc.startedAttempt
+        compose.onNodeWithText("Try tap again").performScrollTo().performClick()
+        compose.waitUntil(timeoutMillis = 10_000) { nfc.startedAttempt > before }
         compose.onNodeWithText("Ready to receive a tap").assertIsDisplayed()
     }
 

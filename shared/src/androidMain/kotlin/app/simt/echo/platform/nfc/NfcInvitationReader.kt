@@ -140,7 +140,13 @@ class NfcInvitationReader(
         if (!lock.tryLock()) return
         var socket: NfcTransceiver? = null
         try {
-            val opened = open() ?: return
+            // A standard NFC tag (NTAG, Mifare, a badge) has no IsoDep
+            // interface: say "this isn't an ECHO share" instead of leaving
+            // the tap silent (R14-04).
+            val opened = open() ?: run {
+                events(NfcEvent.ReadFailed(attemptId, PairingFailure.InvalidInvitation))
+                return
+            }
             socket = opened
             connection = opened
             if (!isCurrent(attemptId)) return

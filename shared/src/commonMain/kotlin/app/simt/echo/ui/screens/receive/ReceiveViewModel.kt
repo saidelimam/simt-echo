@@ -116,6 +116,8 @@ class ReceiveViewModel(
     val ui: StateFlow<ReceiveUiState> = _ui.asStateFlow()
 
     private var handledUri: String? = null
+    /** Last adapter state seen, so only a false -> true flip re-arms. */
+    private var nfcWasEnabled: Boolean? = null
     private var previewBody: BundleBody? = null
     private var attemptJob: Job? = null
     private var saveJob: Job? = null
@@ -134,7 +136,15 @@ class ReceiveViewModel(
             }
         }
         viewModelScope.launch {
-            pairing.capabilities.collect { refreshReadiness() }
+            pairing.capabilities.collect { capabilities ->
+                val wasEnabled = nfcWasEnabled
+                nfcWasEnabled = capabilities.enabled
+                refreshReadiness()
+                // NFC was switched on while this screen was open (Settings,
+                // quick-settings tile). Arm once; a disabled adapter is never
+                // armed, which is what left the panel on "Preparing…".
+                if (wasEnabled == false && capabilities.enabled) armIfIdle()
+            }
         }
         viewModelScope.launch {
             pairing.events.collect(::onPairingEvent)
@@ -276,8 +286,11 @@ class ReceiveViewModel(
     /** Starts a fresh acquisition generation for the selected method. */
     private fun arm() {
         val next = _ui.value.generation + 1
-        _ui.update { it.copy(generation = next) }
-        if (_ui.value.method == PairingMethod.NFC) {
+        // A fresh attempt carries no previous failure: it is a new arm.
+        _ui.update { it.copy(generation = next, pairingFailure = null) }
+        if (_ui.value.method == PairingMethod.NFC &&
+            PairingPolicy.availableNow(PairingRole.RECEIVE, pairing.capabilities.value)
+        ) {
             pairing.startReading(next.toLong())
             _ui.update { it.copy(nfcListening = true) }
         }
@@ -317,8 +330,16 @@ class ReceiveViewModel(
 
             is NfcEvent.ReadFailed -> if (event.attemptId == attempt) {
                 _ui.update {
-                    it.copy(nfcListening = false, pairingFailure = event.failure)
+                    it.copy(
+                        // A retryable failure keeps the reader armed, so the
+                        // status stays "Ready to receive a tap" above the
+                        // explanation instead of dropping to "Preparing…"
+                        // (R14-04).
+                        nfcListening = event.failure.keepsListening,
+                        pairingFailure = event.failure,
+                    )
                 }
+                refreshReadiness()
             }
 
             else -> Unit

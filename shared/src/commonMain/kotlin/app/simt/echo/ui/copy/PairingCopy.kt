@@ -58,6 +58,8 @@ object PairingCopy {
     const val TAP_INTERRUPTED = "Tap interrupted. Hold the phones together and try again."
     const val NOT_AN_ECHO_SHARE = "This isn’t an ECHO share."
     const val NO_TAP_YET = "No tap yet. Keep both phones unlocked, or use QR."
+    const val TAP_TIMED_OUT = "Tap timed out"
+    const val TRY_TAP_AGAIN = "Try tap again"
     const val TAP_NETWORK_FAILED =
         "Tap connected, but the route couldn’t transfer. Join the same Wi-Fi or hotspot and try again."
     const val UNVERIFIED = "Couldn’t verify this route."

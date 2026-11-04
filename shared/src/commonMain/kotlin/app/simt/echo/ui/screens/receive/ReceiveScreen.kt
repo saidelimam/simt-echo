@@ -170,6 +170,7 @@ fun ReceiveScreen(
                             onOpenNfcSettings = onOpenNfcSettings,
                             onUseQrInstead = { viewModel.selectMethod(PairingMethod.QR) },
                             modifier = Modifier.fillMaxWidth(),
+                            onRetryTap = viewModel::rescan,
                         )
                     }
                 }

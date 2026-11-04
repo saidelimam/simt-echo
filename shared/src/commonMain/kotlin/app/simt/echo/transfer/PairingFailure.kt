@@ -39,5 +39,13 @@ sealed class PairingFailure {
     /** Anything else. Carries no message: exception text can quote the URI. */
     data object Internal : PairingFailure()
 
+    /**
+     * Whether acquisition is still usable after this failure. A retryable
+     * one keeps reader mode armed — the same tap can simply be repeated —
+     * so the UI must not fall back to "Preparing to receive…" (R14-04).
+     */
+    val keepsListening: Boolean
+        get() = this == Interrupted || this == InvalidInvitation || this == OfferExpired
+
     override fun toString(): String = this::class.simpleName ?: "PairingFailure"
 }
