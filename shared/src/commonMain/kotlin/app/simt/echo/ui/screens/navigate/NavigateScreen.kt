@@ -7,6 +7,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.border
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -176,9 +178,9 @@ fun NavigateScreen(
         // permission silences visual assistance, never the navigation controls.
         val permission = app.simt.echo.platform.rememberCameraPermissionState()
         if (permission.status == app.simt.echo.platform.CameraPermissionStatus.GRANTED) camera.Preview(modifier = Modifier)
-    } else {
-        camera.Preview(modifier = Modifier)
     }
+    // No else branch: an unrequested visual assist must not bind the
+    // camera at all (review 0013 F4).
     NavigateBody(
         nav = nav,
         routes = routes,
@@ -226,6 +228,14 @@ private fun NavigateBody(
             verticalArrangement = Arrangement.spacedBy(EchoSpace12),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(EchoSpace12),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (!online) StatusChip(text = "⚠ Offline · sensors only")
                 StatusChip(text = instrument.sigmaLabel)
@@ -294,6 +304,9 @@ private fun NavigateBody(
                 onDismiss = viewModel::dismissFingerprint,
             )
             NavigateProgress(legIndex = nav.legIndex, legCount = legCount)
+            }
+            // Pinned below the scroll: large text must never push "Lost"
+            // or "I'm here" off the screen (review 0013 F4).
             NavigateActions(presentation = presentation, viewModel = viewModel)
         }
         if (instrument.glowSide != null) {
