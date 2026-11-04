@@ -1,16 +1,9 @@
 package app.simt.echo.platform
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import app.simt.echo.ui.components.CosmosPrimaryButton
-import app.simt.echo.ui.components.CosmosSecondaryButton
+import app.simt.echo.ui.components.CosmosDeniedState
 
 /**
  * Camera permission state (plan W4-03).
@@ -53,11 +46,47 @@ fun cameraDeniedMessage(permanently: Boolean): String =
 fun cameraNotDeterminedMessage(): String =
     "ECHO has not asked for the camera yet."
 
+/** Copy for one gate state; null means the gate should render its content. */
+internal data class CameraGateCopy(
+    val title: String,
+    val body: String,
+    val actionLabel: String,
+    val secondaryLabel: String? = null,
+    val opensSettings: Boolean = false,
+)
+
+/**
+ * Pure state → copy. NOT_DETERMINED is explicitly neutral: asking is not
+ * a refusal, so its copy never says "denied" (review 0013 F5).
+ */
+internal fun cameraGateCopy(status: CameraPermissionStatus): CameraGateCopy? = when (status) {
+    CameraPermissionStatus.GRANTED,
+    CameraPermissionStatus.UNKNOWN,
+    -> null
+    CameraPermissionStatus.NOT_DETERMINED -> CameraGateCopy(
+        title = "Camera needed",
+        body = "${cameraRationale()} ${cameraNotDeterminedMessage()}",
+        actionLabel = "Allow camera",
+    )
+    CameraPermissionStatus.DENIED -> CameraGateCopy(
+        title = "Camera needed",
+        body = "${cameraRationale()} ${cameraDeniedMessage(permanently = false)}",
+        actionLabel = "Allow camera",
+    )
+    CameraPermissionStatus.PERMANENTLY_DENIED -> CameraGateCopy(
+        title = "Camera is off",
+        body = "${cameraRationale()} ${cameraDeniedMessage(permanently = true)}",
+        actionLabel = "Open settings",
+        secondaryLabel = "Try again",
+        opensSettings = true,
+    )
+}
+
 /**
  * Fail-closed permission gate (W4-03): granted (or unknown on platforms
- * without runtime permissions) renders [content]; denied renders the
- * rationale + retry instead of crashing on a camera bind. No dialog
- * windows — inline panel only, matching the app's UX rule.
+ * without runtime permissions) renders [content]; every other state is
+ * the shared [CosmosDeniedState] — one state component, live region and
+ * heading included — instead of a bespoke column (review 0013 F5).
  */
 @Composable
 fun CameraPermissionGate(
@@ -65,57 +94,18 @@ fun CameraPermissionGate(
     content: @Composable () -> Unit,
 ) {
     val permission = rememberCameraPermissionState()
-    when (permission.status) {
-        CameraPermissionStatus.GRANTED,
-        CameraPermissionStatus.UNKNOWN,
-        -> content()
-        CameraPermissionStatus.NOT_DETERMINED,
-        CameraPermissionStatus.DENIED,
-        CameraPermissionStatus.PERMANENTLY_DENIED,
-        -> {
-            val permanent = permission.status == CameraPermissionStatus.PERMANENTLY_DENIED
-            Column(
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = modifier
-                    .fillMaxWidth()
-                    .padding(24.dp),
-            ) {
-                Text(
-                    text = "Camera needed",
-                    style = MaterialTheme.typography.titleLarge,
-                )
-                Text(
-                    text = cameraRationale(),
-                    style = MaterialTheme.typography.bodyLarge,
-                )
-                Text(
-                    text = if (permission.status == CameraPermissionStatus.NOT_DETERMINED) {
-                        cameraNotDeterminedMessage()
-                    } else {
-                        cameraDeniedMessage(permanent)
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.error,
-                )
-                if (permanent) {
-                    CosmosPrimaryButton(
-                        label = "Open settings",
-                        onClick = permission.openSettings,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    CosmosSecondaryButton(
-                        label = "Try again",
-                        onClick = permission.request,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                } else {
-                    CosmosPrimaryButton(
-                        label = "Allow camera",
-                        onClick = permission.request,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            }
-        }
+    val copy = cameraGateCopy(permission.status)
+    if (copy == null) {
+        content()
+        return
     }
+    CosmosDeniedState(
+        title = copy.title,
+        body = copy.body,
+        actionLabel = copy.actionLabel,
+        onAction = if (copy.opensSettings) permission.openSettings else permission.request,
+        secondaryLabel = copy.secondaryLabel,
+        onSecondary = permission.request,
+        modifier = modifier.fillMaxSize(),
+    )
 }

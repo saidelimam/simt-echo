@@ -285,6 +285,8 @@ class HostRecordInstrumentTest {
             }
         }
         compose.waitForIdle()
+        // The shared denied state, not a bespoke permission column.
+        compose.onNodeWithTag("CosmosState:Denied").assertIsDisplayed()
         compose.onNodeWithText("Camera needed").assertIsDisplayed()
         compose.onNodeWithText("Allow camera").assertIsDisplayed()
         compose.onNodeWithTag(RecordInstrumentTag).assertDoesNotExist()
