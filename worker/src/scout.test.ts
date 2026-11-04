@@ -24,6 +24,8 @@ import type { Manifest } from "./types";
 // In-memory R2 stand-in: the surface scout.ts touches (get/put).
 class FakeR2 {
   store = new Map<string, ArrayBuffer>();
+  /** Every key read, so a test can prove refused bytes are never touched. */
+  gets: string[] = [];
 
   async put(key: string, value: ArrayBuffer | string): Promise<null> {
     const body =
@@ -33,6 +35,7 @@ class FakeR2 {
   }
 
   async get(key: string) {
+    this.gets.push(key);
     const entry = this.store.get(key);
     if (!entry) return null;
     return {
@@ -997,5 +1000,55 @@ describe("EchoPipeline scout step", () => {
     expect(progress.stage).toBe("errored");
     const detail = JSON.parse(new TextDecoder().decode(media.store.get(`jobs/${jobId}/error.json`)!));
     expect(detail.error).toMatch(/no_provider/);
+  });
+});
+
+describe("R12-07 keyframe flags in the scout paths", () => {
+  it("never reads or sends a refused keyframe and emits no candidates for it", async () => {
+    const manifest = {
+      ...validManifest(),
+      checkpoints: [
+        {
+          nodeId: "n2",
+          type: "TURN",
+          turn: "LEFT",
+          atDistanceM: 23.5,
+          tMs: 41250,
+          heroKeyframeId: "kf_n2_0",
+          // Every frame of this checkpoint failed the on-device filter.
+          keyframes: [
+            { id: "kf_n2_0", tMs: 39250, faceFree: false },
+            { id: "kf_n2_1", tMs: 40750, quality: "bad" },
+          ],
+          approach: [{ tMs: 37250, d: 18.9 }],
+        },
+        {
+          nodeId: "n3",
+          type: "CHECKPOINT",
+          atDistanceM: 30,
+          tMs: 50000,
+          heroKeyframeId: "kf_n3_0",
+          keyframes: [{ id: "kf_n3_0", tMs: 50000 }],
+          approach: [],
+        },
+      ],
+    };
+    const media = new FakeR2();
+    const jobId = "job1";
+    for (const id of ["kf_n2_0", "kf_n2_1", "kf_n3_0"]) {
+      void media.put(`jobs/${jobId}/in/${id}`, new Uint8Array([1, 2, 3]).buffer as ArrayBuffer);
+    }
+    const reply = () => ({ response: checkpointResult("n3", [candidate({ imageId: "kf_n3_0" })]) });
+    const ai = new FakeAI({ [LLAMA]: reply, [GEMMA]: reply });
+
+    const result = await runScout(envFor(media, ai), jobId, manifest as unknown as Manifest);
+
+    // One model call, for the one admissible checkpoint.
+    expect(ai.calls).toHaveLength(1);
+    // The refused frames were never read from R2, let alone sent.
+    expect(media.gets.filter((k) => k.includes("kf_n2_"))).toEqual([]);
+    const byId = new Map(result.checkpoints.map((c) => [c.nodeId, c]));
+    expect(byId.get("n2")!.candidates).toEqual([]);
+    expect(byId.get("n3")!.candidates).toHaveLength(1);
   });
 });

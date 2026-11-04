@@ -2,7 +2,7 @@ import { z } from "zod";
 import { NonRetryableError } from "cloudflare:workflows";
 import type { Env } from "./index";
 import { metaResponses } from "./meta";
-import { inlineRunner, type StepRunner } from "./samLens";
+import { frameFailsFlags, inlineRunner, type StepRunner } from "./samLens";
 import { JobIdSchema, type Checkpoint, type Manifest } from "./types";
 
 // Scout chain (plan §7, slices W3-04 + W3-09).
@@ -431,9 +431,12 @@ export async function metaSparkScout(env: Env, jobId: string, manifest: Manifest
   const loadedByCp = new Map<string, Array<{ id: string; tMs: number }>>();
   for (const cp of manifest.checkpoints) {
     const loaded: Array<{ id: string; tMs: number }> = [];
-    // ≤ 3 images per checkpoint (mirrors §7.2); the 48-image cap below is
-    // the plan's per-request bound.
-    for (const ref of cp.keyframes.slice(0, 3)) {
+    // R12-07 (review 0012, F7.1): a keyframe the on-device filter refused —
+    // a face, bad quality, failed exposure — is never read, let alone sent to
+    // a vendor. The lens already applied this filter; the scout paths did not.
+    // ≤ 3 eligible images per checkpoint (mirrors §7.2); the 48-image cap
+    // below is the plan's per-request bound.
+    for (const ref of cp.keyframes.filter((r) => !frameFailsFlags(cp, r.id)).slice(0, 3)) {
       if (images.length >= SPARK_MAX_IMAGES) break;
       const obj = await env.MEDIA.get(inputKey(jobId, ref.id));
       if (!obj) continue;
@@ -778,6 +781,16 @@ export async function runScout(
       const ranModels: string[] = [];
       const rawAttempts = new Map<string, number>();
       for (const cp of manifest.checkpoints) {
+        // R12-07 (review 0012, F7.1): keyframes the on-device filter refused
+        // — a face, bad quality, failed exposure — are never read, let alone
+        // sent to a vendor. The lens already applied this rule; the scout did
+        // not. A checkpoint with nothing admissible gets no model call and no
+        // candidates: the honest answer, not a guess over refused pixels.
+        const refs = cp.keyframes.filter((r) => !frameFailsFlags(cp, r.id)).slice(0, 3);
+        if (refs.length === 0) {
+          checkpoints.push({ nodeId: cp.nodeId, candidates: [] });
+          continue;
+        }
         // One step per checkpoint (R10-04), mirroring the lens: a replay
         // returns the recorded output, so a failed checkpoint re-bills
         // itself, never checkpoints 1..n-1. The step returns what the
@@ -786,8 +799,7 @@ export async function runScout(
         const { model, result, loaded } = await runner(
           `scout:${id}:${cp.nodeId}`,
           async () => {
-            // ≤ 3 images per call (plan §7.2).
-            const refs = cp.keyframes.slice(0, 3);
+            // ≤ 3 eligible images per call (plan §7.2).
             const images: ImageInput[] = [];
             const loaded: Array<{ id: string; tMs: number }> = [];
             for (const ref of refs) {

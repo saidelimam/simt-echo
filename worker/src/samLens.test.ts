@@ -104,9 +104,17 @@ function lensSetup(
     clip?: boolean;
     keyframeFlags?: Record<string, unknown>;
     clipFrames?: number;
+    /** R12-07: the clip's own face verdict, when the client sent one. */
+    clipFaceFree?: boolean;
   } = {},
 ) {
-  const { type = "CHECKPOINT", clip = true, keyframeFlags = {}, clipFrames = STRIP_CLIP.frameCount } = opts;
+  const {
+    type = "CHECKPOINT",
+    clip = true,
+    keyframeFlags = {},
+    clipFrames = STRIP_CLIP.frameCount,
+    clipFaceFree,
+  } = opts;
   const r2 = new FakeR2();
   void r2.put("jobs/job1/in/clip_n2", "clip-bytes");
   void r2.put("jobs/job1/in/kf_n2_1", "hero-bytes");
@@ -121,7 +129,15 @@ function lensSetup(
       { id: "kf_n2_0", tMs: 39250 },
       { id: "kf_n2_1", tMs: 40750, ...keyframeFlags },
     ],
-    ...(clip ? { clip: { ...STRIP_CLIP, frameCount: clipFrames } } : {}),
+    ...(clip
+      ? {
+          clip: {
+            ...STRIP_CLIP,
+            frameCount: clipFrames,
+            ...(clipFaceFree === undefined ? {} : { faceFree: clipFaceFree }),
+          },
+        }
+      : {}),
     approach: [{ tMs: 37250, d: 18.9 }],
   };
   // Parsed like job intake does, so a schema that strips a field fails here.
@@ -725,5 +741,24 @@ describe("runGround SAM lens (W11-06)", () => {
     expect(result.checkpoints[0].candidates[0].source).toBe("AI_GROUNDED");
     // The lens ran (content-hash cache written), not the removed legacy path.
     expect([...r2.store.keys()].some((k) => k.startsWith("jobs/job1/sam/cache/"))).toBe(true);
+  });
+});
+
+describe("R12-07 clip faceFree contract", () => {
+  it("does not escalate a clip the client marked as failed", async () => {
+    const { manifest, env } = lensSetup({ type: "TURN", clipFaceFree: false });
+    // The schema keeps the flag: parsing must not strip it.
+    expect(manifest.checkpoints[0].clip?.faceFree).toBe(false);
+    const calls = stubMeta(STRIP_VIDEO, imgLine(0.9));
+    await runGround(env, "job1", manifest, lensScout());
+    expect(calls).toEqual(["image"]);
+  });
+
+  it("still escalates a clip that carries no face verdict", async () => {
+    const { manifest, env } = lensSetup({ type: "TURN" });
+    expect(manifest.checkpoints[0].clip?.faceFree).toBeUndefined();
+    const calls = stubMeta(STRIP_VIDEO, imgLine(0.9));
+    await runGround(env, "job1", manifest, lensScout());
+    expect(calls).toEqual(["image", "video"]);
   });
 });
