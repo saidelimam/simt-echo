@@ -16,7 +16,9 @@ import {
 //   jobs/staging/<uploadId>/meta.json  {files:[{name,sha256,bytes}], owner, createdAt}
 //   jobs/staging/<uploadId>/<name>      staged blob, sha-verified on PUT
 //   jobs/idem/<jobId>.json  {jobId} marking a completed idempotent create;
-//     the job id itself is derived from the idempotency key (see jobIdForKey)
+//     the job id itself is derived from the install and the idempotency key
+//     (see jobIdForKey) — R12-05: the scope is the install, not the key
+//     alone, so two installs that pick the same key never share a job
 //   jobs/<jobId>/owner.json  {owner:<deviceId>} — R10-01: the minting
 //     install that created the job; a foreign id reads it as 404
 // The v1 multipart path in jobs.ts is untouched; JSON job creates dispatch here.
@@ -97,8 +99,19 @@ async function hexSha256Hex(data: Uint8Array | string): Promise<string> {
  * keys always name the same job. That makes concurrent creates collide on
  * the Workflow instance id instead of racing to make two jobs.
  */
-async function jobIdForKey(idempotencyKey: string): Promise<string> {
-  const hex = await hexSha256Hex(idempotencyKey);
+/**
+ * The job id an install's idempotency key names: sha256 of
+ * `deviceId\0idempotencyKey`, shaped like a UUIDv5.
+ *
+ * R12-05 (review 0012, F5): the key alone made the id global, so install B
+ * guessing or replaying install A's key either read A's job back (after the
+ * owner check, only as a 404) or, before it, was handed A's progress. The
+ * delimiter cannot appear in either input, so no two pairs collide by
+ * concatenation. Same install, same key, same id — which is what makes a
+ * retry land on the same Workflow instance.
+ */
+async function jobIdForKey(deviceId: string, idempotencyKey: string): Promise<string> {
+  const hex = await hexSha256Hex(`${deviceId}\u0000${idempotencyKey}`);
   const variant = ((parseInt(hex[16], 16) & 0x3) | 0x8).toString(16);
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
@@ -394,9 +407,14 @@ export async function handleCreateJobV11(c: Context<AppEnv>): Promise<Response> 
   // request and differs for a changed one.
   const payloadHash = await hexSha256Hex(JSON.stringify(parsed.data));
 
-  // The id is derived from the idempotency key, so concurrent creates with
-  // one key name the same Workflow instance and cannot make two jobs.
-  const jobId = idempotencyKey !== undefined ? await jobIdForKey(idempotencyKey) : crypto.randomUUID();
+  // The id is derived from this install and the idempotency key (R12-05), so
+  // concurrent creates from one install with one key name the same Workflow
+  // instance and cannot make two jobs — while another install's identical key
+  // names its own job.
+  const jobId =
+    idempotencyKey !== undefined
+      ? await jobIdForKey(c.get("deviceId"), idempotencyKey)
+      : crypto.randomUUID();
 
   // Idempotent replay: a completed create returns the original job id only
   // when the payload matches the recorded one — a changed payload under the
@@ -411,8 +429,9 @@ export async function handleCreateJobV11(c: Context<AppEnv>): Promise<Response> 
     );
     if (record !== null) {
       if ((await c.env.MEDIA.head(jobManifestKey(jobId))) !== null) {
-        // R10-01: the replay hands out the creating install's job id, so only
-        // that install gets it; to every other install the key is unknown.
+        // R10-01/R12-05: the id is already scoped to this install, so this
+        // replay is this install's own; the owner check stays as a second
+        // barrier in case a prefix ever holds a foreign job id.
         if ((await readJobOwner(c.env, jobId)) !== c.get("deviceId")) {
           return c.json({ ok: false, error: "job_not_found" }, 404);
         }

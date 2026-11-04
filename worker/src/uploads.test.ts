@@ -1021,3 +1021,58 @@ describe("per-install isolation (R10-01)", () => {
     );
   });
 });
+
+describe("R12-05 idempotency scope", () => {
+  const K = "shared-client-key";
+  const post = (env: never, headers: Record<string, string>, payload: unknown) =>
+    app.request(
+      "/v1/jobs",
+      {
+        method: "POST",
+        headers: { ...headers, "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      },
+      env,
+    );
+
+  it("gives two installs that pick the same key their own jobs", async () => {
+    const media = new FakeR2();
+    const pipeline = new FakePipeline();
+    const env = await envFor(media, pipeline);
+    await seedDevice(media as never, OTHER);
+
+    const uploadA = await stageFullUpload(env);
+    const a = await post(env, bearer(KEY), {
+      manifest: validManifest(),
+      uploadId: uploadA,
+      idempotencyKey: K,
+    });
+    expect(a.status).toBe(202);
+    const jobA = ((await a.json()) as { jobId: string }).jobId;
+    expect(pipeline.instances.size).toBe(1);
+
+    // Install B replays the same client-chosen key against A's session. Under
+    // the old global derivation this was A's job id and answered
+    // `job_not_found`; scoped to the install it is B's own create, so the
+    // foreign session is what fails.
+    const b = await post(env, bearer(OTHER), {
+      manifest: validManifest(),
+      uploadId: uploadA,
+      idempotencyKey: K,
+    });
+    expect(b.status).toBe(404);
+    expect(((await b.json()) as { error: string }).error).toMatch(/^upload_/);
+    // No second instance, and A's job was never handed out.
+    expect(pipeline.instances.size).toBe(1);
+
+    // A's own replay still resolves to A's job and burns no new instance.
+    const replay = await post(env, bearer(KEY), {
+      manifest: validManifest(),
+      uploadId: uploadA,
+      idempotencyKey: K,
+    });
+    expect(replay.status).toBe(202);
+    expect(((await replay.json()) as { jobId: string }).jobId).toBe(jobA);
+    expect(pipeline.instances.size).toBe(1);
+  });
+});
