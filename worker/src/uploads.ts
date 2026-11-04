@@ -250,14 +250,39 @@ export async function sweepExpiredUploads(env: Env, now: number = Date.now()): P
 export const JOB_RETENTION_MS = 24 * 60 * 60 * 1000;
 const TERMINAL_STAGES = new Set(["complete", "errored"]);
 
+/** Workflow states that no longer need terminating before deletion. */
+const TERMINAL_WORKFLOW_STATUSES = new Set(["complete", "errored", "terminated"]);
+
+/** Drops a job's Workflow instance: step outputs (`Manifest`, scout titles,
+ * descriptions, indoor `signText`, SAM masks and the sealed result) live in
+ * Workflow storage, so deleting only the R2 prefix would leave the job's
+ * route metadata behind after the 24 h window. Best effort — an instance
+ * that never existed or is already gone is not a failure. */
+async function dropJobInstance(pipeline: Workflow | undefined, jobId: string): Promise<void> {
+  if (!pipeline) return;
+  try {
+    const handle = await pipeline.get(jobId);
+    const status = (await handle.status()).status;
+    if (!TERMINAL_WORKFLOW_STATUSES.has(status)) await handle.terminate();
+    await handle.delete();
+  } catch {
+    // Unknown or already-removed instance: nothing left to drop.
+  }
+}
+
 /**
- * Deletes the prefixes of jobs whose progress record is terminal and older
- * than 24 h. A job without a readable progress record is left alone: a
- * mid-write job is not terminal, and the lifecycle rule covers the rest.
+ * Deletes jobs that are past the 24 h retention window, with their
+ * idempotency record and Workflow instance.
+ *
+ * A job expires when either its progress record is terminal and older than
+ * the window, or its oldest stored object is older than the window. The
+ * second test is what R12-04 adds: a Workflow that terminates or times out
+ * without writing a terminal progress record otherwise leaves a
+ * `scouting`/`grounding` prefix — and every step's output — forever.
  * Returns the number of job prefixes deleted.
  */
 export async function sweepExpiredJobs(env: Env, now: number = Date.now()): Promise<number> {
-  const groups = new Map<string, string[]>();
+  const groups = new Map<string, { keys: string[]; oldestUploaded: number }>();
   let cursor: string | undefined;
   for (;;) {
     const page = await env.MEDIA.list({ prefix: "jobs/", cursor });
@@ -267,24 +292,39 @@ export async function sweepExpiredJobs(env: Env, now: number = Date.now()): Prom
       if (slash < 0) continue;
       const id = rest.slice(0, slash);
       if (id === "staging" || id === "idem") continue; // Sibling trees, not jobs.
-      const keys = groups.get(id) ?? [];
-      keys.push(o.key);
-      groups.set(id, keys);
+      const uploaded = o.uploaded instanceof Date ? o.uploaded.getTime() : Number.NaN;
+      const g = groups.get(id) ?? { keys: [], oldestUploaded: Number.NaN };
+      g.keys.push(o.key);
+      g.oldestUploaded = Number.isFinite(uploaded)
+        ? Number.isFinite(g.oldestUploaded)
+          ? Math.min(g.oldestUploaded, uploaded)
+          : uploaded
+        : g.oldestUploaded;
+      groups.set(id, g);
     }
     if (!page.truncated) break;
     cursor = page.cursor;
   }
   let swept = 0;
-  for (const [id, keys] of groups) {
+  for (const [id, g] of groups) {
     const progress = await readJson<{ stage?: unknown; updatedAt?: unknown }>(
       env,
       `jobs/${id}/progress.json`,
     );
     const stage = progress?.stage;
     const updatedAt = progress?.updatedAt;
-    if (typeof stage !== "string" || !TERMINAL_STAGES.has(stage)) continue;
-    if (typeof updatedAt !== "number" || now - updatedAt < JOB_RETENTION_MS) continue;
-    await env.MEDIA.delete(keys);
+    const terminalExpired =
+      typeof stage === "string" &&
+      TERMINAL_STAGES.has(stage) &&
+      typeof updatedAt === "number" &&
+      now - updatedAt >= JOB_RETENTION_MS;
+    const prefixExpired =
+      Number.isFinite(g.oldestUploaded) && now - g.oldestUploaded >= JOB_RETENTION_MS;
+    if (!terminalExpired && !prefixExpired) continue;
+    await env.MEDIA.delete(g.keys);
+    // A replay of the idempotency key must not answer with a swept job.
+    await env.MEDIA.delete(idemKey(id));
+    await dropJobInstance(env.PIPELINE, id);
     swept++;
   }
   return swept;
@@ -299,7 +339,10 @@ export async function sweepExpiredRelayObjects(env: Env, now: number = Date.now(
   const expired: string[] = [];
   let cursor: string | undefined;
   for (;;) {
-    const page = await env.MEDIA.list({ prefix: "relay/", cursor });
+    // R12-04 (review 0012, F4): production R2 omits customMetadata unless it
+    // is requested, so the old list made every object look unknown and this
+    // sweep deleted nothing. The include is part of the read contract.
+    const page = await env.MEDIA.list({ prefix: "relay/", cursor, include: ["customMetadata"] });
     for (const o of page.objects) {
       const expiresAt = Number(o.customMetadata?.expiresAt ?? NaN);
       if (Number.isFinite(expiresAt) && expiresAt <= now) expired.push(o.key);
