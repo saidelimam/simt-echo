@@ -3,7 +3,13 @@ import { NonRetryableError } from "cloudflare:workflows";
 import type { Env } from "./index";
 import { metaResponses } from "./meta";
 import { frameFailsFlags, inlineRunner, type StepRunner } from "./samLens";
-import { JobIdSchema, type Checkpoint, type Manifest } from "./types";
+import {
+  JobIdSchema,
+  MAX_CANDIDATE_TEXT_CHARS,
+  MAX_CANDIDATE_TITLE_CHARS,
+  type Checkpoint,
+  type Manifest,
+} from "./types";
 
 // Scout chain (plan §7, slices W3-04 + W3-09).
 //
@@ -43,17 +49,17 @@ export class ScoutError extends Error {
 
 /** One compact scout proposal (plan §7.1 SCHEMA candidate, verbatim fields). */
 export const ScoutCandidateSchema = z.object({
-  title: z.string().min(1),
-  samPhrase: z.string().min(1),
-  description: z.string().min(1),
+  title: z.string().min(1).max(MAX_CANDIDATE_TITLE_CHARS),
+  samPhrase: z.string().min(1).max(MAX_CANDIDATE_TITLE_CHARS),
+  description: z.string().min(1).max(MAX_CANDIDATE_TEXT_CHARS),
   imageId: z.string().min(1),
   box: z.tuple([z.number().int(), z.number().int(), z.number().int(), z.number().int()]),
   distinctiveness: z.number().min(0).max(1),
   permanence: z.number().min(0).max(1),
-  signText: z.string().nullable(),
+  signText: z.string().max(MAX_CANDIDATE_TEXT_CHARS).nullable(),
   ambiguous: z.boolean(),
   privacyRisk: z.boolean(),
-  cue: z.string().min(1),
+  cue: z.string().min(1).max(MAX_CANDIDATE_TEXT_CHARS),
 });
 export type ScoutCandidate = z.infer<typeof ScoutCandidateSchema>;
 
@@ -84,20 +90,20 @@ export type ScoutResult = z.infer<typeof ScoutResultSchema>;
 export const CANDIDATE_JSON_SCHEMA = {
   type: "object",
   properties: {
-    title: { type: "string" },
-    samPhrase: { type: "string" },
-    description: { type: "string" },
+    title: { type: "string", maxLength: 80 },
+    samPhrase: { type: "string", maxLength: 80 },
+    description: { type: "string", maxLength: 300 },
     imageId: { type: "string" },
     box: { type: "array", items: { type: "integer" }, minItems: 4, maxItems: 4 },
     distinctiveness: { type: "number", minimum: 0, maximum: 1 },
     permanence: { type: "number", minimum: 0, maximum: 1 },
-    signText: { type: ["string", "null"] },
+    signText: { type: ["string", "null"], maxLength: 300 },
     ambiguous: { type: "boolean" },
     privacyRisk: { type: "boolean" },
     // `minLength: 1` matches `ScoutCandidateSchema.cue` exactly: the wire
     // contract and the validator are one contract. Models that return `""`
     // are rescued by cue synthesis (`withCues`), not rejected wholesale.
-    cue: { type: "string", minLength: 1 },
+    cue: { type: "string", minLength: 1, maxLength: 300 },
   },
   required: [
     "title",
@@ -198,7 +204,9 @@ interface WorkersAiBinding {
   run(
     model: string,
     input: Record<string, unknown>,
-    options?: { gateway?: { id: string } },
+    /** R12-12: `skipCache` keeps one job's prompt context out of the
+     *  shared gateway cache. */
+    options?: { gateway?: { id: string; skipCache?: boolean } },
   ): Promise<unknown>;
 }
 
@@ -293,7 +301,9 @@ const workersAiProvider: ScoutProvider = {
                 temperature: 0.1,
                 ...thinkingOffKwargs(model),
               },
-              { gateway: { id: gateway } },
+              // R12-12: no gateway cache — a cached reply would serve one
+              // job's context to another.
+              { gateway: { id: gateway, skipCache: true } },
             ),
             timeoutMs,
             model,
