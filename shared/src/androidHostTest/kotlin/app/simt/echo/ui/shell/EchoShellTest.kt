@@ -5,6 +5,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertTextEquals
@@ -273,6 +274,11 @@ class EchoShellTest {
             val config = shellConfigFor(next)
             compose.onNodeWithTag(EchoShellTag).assertIsDisplayed()
             compose.onNodeWithTag(EchoShellWordmarkTag).assertIsDisplayed()
+            val wordmark = compose.onNodeWithTag(EchoShellWordmarkTag).fetchSemanticsNode()
+            assertTrue(
+                wordmark.config.contains(SemanticsProperties.InvisibleToUser),
+                "the ECHO eyebrow is decoration and must not be re-announced",
+            )
             compose.onNodeWithTag(EchoShellHeadingTag).assertTextEquals(config.title)
             when (config.chrome) {
                 EchoChrome.BACK -> {

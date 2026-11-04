@@ -15,13 +15,18 @@ import androidx.compose.ui.unit.dp
 // tinted by the caller (Icon uses LocalContentColor); content
 // descriptions live on the command, never on the vector.
 
-private fun icon(name: String, block: PathBuilder.() -> Unit): ImageVector =
+private fun icon(
+    name: String,
+    autoMirror: Boolean = false,
+    block: PathBuilder.() -> Unit,
+): ImageVector =
     ImageVector.Builder(
         name = name,
         defaultWidth = 24.dp,
         defaultHeight = 24.dp,
         viewportWidth = 24f,
         viewportHeight = 24f,
+        autoMirror = autoMirror,
     ).path(
         stroke = SolidColor(Color.Black),
         strokeLineWidth = 2f,
@@ -32,7 +37,7 @@ private fun icon(name: String, block: PathBuilder.() -> Unit): ImageVector =
 
 object EchoIcons {
     /** Back: a step back along the path. */
-    val Back: ImageVector = icon("EchoBack") {
+    val Back: ImageVector = icon(name = "EchoBack", autoMirror = true) {
         moveTo(19f, 12f)
         lineTo(5f, 12f)
         moveTo(11f, 6f)
