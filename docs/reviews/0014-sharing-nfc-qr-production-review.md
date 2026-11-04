@@ -32,7 +32,7 @@ common edge cases. Critical and High findings BLOCK production sign-off.
 
 | id | state | slice | tier | lane | depends on | evidence |
 |---|---|---|---|---|---|---|
-| R14-01 | Queued | F1 Android cleartext HTTP block & Wi-Fi socket binding: add `network_security_config.xml` permitting cleartext for LAN sharing and bind `KtorLanTransport` client sockets to the active Wi-Fi/hotspot `Network` | Critical | lan | — |  |
+| R14-01 | Complete | F1 Android cleartext HTTP block & Wi-Fi socket binding: add `network_security_config.xml` permitting cleartext for LAN sharing and bind `KtorLanTransport` client sockets to the active Wi-Fi/hotspot `Network` | Critical | lan | — | 62b176403cbf10e00863aaa490799cdd6e147c07 |
 | R14-02 | Queued | F2 `EchoHostApduService.onDestroy()` wipes `ActiveNfcOfferRegistry`: remove `clearAll()` from service `onDestroy()` so OS unbinds after a partial tap or re-offer never erase the live offer | Critical | nfc-hce | — |  |
 | R14-03 | Queued | F3 LAN/hotspot IPv4 selection (`KtorLanTransport` & `LanAddress`): inspect all `Inet4Address`es per interface, exclude `rmnet*`/`tun*`/`clat*`/`dummy*`, and prioritize hotspot (`ap*`/`softap*`/`wlan1`) | Critical | lan | R14-01 |  |
 | R14-04 | Queued | F4 NFC Receive recovery & re-arm deadlocks: keep `nfcListening` honest on retryable failures, add `"Try tap again"` + `"Use QR instead"` actions on `NfcTapPanel`, re-arm on adapter `STATE_ON`, and report non-IsoDep tags | High | nfc-read | — |  |
