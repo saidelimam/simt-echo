@@ -1,6 +1,6 @@
 # SIMT ECHO Privacy Policy
 
-**Effective Date:** November 3, 2026  
+**Effective Date:** November 4, 2026  
 **Platform Version:** SIMT ECHO 2.0 (Physical Route Memory Platform)  
 **System Architecture:** Offline-First KMP Edge Core with Consented Cloud AI Enrichment  
 
@@ -51,6 +51,7 @@ Cloud enrichment never occurs automatically. Before any data leaves the mobile d
 * The exact number of keyframe photos and silent, 5-second 480p approach clips to be processed.
 * The specific cloud infrastructure utilized (Cloudflare Workers AI and optional Meta Model API providers).
 * An explicit disclosure confirming that raw route video remains private on the creator's phone and is never uploaded.
+* **Network Data Gating:** Walk-time preparation uploads follow a data policy that defaults to Wi-Fi only. Under that default, a batch on a metered network—typically mobile data—is skipped entirely: no bytes are sent and nothing is partially staged. Roaming connections never upload, even if mobile data is permitted, and a network whose status cannot be determined fails closed as if offline.
 
 Users retain the absolute right to decline cloud enrichment ("Not now"), in which case the Platform enables manual landmark creation ("Draw my own") directly on the device.
 
@@ -96,6 +97,7 @@ Users may explicitly export an unencrypted route container (`.echo` format) for 
 SIMT ECHO provides comprehensive governance controls over stored spatial data:
 
 * **Creator Asset Preview & Toggling:** Prior to exporting or sharing a route, creators can review an Export Preview sheet displaying all included landmark crops and toggle individual assets off. Items flagged for potential privacy risks (such as background text or screens) default to an excluded state.
+* **Mobile Data Control:** Creators may permit walk-time uploads over metered networks through the "Use mobile data" setting. The control is off by default (Wi-Fi only), is changed once in Settings rather than per walk, and applies to every subsequent walk until changed again. Roaming connections remain excluded in all cases.
 * **Route Expiration Settings:** Creators can configure an expiration timestamp (e.g., 24 hours or 7 days) for shared bundles (`PrivacyInfo.expiresAtEpochMs`). Recipient devices automatically purge expired routes upon application launch.
 * **Complete Storage Erasure:** Selecting "Delete All Data" within the application Settings immediately and permanently purges all local routes, draft recordings, trial logs, cached assets, and local route-memory overlays from device storage.
 * **Local Route Memory Isolation:** Secondary devices retain visual route-memory overlays locally to improve navigation performance on subsequent walks. This data remains strictly local, is never uploaded to cloud servers, and is erased whenever the parent route is deleted.
