@@ -75,6 +75,9 @@ const val EchoShellTag = "EchoShell"
 const val EchoShellTopChromeTag = "EchoShellTopChrome"
 const val EchoShellWordmarkTag = "EchoShellWordmark"
 const val EchoShellHeadingTag = "EchoShellHeading"
+
+/** Present only while the heading shows its keyboard focus ring. */
+const val EchoShellFocusRingTag = "EchoShell:FocusRing"
 const val EchoShellDeckTag = "EchoShellDeck"
 const val EchoShellRecordTag = "EchoShell:record"
 const val EchoShellReceiveTag = "EchoShell:receive"
@@ -234,6 +237,8 @@ private fun TopChrome(
     LaunchedEffect(config.title) {
         focusRequester.requestFocus()
     }
+    // Observe from the wrapper: on the heading node itself the focus event
+    // never reached the observer (review 0013 coverage follow-up).
     var headingFocused by remember { mutableStateOf(false) }
     // Programmatic heading focus is for announcements, not a permanent
     // gold box: the ring appears only while input is keyboard-driven.
@@ -280,28 +285,30 @@ private fun TopChrome(
                         .semantics { invisibleToUser() },
                 )
             }
-            Text(
-                text = config.title,
-                style = MaterialTheme.typography.headlineLarge,
+            Box(
                 modifier = Modifier
-                    .testTag(EchoShellHeadingTag)
-                    .focusRequester(focusRequester)
-                    .onFocusChanged { headingFocused = it.isFocused }
-                    .focusable()
-                    .padding(4.dp)
+                    .onFocusChanged { headingFocused = it.hasFocus }
                     .then(
                         if (headingFocused && keyboardInput) {
-                            Modifier.border(
-                                2.dp,
-                                EchoExtras.gold,
-                                MaterialTheme.shapes.small,
-                            )
+                            Modifier
+                                .border(2.dp, EchoExtras.gold, MaterialTheme.shapes.small)
+                                .testTag(EchoShellFocusRingTag)
                         } else {
                             Modifier
                         },
-                    )
-                    .semantics { heading() },
-            )
+                    ),
+            ) {
+                Text(
+                    text = config.title,
+                    style = MaterialTheme.typography.headlineLarge,
+                    modifier = Modifier
+                        .testTag(EchoShellHeadingTag)
+                        .focusRequester(focusRequester)
+                        .focusable()
+                        .padding(4.dp)
+                        .semantics { heading() },
+                )
+            }
         }
         if (config.showSettings) {
             CosmosIconButton(
