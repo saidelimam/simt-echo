@@ -16,6 +16,30 @@ interface DeviceRecord {
    * itself, so reading the bucket yields no usable credential. */
   verifier: string;
   createdAt: number;
+  /** Last authenticated use, so the lifecycle rule measures idleness rather
+   * than the age of a record an install still depends on (R12-09). */
+  lastSeenAt?: number;
+}
+
+/** How stale a record may get before a request rewrites it. Well under the
+ * 365-day `expire-devices` rule, so an install that keeps working keeps its
+ * record; R2 lifecycle expiration counts from object creation, not access. */
+const DEVICE_TOUCH_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Rewrites the record with a fresh timestamp, at most once a month. Best
+ * effort: a failed touch must never deny a request the verifier accepted. */
+async function touchDeviceRecord(env: Env, id: string, record: DeviceRecord): Promise<void> {
+  const now = Date.now();
+  const last = record.lastSeenAt ?? record.createdAt;
+  if (now - last < DEVICE_TOUCH_MS) return;
+  try {
+    await env.MEDIA.put(
+      deviceKeyForId(id),
+      new TextEncoder().encode(JSON.stringify({ ...record, lastSeenAt: now })),
+    );
+  } catch {
+    // The next request retries; the record simply ages until then.
+  }
 }
 
 async function hexSha256(text: string): Promise<string> {
@@ -95,9 +119,12 @@ export async function resolveDevice(
     return null;
   }
   const verifier = await deviceVerifier(bearer);
-  const stored = (rec as { verifier?: unknown } | null)?.verifier;
+  const record = rec as Partial<DeviceRecord> | null;
+  const stored = record?.verifier;
   if (typeof stored === "string") {
-    return timingSafeEqual(stored, verifier) ? id : null;
+    if (!timingSafeEqual(stored, verifier)) return null;
+    await touchDeviceRecord(env, id, record as DeviceRecord);
+    return id;
   }
   const legacy = rec as { key?: unknown; createdAt?: unknown } | null;
   if (typeof legacy?.key !== "string" || !timingSafeEqual(legacy.key, bearer)) {

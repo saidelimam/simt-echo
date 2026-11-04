@@ -78,4 +78,40 @@ describe("DELETE /v1/device (R12-09)", () => {
     expect(forged.status).toBe(401);
     expect(media.store.size).toBe(1);
   });
+
+  it("refreshes the record's age so the lifecycle rule measures idleness", async () => {
+    const media = new Bucket();
+    const env = envFor(media);
+    const key = await mint(env);
+    const name = [...media.store.keys()][0];
+    const record = JSON.parse(media.store.get(name)!) as { verifier: string; createdAt: number };
+    // A record last used more than the touch interval ago.
+    const stale = Date.now() - 40 * 24 * 60 * 60 * 1000;
+    media.store.set(name, JSON.stringify({ ...record, createdAt: stale, lastSeenAt: stale }));
+
+    const res = await app.request(
+      "/v1/uploads/00000000-0000-0000-0000-000000000000",
+      { headers: authed(key) },
+      env,
+    );
+    expect(res.status).toBe(404);
+
+    const after = JSON.parse(media.store.get(name)!) as { lastSeenAt: number; createdAt: number };
+    expect(after.lastSeenAt).toBeGreaterThan(stale);
+    expect(after.createdAt).toBe(stale);
+  });
+
+  it("does not rewrite a record it touched recently", async () => {
+    const media = new Bucket();
+    const env = envFor(media);
+    const key = await mint(env);
+    const name = [...media.store.keys()][0];
+    const before = media.store.get(name);
+    await app.request(
+      "/v1/uploads/00000000-0000-0000-0000-000000000000",
+      { headers: authed(key) },
+      env,
+    );
+    expect(media.store.get(name)).toBe(before);
+  });
 });
