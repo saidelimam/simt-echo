@@ -32,6 +32,8 @@ import app.simt.echo.ui.components.NfcTapPanelTag
 import app.simt.echo.ui.components.PairingMethodNfcTag
 import app.simt.echo.ui.components.PairingMethodQrTag
 import app.simt.echo.ui.components.PairingRecoveryTag
+import app.simt.echo.ui.copy.PairingCopy
+import app.simt.echo.ui.screens.receive.QrFailureState
 import app.simt.echo.ui.screens.receive.ReceiveScannerTag
 import app.simt.echo.ui.screens.receive.ReceiveScreen
 import app.simt.echo.ui.screens.share.ShareQrTag
@@ -53,6 +55,7 @@ import org.robolectric.Shadows
 import org.robolectric.annotation.Config
 import java.nio.file.Files
 import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.test.assertEquals
 
 /**
  * W21-03 gate: the two pairing surfaces render the method the visit
@@ -237,6 +240,25 @@ class PairingModesUiTest {
         compose.onNodeWithTag(NfcTapPanelTag).assertIsDisplayed()
         compose.onNodeWithTag(ReceiveScannerTag).assertDoesNotExist()
         compose.onNodeWithText("Ready to receive a tap").assertIsDisplayed()
+    }
+
+    @Test
+    fun aRejectedQrSaysSoAndOffersScanAgain() {
+        var rescans = 0
+        compose.setContent {
+            EchoTheme(darkTheme = true) {
+                QrFailureState(
+                    failure = PairingFailure.InvalidInvitation,
+                    onRescan = { rescans++ },
+                )
+            }
+        }
+
+        // The honest copy, never network advice, and one action back to the
+        // scanner on a new generation (R14-06).
+        compose.onNodeWithText(PairingCopy.NOT_AN_ECHO_SHARE).assertIsDisplayed()
+        compose.onNodeWithText(PairingCopy.RECEIVE_SCAN_AGAIN).performClick()
+        assertEquals(1, rescans)
     }
 
     @Test
