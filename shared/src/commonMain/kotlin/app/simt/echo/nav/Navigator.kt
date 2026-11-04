@@ -140,7 +140,7 @@ class Navigator(
         private set
 
     /** Extra σ from flagged `MISSED_STEP_SUSPECT` events on LINEAR (m, W16-04). */
-    private var missedStepSigmaBonusM: Double = 0.0
+    private val missedStepPolicy = MissedStepPolicy()
 
     /** Count of `MISSED_STEP_SUSPECT` events observed during this walk (W16-04). */
     var missedStepSuspectCount: Int = 0
@@ -254,7 +254,7 @@ class Navigator(
     private val uncertainty: Double
         get() = (ghost?.sigma
             ?: (config.navUncertaintyBaseM + config.navUncertaintyPerMetre * (dist - lastAnchorDist))) +
-            missedStepSigmaBonusM
+            missedStepPolicy.sigmaBonusM
     private val arrow: Double
         get() {
             val offset = if (config.visualAssist) yawOffset + travelOffsetRad else yawOffset
@@ -274,7 +274,7 @@ class Navigator(
         lastAnchorLegIndex = 0
         yawOffset = wrapPi(degToRad(leg?.headingRelDeg ?: 0.0) - yaw)
         travelOffsetRad = 0.0
-        missedStepSigmaBonusM = 0.0
+        missedStepPolicy.reset()
         missedStepSuspectCount = 0
         viewFixMatcher.reset()
         depthTracker.reset()
@@ -322,7 +322,7 @@ class Navigator(
             if (ghost != null) {
                 ghost.inflateUncertainty(inflation)
             } else {
-                missedStepSigmaBonusM += inflation
+                missedStepPolicy.onSuspect()
             }
         }
         if (phase != NavPhase.WALK && phase != NavPhase.APPROACH &&
@@ -457,6 +457,7 @@ class Navigator(
             lastAnchorDist = it.meanS
         }
         lastAnchorLegIndex = (legIndex + 1).coerceAtMost(route.legs.lastIndex)
+        missedStepPolicy.reset()
         emit(NavEvent.Anchor(AnchorKind.LANDMARK, target.id, absoluteS))
         confirmAutoAdvanceProgress = null
         when {
@@ -649,6 +650,7 @@ class Navigator(
         fingerprintPrompt = null
         ghost?.observe(Observation.Anchor(prompt.nodeS))
         lastAnchorDist = absoluteS
+        missedStepPolicy.reset()
         if (phase == NavPhase.RELOCKING) {
             // An explicit user confirm is ground truth: it completes the
             // search at the suggested position even before σ converges.
@@ -680,6 +682,7 @@ class Navigator(
         if (target.type != NodeType.LEVEL_CHANGE) return
         if (target.levelDelta != 0 && (event.deltaHM > 0.0) != (target.levelDelta > 0)) return
         if (!confirmedLevelNodeIds.add(target.id)) return
+        missedStepPolicy.reset()
         ghost?.let {
             val nodeS = geometry.nodeS(target.id) ?: it.meanS
             it.observe(Observation.Level(nodeS))
@@ -905,6 +908,7 @@ class Navigator(
     private fun advanceLeg(anchorKind: AnchorKind?) {
         val target = targetNode
         if (anchorKind != null && target != null) {
+            missedStepPolicy.reset()
             leg?.let { learnStride(it) }
             emit(NavEvent.Anchor(anchorKind, target.id, absoluteS))
             emit(NavEvent.Haptic(HapticPattern.CONFIRM))
