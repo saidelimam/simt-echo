@@ -50,11 +50,14 @@ class EchoHostApduService : HostApduService() {
     }
 
     override fun onDestroy() {
+        // The OS unbinds this component whenever the RF field drops, and
+        // rebinds it for the next tap. Destroying the *service* is therefore
+        // not the offer ending: [AndroidNfcPairingController] owns the
+        // registry and clears it on pause, method switch or close. Erasing it
+        // here made the honest second tap after an interrupted one answer
+        // 6985 while the screen still said "Ready to tap" (R14-02).
         presenter?.deactivate()
         presenter = null
-        // A destroyed service serves nothing: the controller republishes on
-        // resume, so there is no window where a stale offer stays visible.
-        ActiveNfcOfferRegistry.clearAll()
         super.onDestroy()
     }
 
