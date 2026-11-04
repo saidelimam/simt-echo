@@ -1,6 +1,7 @@
 package app.simt.echo
 
 import app.simt.echo.platform.Platform
+import app.simt.echo.transfer.DeviceCredentials
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -10,6 +11,9 @@ import kotlin.test.assertTrue
  * same [TransferService] the graph builds — and the graph must actually
  * supply the relay. Configured production config → relay available
  * (Share offers it); anything less → LAN-only, never a half-wired client.
+ *
+ * R12-02: the bearer is a per-install device key minted at first use, so
+ * configuration is the base URL alone; no shared token is compiled in.
  */
 class AppGraphRelayTest {
 
@@ -23,7 +27,6 @@ class AppGraphRelayTest {
         val graph = AppGraph(
             platform = FakePlatform(),
             apiBaseUrl = "https://echo.test",
-            appToken = "tok",
         )
         assertTrue(graph.cloudAiConfigured)
         // Plan 0005 §1: the Worker refuses a code minted by another install
@@ -42,13 +45,15 @@ class AppGraphRelayTest {
     }
 
     @Test
-    fun blankTokenStaysLanOnly() {
+    fun aConfiguredGraphSuppliesThePerInstallCredentials() {
+        // R12-02: configuration never depends on a compiled-in token; the
+        // graph exposes the persisted credential store instead.
         val graph = AppGraph(
             platform = FakePlatform(),
             apiBaseUrl = "https://echo.test",
-            appToken = "",
         )
-        assertFalse(graph.cloudAiConfigured)
-        assertFalse(graph.transferService.relayAvailable)
+        val credentials: DeviceCredentials = graph.deviceCredentials
+        assertTrue(graph.cloudAiConfigured)
+        assertTrue(credentials is DeviceCredentials)
     }
 }

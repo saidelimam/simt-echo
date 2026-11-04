@@ -5,7 +5,7 @@
 // them (the relay fake wraps its value in `new Uint8Array(value)`, which
 // rejects a plain string).
 
-import { deviceKeyForId, deviceIdForKey, generateDeviceKey } from "./devices";
+import { deviceKeyForId, deviceIdForKey, deviceVerifier, generateDeviceKey } from "./devices";
 
 /** Minimal bucket surface needed to register a device record. */
 export interface DeviceBucket {
@@ -17,12 +17,16 @@ export interface DeviceBucket {
 }
 
 /** Registers a fixed test key as a minted install. Deterministic — the tests
- * assert identity across requests, not entropy. Returns the device id. */
+ * assert identity across requests, not entropy. R12-02: the record carries
+ * the verifier digest, exactly as `POST /v1/device` writes it. Returns the
+ * device id. */
 export async function seedDevice(bucket: DeviceBucket, key: string): Promise<string> {
   const id = await deviceIdForKey(key);
   await bucket.put(
     deviceKeyForId(id),
-    new TextEncoder().encode(JSON.stringify({ key, createdAt: 0 })),
+    new TextEncoder().encode(
+      JSON.stringify({ verifier: await deviceVerifier(key), createdAt: 0 }),
+    ),
   );
   return id;
 }

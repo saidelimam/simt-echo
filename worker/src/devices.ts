@@ -12,8 +12,26 @@ import type { Context } from "hono";
 import type { AppEnv, Env } from "./index";
 
 interface DeviceRecord {
-  key: string;
+  /** R12-02 (review 0012, F2): `sha256("verify:" + key)` — never the bearer
+   * itself, so reading the bucket yields no usable credential. */
+  verifier: string;
   createdAt: number;
+}
+
+async function hexSha256(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(text) as unknown as ArrayBuffer,
+  );
+  return [...new Uint8Array(digest)]
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/** Domain-separated digest of a device key. The prefix keeps the verifier
+ * from ever colliding with the device id (`sha256(key)`). */
+export async function deviceVerifier(key: string): Promise<string> {
+  return hexSha256(`verify:${key}`);
 }
 
 /** Constant-time string compare (S-reviewed surface). Returns false on a
@@ -58,8 +76,11 @@ export function generateDeviceKey(
 }
 
 /** Resolve a bearer to a device id, or null. Looks the record up by the id
- * derived from the bearer, then confirms the stored key in constant time — a
- * lookup miss and a key mismatch are indistinguishable to the caller. */
+ * derived from the bearer, then compares the stored verifier in constant time
+ * — a lookup miss and a verifier mismatch are indistinguishable to the caller.
+ * A pre-R12-02 record that still holds the plaintext key is upgraded in place
+ * on its first use, so no install is locked out and the plaintext stops
+ * living in R2. */
 export async function resolveDevice(
   env: Env,
   bearer: string,
@@ -67,14 +88,31 @@ export async function resolveDevice(
   const id = await deviceIdForKey(bearer);
   const obj = await env.MEDIA.get(deviceKeyForId(id));
   if (!obj) return null;
-  let rec: DeviceRecord | null = null;
+  let rec: unknown = null;
   try {
-    rec = (await obj.json()) as DeviceRecord;
+    rec = await obj.json();
   } catch {
     return null;
   }
-  if (typeof rec?.key !== "string") return null;
-  return timingSafeEqual(rec.key, bearer) ? id : null;
+  const verifier = await deviceVerifier(bearer);
+  const stored = (rec as { verifier?: unknown } | null)?.verifier;
+  if (typeof stored === "string") {
+    return timingSafeEqual(stored, verifier) ? id : null;
+  }
+  const legacy = rec as { key?: unknown; createdAt?: unknown } | null;
+  if (typeof legacy?.key !== "string" || !timingSafeEqual(legacy.key, bearer)) {
+    return null;
+  }
+  const createdAt = typeof legacy.createdAt === "number" ? legacy.createdAt : Date.now();
+  try {
+    await env.MEDIA.put(
+      deviceKeyForId(id),
+      new TextEncoder().encode(JSON.stringify({ verifier, createdAt })),
+    );
+  } catch {
+    // A failed upgrade must not deny the install: the next request retries.
+  }
+  return id;
 }
 
 /** `POST /v1/device` — mint one key for a new install. Unauthenticated (the
@@ -83,7 +121,7 @@ export async function resolveDevice(
 export async function postDevice(c: Context<AppEnv>): Promise<Response> {
   const key = generateDeviceKey();
   const id = await deviceIdForKey(key);
-  const rec: DeviceRecord = { key, createdAt: Date.now() };
+  const rec: DeviceRecord = { verifier: await deviceVerifier(key), createdAt: Date.now() };
   // Uint8Array, not a string: every fake bucket in the suite accepts it,
   // while `new Uint8Array("…")` (the relay fake) would store zero bytes.
   await c.env.MEDIA.put(
