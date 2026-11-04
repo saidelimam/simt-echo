@@ -19,15 +19,18 @@ class VisualMotionConsumer(
     private val height: Int = 180,
     val ring: VisualEgoRing = VisualEgoRing(),
     /**
-     * Handed every accepted ego on the analysis thread, at frame time.
+     * Handed every analysed frame's result on the analysis thread, at frame
+     * time: an accepted ego with its reason, or a zero-confidence ego carrying
+     * the rejection reason. A rejected frame is evidence that the camera could
+     * not measure, not silence.
      *
      * The step gate judges a candidate on the IMU thread at that instant, so it
-     * must already hold a frame from inside its ±0.4 s window. Draining only
+     * must already hold a frame from inside its ±1.2 s window. Draining only
      * after a step was emitted (the old path) left the window one step stale,
      * which is why every phantom step passed. Navigation readers still take
      * their copy from [ring] through [drain].
      */
-    private val onEgo: ((VisualEgo, Long) -> Unit)? = null,
+    private val onEgo: ((VisualEgo, Long, VisualReason) -> Unit)? = null,
 ) : FrameConsumer {
     init { require(intervalNs > 0L) }
 
@@ -50,6 +53,14 @@ class VisualMotionConsumer(
     @Volatile var framesProcessed = 0L
         private set
     @Volatile var hasUsableFrame = false
+        private set
+    @Volatile var usabilityRejectedCount = 0L
+        private set
+    @Volatile var measuredPairCount = 0L
+        private set
+    @Volatile var lastUsability01 = 0.0
+        private set
+    @Volatile var lastFlowBlocks = 0
         private set
 
     fun start(): Boolean {
@@ -95,7 +106,9 @@ class VisualMotionConsumer(
             return
         }
         val usable = usability.evaluate(sample.luma, width, height, pose.mode, pose.angularRateRadPerSec)
+        lastUsability01 = usable
         if (usable < 0.5) {
+            usabilityRejectedCount++
             reject(sample.tNs, usability.reason, usable)
             return
         }
@@ -116,18 +129,26 @@ class VisualMotionConsumer(
             roll = -z * scale
         }
         val measured = flow.onFrame(sample.luma, sample.tNs, intrinsics, yaw, pitch, roll, clockAligned = true)
+        lastFlowBlocks = flow.flow.count
+        if (measured) measuredPairCount++
         previousW = pose.qw; previousX = pose.qx; previousY = pose.qy; previousZ = pose.qz
         hasPose = true
         val ego = if (measured) fit.fit(flow.flow, usable) else unavailable
         if (ego.confidence01 >= 0.5) hasUsableFrame = true
         ring.publish(sample.tNs, ego, usable, usability.reason)
-        onEgo?.invoke(ego, sample.tNs)
+        onEgo?.invoke(ego, sample.tNs, usability.reason)
     }
 
     private fun reject(tNs: Long, reason: VisualReason, usable: Double = 0.0) {
-        flow.reset()
-        hasPose = false
+        // A blurred frame is a dropout, not a scene change: keep the last good
+        // frame so the next sharp frame can still form a pair. A camera that
+        // cannot see (flat/pocket/dark/glare) does reset the flow.
+        if (reason != VisualReason.BLUR) {
+            flow.reset()
+            hasPose = false
+        }
         ring.publish(tNs, unavailable, usable, reason)
+        onEgo?.invoke(unavailable, tNs, reason)
     }
 
     /** Navigation-thread only, called at a step; future frames stay queued. */

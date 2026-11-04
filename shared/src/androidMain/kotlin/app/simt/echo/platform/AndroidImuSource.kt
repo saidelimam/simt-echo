@@ -92,7 +92,7 @@ class BuiltInPdrMotionSource internal constructor(
             // work: the engine judges a candidate on the IMU thread, so it
             // must already hold this frame. Feeding the engine only from
             // drainVisual (after the step was emitted) left the gate blind.
-            onEgo = { ego, tNs -> engine.onVisualEgo(ego, tNs) },
+            onEgo = { ego, tNs, reason -> engine.onVisualEgo(ego, tNs, reason = reason) },
         )
         if (!consumer.start()) {
             engine.visualAssist = false

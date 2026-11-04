@@ -399,15 +399,17 @@ class VisualFlow(private val width: Int = 240, private val height: Int = 180) {
         private const val MAX_BLOCK = BLOCK_SIZE * 2
         private const val CENTRAL_INSET = BLOCK_SIZE / 2
         private const val RADIUS = 3
-        private const val EXPANSION_STEPS = 7
-        private const val EXPANSION_STEP = 0.04
+        private const val EXPANSION_STEPS = 10
+        private const val EXPANSION_STEP = 0.06
         private const val MIN_GLOBAL_EXPANSION = 0.06
-        private const val MAX_EXPANSION_SCALE = 1.35
+        private const val MAX_EXPANSION_SCALE = 1.8
         private const val MIN_BIAS_FLOW_PX = 1.5
         private const val MIN_BIAS_SHIFT_PX = 0.05
         private const val MAX_CENTRE_WINDOW_SHIFT_PX = 0.15
         private const val MAX_WINDOW_DISAGREEMENT_PX = 0.35
         private const val MAX_PAIR_NS = 2_000_000_000L
-        private const val MAX_ROTATION_RAD = 0.15
+        // 4 Hz frames during a 3 Hz shake plus rolling shutter can differ by
+        // more than 0.15 rad; the gyro de-rotation supports pairs to 0.22.
+        private const val MAX_ROTATION_RAD = 0.22
     }
 }

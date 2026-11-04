@@ -25,6 +25,29 @@ data class GateScenarioResult(
     val lastReason: VisualReason,
     val lastUsability01: Double,
     val lastConfidence01: Double,
+    val confidentFrames: Int,
+    val unconfidentFrames: Int,
+    val blurFrames: Int,
+    val stillVerdicts: Int,
+    val unknownVerdicts: Int,
+    val movingVerdicts: Int,
+    val unknownNoConfident: Int,
+    val unknownTooFew: Int,
+    val unknownSigma: Int,
+    val unknownBand: Int,
+    val unknownCameraBlind: Int,
+    val usabilityRejected: Long,
+    val measuredPairs: Long,
+    val lastUsability: Double,
+    val fits: Int,
+    val maxInliers: Int,
+    val maxConfidence: Double,
+    val maxExpansion: Double,
+    val maxFlowBlocks: Int,
+    val unknownTimesSeconds: String,
+    val unknownMeanSum: Double,
+    val unknownSigmaSum: Double,
+    val unknownConfidentSum: Int,
 )
 
 /**
@@ -56,7 +79,7 @@ class GateScenarioRunner(
             tap = tap,
             input = history,
             intervalNs = intervalNs,
-            onEgo = { ego, tNs -> engine.onVisualEgo(ego, tNs) },
+            onEgo = { ego, tNs, reason -> engine.onVisualEgo(ego, tNs, reason = reason) },
         )
         check(consumer.start()) { "visual consumer must attach" }
         engine.start()
@@ -74,6 +97,11 @@ class GateScenarioRunner(
         )
         var nextFrame = 0L
         var lastTrace: VisualMotionFrame? = null
+        var fits = 0
+        var maxInliers = 0
+        var maxConfidence = 0.0
+        var maxExpansion = Double.NEGATIVE_INFINITY
+        var maxFlowBlocks = 0
         val pending = ArrayDeque<Pair<Long, FrameSample>>()
         for (tick in 0..totalTicks) {
             val tNs = startNs + tick * stepNs
@@ -98,7 +126,14 @@ class GateScenarioRunner(
             while (pending.isNotEmpty() && pending.first().first <= tNs) {
                 val delivered = pending.removeFirst().second
                 tap.deliver(delivered)
-                consumer.drain(delivered.tNs)?.let { lastTrace = it }
+                maxFlowBlocks = maxOf(maxFlowBlocks, consumer.lastFlowBlocks)
+                consumer.drain(delivered.tNs)?.let { trace ->
+                    lastTrace = trace
+                    fits++
+                    maxInliers = maxOf(maxInliers, trace.ego.inliers)
+                    maxConfidence = maxOf(maxConfidence, trace.ego.confidence01)
+                    maxExpansion = maxOf(maxExpansion, trace.ego.expansionPerSec)
+                }
             }
             val tSec = (tNs - startNs) / 1_000_000_000.0
             history.onRotation(tNs, handHold.orientationMatrixAt(tSec))
@@ -126,13 +161,38 @@ class GateScenarioRunner(
             accepted = gate.acceptedStepCount,
             rejected = gate.rejectedPhantomCount,
             suspects = gate.missedStepSuspectCount,
-            unwitnessed = 0,
-            movingWitnessed = 0,
+            unwitnessed = gate.unwitnessedCount,
+            movingWitnessed = gate.movingWitnessCount,
             framesProcessed = consumer.framesProcessed,
             hasUsableFrame = consumer.hasUsableFrame,
             lastReason = lastTrace?.reason ?: VisualReason.UNKNOWN,
             lastUsability01 = lastTrace?.usability01 ?: 0.0,
             lastConfidence01 = lastTrace?.ego?.confidence01 ?: 0.0,
+            confidentFrames = gate.confidentFrameCount,
+            unconfidentFrames = gate.unconfidentFrameCount,
+            blurFrames = gate.reasonCount(VisualReason.BLUR),
+            stillVerdicts = gate.stillVerdictCount,
+            unknownVerdicts = gate.unknownVerdictCount,
+            movingVerdicts = gate.movingVerdictCount,
+            unknownNoConfident = gate.unknownNoConfidentCount,
+            unknownTooFew = gate.unknownTooFewCount,
+            unknownSigma = gate.unknownSigmaCount,
+            unknownBand = gate.unknownBandCount,
+            unknownCameraBlind = gate.unknownCameraBlindCount,
+            usabilityRejected = consumer.usabilityRejectedCount,
+            measuredPairs = consumer.measuredPairCount,
+            lastUsability = consumer.lastUsability01,
+            fits = fits,
+            maxInliers = maxInliers,
+            maxConfidence = maxConfidence,
+            maxExpansion = if (maxExpansion.isFinite()) maxExpansion else 0.0,
+            maxFlowBlocks = maxFlowBlocks,
+            unknownTimesSeconds = gate.unknownTimestampsNs().joinToString(",") {
+                ((it - startNs) / 1_000_000_000.0).toString()
+            },
+            unknownMeanSum = gate.unknownMeanSum,
+            unknownSigmaSum = gate.unknownSigmaSum,
+            unknownConfidentSum = gate.unknownConfidentSum,
         )
     }
 
@@ -172,6 +232,7 @@ class GateScenarioRunner(
 fun gateWorld(environment: app.simt.echo.sim.SimEnvironment, seed: Long = 1_234_567L): SimWorld =
     SimWorld(
         environment,
+        phone = app.simt.echo.sim.SimPhone(horizontalFovDeg = 90.0, exposureSeconds = 0.001),
         seed = seed,
         pixelSamplesPerAxis = 2,
         temporalNoiseDn = 2.0,

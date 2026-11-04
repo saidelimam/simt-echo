@@ -167,10 +167,10 @@ class FrameRateGovernor(baseIntervalNs: Long) {
          * Visual-assist evidence rate on Navigate (W16-04).
          *
          * [VisualStepGate] only rejects a phantom step when a confident sample
-         * sits inside its ±0.4 s coincidence window. At the 2 Hz navigation
+         * sits inside its ±1.2 s coincidence window. At the 2 Hz navigation
          * rate the newest frame can be 500 ms old when a candidate is judged,
-         * so the window can be empty and every phantom step passes. 4 Hz keeps
-         * a frame inside the window by construction. Record already runs at
+         * still inside the window; 4 Hz keeps more margin by construction.
+         * Record already runs at
          * 8 Hz ([RECORD_INTERVAL_NS]).
          */
         const val VISUAL_GATE_INTERVAL_NS = 250_000_000L

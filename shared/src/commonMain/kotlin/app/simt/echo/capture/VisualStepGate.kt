@@ -22,7 +22,7 @@ enum class VisualMotionEvidence {
 /**
  * Visual step gate (plan W16-04).
  *
- * A candidate is judged on the visual evidence in `[t - 0.4 s, t + 0.4 s]`,
+ * A candidate is judged on the visual evidence in `[t - 1.2 s, t + 1.2 s]`,
  * never on one sample and never on an unsigned magnitude. The window estimate
  * is the confidence-weighted mean signed expansion; its standard error comes
  * from [VisualEgo.expansionSigmaPerSec]. One extreme confident sample is
@@ -30,15 +30,16 @@ enum class VisualMotionEvidence {
  * single noisy frame cannot turn a still window into motion.
  *
  * States:
- * - `MOVING` when `mean >= max(MOVING_FLOOR, 3 * sigmaMean)` and at least two
- *   samples support it;
- * - `STILL` when every window sample is confident, `|mean| < STILL_CEILING`
- *   and `sigmaMean <= STILL_SIGMA_MAX`;
+ * - `MOVING` when the signed mean clears [MOVING_FLOOR_PER_SEC] and at least
+ *   two samples support it (or one sample clears the strong-signal floor);
+ * - `STILL` when at least one confident sample is present, no sample says the
+ *   camera is blind, `|mean| < STILL_CEILING` and `sigmaMean <= STILL_SIGMA_MAX`;
  * - `UNKNOWN` otherwise.
  *
- * Only `STILL` rejects a candidate. `UNKNOWN` is fail-open here; R15-04 adds
- * the written policy for late or missing evidence. Contraction (negative
- * expansion) is never `MOVING`: backward walking is out of scope.
+ * Only `STILL` rejects a candidate. `UNKNOWN` is fail-open; [PdrEngine]
+ * resolves deferred candidates once post-candidate evidence or its deadline
+ * arrives. Contraction (negative expansion) is never `MOVING`: backward
+ * walking is out of scope.
  *
  * Pure and allocation-free on the hot path (fixed primitive ring and scratch).
  */
@@ -79,6 +80,51 @@ class VisualStepGate {
     /** Candidates whose window was explicitly MOVING. */
     var movingWitnessCount: Int = 0
         private set
+
+    /** Frame-level and verdict diagnostics for the research HUD and tests. */
+    var confidentFrameCount: Int = 0
+        private set
+    var unconfidentFrameCount: Int = 0
+        private set
+    var stillVerdictCount: Int = 0
+        private set
+    var unknownVerdictCount: Int = 0
+        private set
+    var movingVerdictCount: Int = 0
+        private set
+
+    var unknownNoConfidentCount: Int = 0
+        private set
+    var unknownTooFewCount: Int = 0
+        private set
+    var unknownSigmaCount: Int = 0
+        private set
+    var unknownBandCount: Int = 0
+        private set
+    var unknownCameraBlindCount: Int = 0
+        private set
+    var unknownOtherCount: Int = 0
+        private set
+
+    var lastMeanExpansionPerSec: Double = 0.0
+        private set
+    var lastSigmaMeanPerSec: Double = 0.0
+        private set
+    var lastWindowConfident: Int = 0
+        private set
+    var unknownMeanSum: Double = 0.0
+        private set
+    var unknownSigmaSum: Double = 0.0
+        private set
+    var unknownConfidentSum: Int = 0
+        private set
+
+    private val reasonCounts = IntArray(VisualReason.entries.size)
+    private var lastUnknownCause = UnknownCause.NONE
+    private val unknownTimes = LongArray(MAX_UNKNOWN_LOG)
+    private var unknownTimeCount = 0
+
+    fun unknownTimestampsNs(): LongArray = unknownTimes.copyOf(unknownTimeCount)
 
     /** Total slow-shuffle missed-step suspects flagged. */
     var missedStepSuspectCount: Int = 0
@@ -122,7 +168,9 @@ class VisualStepGate {
         if (count < CAPACITY) count++
         lastSampleNs = tNs
         if (confidence01 >= MIN_VISUAL_CONFIDENCE && reason == VisualReason.NONE) lastConfidentNs = tNs
+        if (confidence01 >= MIN_VISUAL_CONFIDENCE && reason == VisualReason.NONE) confidentFrameCount++ else unconfidentFrameCount++
         if (cameraCannotSee(reason)) lastCameraUnavailableNs = tNs
+        reasonCounts[reason.ordinal]++
 
         val evidence = evidenceAt(tNs)
         lastEvidence = evidence
@@ -149,20 +197,28 @@ class VisualStepGate {
     }
 
     /**
-     * Estimates the signed expansion evidence in `[stepTNs - 0.4 s, stepTNs + 0.4 s]`.
+     * Estimates the signed expansion evidence in `[stepTNs - 1.2 s, stepTNs + 1.2 s]`.
      * The mean is confidence weighted; one outlier is trimmed only when it is
      * far outside the window median, so a single noisy frame cannot create motion.
      */
     fun evidenceAt(stepTNs: Long): VisualMotionEvidence {
         var total = 0
         var confident = 0
+        var cameraBlindInWindow = false
         for (i in 0 until count) {
             val t = timesNs[i]
             if (t == Long.MIN_VALUE || abs(stepTNs - t) > WINDOW_NS) continue
             total++
             if (confidences[i] >= MIN_VISUAL_CONFIDENCE && reasons[i] == VisualReason.NONE.ordinal) confident++
+            if (cameraCannotSee(VisualReason.entries[reasons[i]])) cameraBlindInWindow = true
         }
-        if (confident == 0) return VisualMotionEvidence.UNKNOWN
+        if (confident == 0) {
+            lastMeanExpansionPerSec = 0.0
+            lastSigmaMeanPerSec = 0.0
+            lastWindowConfident = 0
+            lastUnknownCause = UnknownCause.NO_CONFIDENT
+            return VisualMotionEvidence.UNKNOWN
+        }
 
         var n = 0
         for (i in 0 until count) {
@@ -174,7 +230,13 @@ class VisualStepGate {
             windowWeights[n] = confidences[i]
             n++
         }
-        if (n == 0) return VisualMotionEvidence.UNKNOWN
+        if (n == 0) {
+            lastMeanExpansionPerSec = 0.0
+            lastSigmaMeanPerSec = 0.0
+            lastWindowConfident = confident
+            lastUnknownCause = UnknownCause.NO_CONFIDENT
+            return VisualMotionEvidence.UNKNOWN
+        }
 
         // One bounded trim: an isolated spike is not evidence of sustained motion.
         var excluded = -1
@@ -199,7 +261,10 @@ class VisualStepGate {
             weight += windowWeights[i]
             mean += windowWeights[i] * windowExpansions[i]
         }
-        if (weight <= 0.0) return VisualMotionEvidence.UNKNOWN
+        if (weight <= 0.0) {
+            lastUnknownCause = UnknownCause.OTHER
+            return VisualMotionEvidence.UNKNOWN
+        }
         mean /= weight
 
         var weightedSigmaSquared = 0.0
@@ -212,39 +277,87 @@ class VisualStepGate {
             spread += w * (windowExpansions[i] - mean) * (windowExpansions[i] - mean)
             used++
         }
-        if (used == 0) return VisualMotionEvidence.UNKNOWN
+        if (used == 0) {
+            lastUnknownCause = UnknownCause.OTHER
+            return VisualMotionEvidence.UNKNOWN
+        }
         val propagated = sqrt(weightedSigmaSquared) / weight
         val empirical = sqrt(spread / weight / used)
-        if (!propagated.isFinite() || !empirical.isFinite()) return VisualMotionEvidence.UNKNOWN
+        if (!propagated.isFinite() || !empirical.isFinite()) {
+            lastUnknownCause = UnknownCause.SIGMA
+            return VisualMotionEvidence.UNKNOWN
+        }
         val sigmaMean = sqrt(propagated * propagated + empirical * empirical)
+        lastMeanExpansionPerSec = mean
+        lastSigmaMeanPerSec = sigmaMean
+        lastWindowConfident = confident
 
         var supporting = 0
         for (i in 0 until n) {
             if (i != excluded && windowExpansions[i] >= MOVING_FLOOR_PER_SEC) supporting++
         }
-        val moving = mean >= maxOf(MOVING_FLOOR_PER_SEC, 3.0 * sigmaMean) && supporting >= MIN_MOVING_SAMPLES
-        if (moving) return VisualMotionEvidence.MOVING
-        val still = confident == total &&
+        // One confident sample is normally not enough. A deferred candidate may
+        // still have only one after a run of unconfident frames; at five times
+        // the floor that signed mean is strong enough to stand alone.
+        val singleStrong = supporting >= 1 && mean >= STRONG_SINGLE_SAMPLE_FLOOR_PER_SEC
+        val moving = mean >= maxOf(MOVING_FLOOR_PER_SEC, MOVING_SIGMA_MULTIPLE * sigmaMean) &&
+            (supporting >= MIN_MOVING_SAMPLES || singleStrong)
+        if (moving) {
+            lastUnknownCause = UnknownCause.NONE
+            return VisualMotionEvidence.MOVING
+        }
+        // A low-confidence frame with no camera-blind reason is missing
+        // measurement, not evidence of motion. One confident still sample is
+        // enough to reject; a flat/pocket/dark/glare frame is not.
+        val still = !cameraBlindInWindow && confident >= MIN_STILL_SAMPLES &&
             mean in -STILL_CEILING_PER_SEC..STILL_CEILING_PER_SEC &&
             sigmaMean <= STILL_SIGMA_MAX_PER_SEC
-        return if (still) VisualMotionEvidence.STILL else VisualMotionEvidence.UNKNOWN
+        if (still) {
+            lastUnknownCause = UnknownCause.NONE
+            return VisualMotionEvidence.STILL
+        }
+        lastUnknownCause = when {
+            cameraBlindInWindow -> UnknownCause.CAMERA_BLIND
+            confident < MIN_STILL_SAMPLES -> UnknownCause.TOO_FEW
+            sigmaMean > STILL_SIGMA_MAX_PER_SEC -> UnknownCause.SIGMA
+            else -> UnknownCause.BAND
+        }
+        return VisualMotionEvidence.UNKNOWN
     }
 
     /**
      * Evaluates an accelerometer step candidate at [stepTNs].
-     * `MOVING` accepts, `STILL` rejects, and `UNKNOWN` is fail-open until the
-     * deferred policy in R15-04 supplies late/missing-evidence handling.
+     * `MOVING` accepts, `STILL` rejects, and `UNKNOWN` is fail-open while
+     * `PdrEngine` waits for post-candidate evidence or its deadline.
      */
     fun evaluateStepCandidate(stepTNs: Long): StepGateVerdict {
         val evidence = evidenceAt(stepTNs)
         lastEvidence = evidence
         return when (evidence) {
             VisualMotionEvidence.STILL -> {
+                stillVerdictCount++
                 rejectedPhantomCount++
                 StepGateVerdict.REJECTED_PHANTOM
             }
             VisualMotionEvidence.MOVING, VisualMotionEvidence.UNKNOWN -> {
-                if (evidence == VisualMotionEvidence.MOVING) movingWitnessCount++
+                if (evidence == VisualMotionEvidence.MOVING) {
+                    movingWitnessCount++
+                    movingVerdictCount++
+                } else {
+                    unknownVerdictCount++
+                    unknownMeanSum += lastMeanExpansionPerSec
+                    unknownSigmaSum += lastSigmaMeanPerSec
+                    unknownConfidentSum += lastWindowConfident
+                    if (unknownTimeCount < MAX_UNKNOWN_LOG) unknownTimes[unknownTimeCount++] = stepTNs
+                    when (lastUnknownCause) {
+                        UnknownCause.NO_CONFIDENT -> unknownNoConfidentCount++
+                        UnknownCause.TOO_FEW -> unknownTooFewCount++
+                        UnknownCause.SIGMA -> unknownSigmaCount++
+                        UnknownCause.BAND -> unknownBandCount++
+                        UnknownCause.CAMERA_BLIND -> unknownCameraBlindCount++
+                        UnknownCause.OTHER, UnknownCause.NONE -> unknownOtherCount++
+                    }
+                }
                 lastAcceptedStepNs = stepTNs
                 consecutiveMovingFrames = 0
                 acceptedStepCount++
@@ -261,6 +374,9 @@ class VisualStepGate {
     /** True while a confident frame was observed in the last [ARMED_NS]. */
     fun isArmedAt(tNs: Long): Boolean =
         lastConfidentNs != Long.MIN_VALUE && tNs >= lastConfidentNs && tNs - lastConfidentNs <= ARMED_NS
+
+    /** Capture time of the newest confident usable frame. */
+    fun lastConfidentTimeNs(): Long = lastConfidentNs
 
     /** True when the latest camera evidence says the camera cannot see the scene. */
     fun cameraCannotSeeAt(tNs: Long): Boolean =
@@ -291,7 +407,27 @@ class VisualStepGate {
         missedStepSuspectCount = 0
         suspectLogCount = 0
         lastEvidence = VisualMotionEvidence.UNKNOWN
+        confidentFrameCount = 0
+        unconfidentFrameCount = 0
+        stillVerdictCount = 0
+        unknownVerdictCount = 0
+        movingVerdictCount = 0
+        unknownNoConfidentCount = 0
+        unknownTooFewCount = 0
+        unknownSigmaCount = 0
+        unknownBandCount = 0
+        unknownCameraBlindCount = 0
+        unknownOtherCount = 0
+        unknownMeanSum = 0.0
+        unknownSigmaSum = 0.0
+        unknownConfidentSum = 0
+        unknownTimeCount = 0
+        lastUnknownCause = UnknownCause.NONE
+        reasonCounts.fill(0)
     }
+
+    /** Number of frames that arrived with [reason]. */
+    fun reasonCount(reason: VisualReason): Int = reasonCounts[reason.ordinal]
 
     private fun medianOfWindow(n: Int): Double {
         for (i in 0 until n) orderedExpansions[i] = windowExpansions[i]
@@ -328,27 +464,37 @@ class VisualStepGate {
     companion object {
         private const val CAPACITY = 16
         private const val MAX_SUSPECT_LOG = 128
+        private const val MAX_UNKNOWN_LOG = 32
 
-        /** ±0.4 s coincidence window between accelerometer step and visual expansion (W16-04). */
-        const val WINDOW_NS = 400_000_000L
+        /** ±1.2 s coincidence; 2 Hz gets five frames, 4 Hz nine. */
+        const val WINDOW_NS = 1_200_000_000L
 
         /** Minimum visual confidence to gate step candidates or flag missed steps. */
-        const val MIN_VISUAL_CONFIDENCE = 0.5
+        const val MIN_VISUAL_CONFIDENCE = 0.4
 
         /** Minimum sustained signed expansion rate (1/s) indicating forward body motion. */
         const val MOVING_FLOOR_PER_SEC = 0.04
 
         /** Maximum signed mean expansion still treated as stationary. */
-        const val STILL_CEILING_PER_SEC = 0.02
+        const val STILL_CEILING_PER_SEC = 0.03
 
         /** Maximum standard error of that mean for a STILL verdict. */
-        const val STILL_SIGMA_MAX_PER_SEC = 0.01
+        const val STILL_SIGMA_MAX_PER_SEC = 0.02
 
         /** A trimmed spike must exceed this deviation from the window median. */
         private const val OUTLIER_FLOOR_PER_SEC = 0.04
 
         /** At least two samples must support MOVING; one spike is not sustained motion. */
         private const val MIN_MOVING_SAMPLES = 2
+
+        /** A lone supporting sample must clear this signed mean to witness motion. */
+        private const val STRONG_SINGLE_SAMPLE_FLOOR_PER_SEC = 0.20
+
+        /** Forward-motion significance; the signed floor and two supporters carry the verdict. */
+        private const val MOVING_SIGMA_MULTIPLE = 0.0
+
+        /** A STILL verdict is conservative; one confident still sample is enough to reject. */
+        private const val MIN_STILL_SAMPLES = 1
 
         /** Accelerometer step drought before visual motion flags a missed-step suspect. */
         const val SHUFFLE_QUIET_NS = 800_000_000L
@@ -365,4 +511,6 @@ class VisualStepGate {
         /** A confident observation arms the gate for this long. */
         const val ARMED_NS = 2_000_000_000L
     }
+
+    private enum class UnknownCause { NONE, NO_CONFIDENT, TOO_FEW, SIGMA, BAND, CAMERA_BLIND, OTHER }
 }

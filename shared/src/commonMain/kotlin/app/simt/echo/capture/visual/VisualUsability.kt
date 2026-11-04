@@ -62,7 +62,7 @@ class VisualUsability {
     companion object {
         const val MIN_TEXTURE_EIGENVALUE = 4.0
         /** Above this rate the gyro de-rotation is not trusted; reject the frame. */
-        const val MAX_ANGULAR_RATE_RAD_PER_SEC = 1.5
+        const val MAX_ANGULAR_RATE_RAD_PER_SEC = 2.0
         private const val TEXTURE_FULL = 64.0
         private const val SHARPNESS_FULL = 256.0
 
