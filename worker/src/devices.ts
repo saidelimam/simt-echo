@@ -10,6 +10,7 @@
 
 import type { Context } from "hono";
 import type { AppEnv, Env } from "./index";
+import { sha256Hex } from "./hash";
 
 interface DeviceRecord {
   /** R12-02 (review 0012, F2): `sha256("verify:" + key)` — never the bearer
@@ -42,20 +43,10 @@ async function touchDeviceRecord(env: Env, id: string, record: DeviceRecord): Pr
   }
 }
 
-async function hexSha256(text: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(text) as unknown as ArrayBuffer,
-  );
-  return [...new Uint8Array(digest)]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
 /** Domain-separated digest of a device key. The prefix keeps the verifier
  * from ever colliding with the device id (`sha256(key)`). */
 export async function deviceVerifier(key: string): Promise<string> {
-  return hexSha256(`verify:${key}`);
+  return sha256Hex(`verify:${key}`);
 }
 
 /** Constant-time string compare (S-reviewed surface). Returns false on a
@@ -74,14 +65,7 @@ export function timingSafeEqual(a: string, b: string): boolean {
  * and uniform, so it doubles as the R2 lookup key and the ownership stamp
  * without the key itself appearing in a path. */
 export async function deviceIdForKey(key: string): Promise<string> {
-  const bytes = new TextEncoder().encode(key);
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    bytes as unknown as ArrayBuffer,
-  );
-  return [...new Uint8Array(digest)]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  return sha256Hex(key);
 }
 
 /** R2 key for a device record, addressed by id (never by the key). */

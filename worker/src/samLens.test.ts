@@ -4,7 +4,7 @@
 // FakeR2/stubMeta precedent.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { inlineRunner, runGround, type StepRunner } from "./ground";
+import { inlineRunner, runGroundLens, type StepRunner } from "./samLens";
 import { phraseHash } from "./samLens";
 import { readJobEvents } from "./jobs";
 import { ManifestSchema } from "./types";
@@ -192,7 +192,7 @@ describe("runGround SAM lens (W11-06)", () => {
     const { manifest, env } = lensSetup({ type: "CHECKPOINT" });
     const calls = stubMeta("", imgLine(0.92));
     const names: string[] = [];
-    const result = await runGround(env, "job1", manifest, lensScout(), stepRecorder(names));
+    const result = await runGroundLens(env, "job1", manifest, lensScout(), stepRecorder(names));
 
     expect(calls).toEqual(["image"]);
     const steps = callSteps(names);
@@ -215,7 +215,7 @@ describe("runGround SAM lens (W11-06)", () => {
     const { manifest, env } = lensSetup({ type: "CHECKPOINT" });
     const calls = stubMeta(STRIP_VIDEO, imgLine(0.6));
     const names: string[] = [];
-    const result = await runGround(env, "job1", manifest, lensScout(), stepRecorder(names));
+    const result = await runGroundLens(env, "job1", manifest, lensScout(), stepRecorder(names));
 
     expect(calls).toEqual(["image", "video"]);
     const steps = callSteps(names);
@@ -231,7 +231,7 @@ describe("runGround SAM lens (W11-06)", () => {
   it("escalates TURN to video even at high image confidence", async () => {
     const { manifest, env } = lensSetup({ type: "TURN" });
     const calls = stubMeta(STRIP_VIDEO, imgLine(0.95));
-    const result = await runGround(env, "job1", manifest, lensScout());
+    const result = await runGroundLens(env, "job1", manifest, lensScout());
 
     expect(calls).toEqual(["image", "video"]);
     expect(result.checkpoints[0].candidates[0].trackability).not.toBeNull();
@@ -240,7 +240,7 @@ describe("runGround SAM lens (W11-06)", () => {
   it("keeps the image result when confidence is too low for video to help", async () => {
     const { manifest, env } = lensSetup({ type: "CHECKPOINT" });
     const calls = stubMeta(STRIP_VIDEO, imgLine(0.3));
-    const result = await runGround(env, "job1", manifest, lensScout());
+    const result = await runGroundLens(env, "job1", manifest, lensScout());
 
     expect(calls).toEqual(["image"]);
     const c = result.checkpoints[0].candidates[0];
@@ -266,7 +266,7 @@ describe("runGround SAM lens (W11-06)", () => {
         `${completed}data: [DONE]\n\n`;
       return new Response(events, { status: 200 });
     });
-    const result = await runGround(env, "job1", manifest, lensScout());
+    const result = await runGroundLens(env, "job1", manifest, lensScout());
 
     // 12 vendor-billed strip frames + the 1 sent hero frame (the image
     // call's vendor omits usage, so its sent frame stands in — R10-05).
@@ -280,7 +280,7 @@ describe("runGround SAM lens (W11-06)", () => {
     const { r2, manifest, env } = lensSetup({ type: "TURN" });
     await r2.put("jobs/job1/budget.json", JSON.stringify({ maxSamFrames: 1 }));
     const calls = stubMeta(STRIP_VIDEO, imgLine(0.9));
-    const result = await runGround(env, "job1", manifest, lensScout());
+    const result = await runGroundLens(env, "job1", manifest, lensScout());
 
     // The 1-frame image call fits; the 12-frame strip does not.
     expect(calls).toEqual(["image"]);
@@ -295,14 +295,14 @@ describe("runGround SAM lens (W11-06)", () => {
     // over-ceiling 241 is refused on the 1-frame image, never the video.
     const over = lensSetup({ type: "TURN", clipFrames: 240 });
     const overCalls = stubMeta(STRIP_VIDEO, imgLine(0.9));
-    const refused = await runGround(over.env, "job1", over.manifest, lensScout());
+    const refused = await runGroundLens(over.env, "job1", over.manifest, lensScout());
     expect(overCalls).toEqual(["video"]);
     expect(refused.usage.budgetExhausted).toBe(true);
 
     // 1 + 239 lands exactly on the ceiling and is allowed.
     const exact = lensSetup({ type: "TURN", clipFrames: 239 });
     const exactCalls = stubMeta(STRIP_VIDEO, imgLine(0.9));
-    const allowed = await runGround(exact.env, "job1", exact.manifest, lensScout());
+    const allowed = await runGroundLens(exact.env, "job1", exact.manifest, lensScout());
     expect(exactCalls).toEqual(["image", "video"]);
     expect(allowed.usage.budgetExhausted).toBe(false);
   });
@@ -315,7 +315,7 @@ describe("runGround SAM lens (W11-06)", () => {
       const { r2, manifest, env } = lensSetup({ type: "TURN", clipFrames: 240 });
       await r2.put("jobs/job1/budget.json", body);
       const calls = stubMeta(STRIP_VIDEO, imgLine(0.9));
-      const result = await runGround(env, "job1", manifest, lensScout());
+      const result = await runGroundLens(env, "job1", manifest, lensScout());
 
       // R10-13: the clip takes the whole 240 ceiling; the image is refused.
       expect(calls).toEqual(["video"]);
@@ -329,7 +329,7 @@ describe("runGround SAM lens (W11-06)", () => {
     const { r2, manifest, env } = lensSetup({ type: "TURN", clipFrames: 240 });
     await r2.put("jobs/job1/budget.json", JSON.stringify({ maxSamFrames: 100000 }));
     const calls = stubMeta(STRIP_VIDEO, imgLine(0.9));
-    await runGround(env, "job1", manifest, lensScout());
+    await runGroundLens(env, "job1", manifest, lensScout());
     // Clamped to 240: the clip fits exactly, the image is refused.
     expect(calls).toEqual(["video"]);
   });
@@ -342,14 +342,14 @@ describe("runGround SAM lens (W11-06)", () => {
       scoutCandidate({ title: "Green exit", samPhrase: "green exit sign" }),
     ]);
     const calls = stubMeta("", imgLine(0.92));
-    const first = await runGround(env, "job1", manifest, twins);
+    const first = await runGroundLens(env, "job1", manifest, twins);
     // One frame of budget: the first call fits, the second is refused.
     expect(calls).toEqual(["image"]);
     expect(first.usage.budgetExhausted).toBe(true);
 
     // The retry re-plans: the cached call is free, so the refused one now
     // fits the same one-frame budget and nothing reports exhaustion.
-    const retried = await runGround(env, "job1", manifest, twins);
+    const retried = await runGroundLens(env, "job1", manifest, twins);
     expect(calls).toEqual(["image", "image"]);
     expect(retried.usage.budgetExhausted).toBe(false);
     expect(retried.checkpoints[0].candidates.every((c) => c.source === "AI_GROUNDED")).toBe(true);
@@ -368,14 +368,14 @@ describe("runGround SAM lens (W11-06)", () => {
       recorded.set(name, structuredClone(out));
       return out;
     };
-    const first = await runGround(env, "job1", manifest, lensScout(), workflow);
+    const first = await runGroundLens(env, "job1", manifest, lensScout(), workflow);
     expect(calls).toEqual(["video"]);
     expect(first.usage.budgetExhausted).toBe(true);
 
     // Re-planned live against the now-filled cache, the image would be free
     // and would run: spend the first run never authorised. The recorded
     // plan refuses it.
-    const replay = await runGround(env, "job1", manifest, lensScout(), workflow);
+    const replay = await runGroundLens(env, "job1", manifest, lensScout(), workflow);
     expect(calls).toEqual(["video"]);
     expect(replay).toEqual(first);
   });
@@ -383,7 +383,7 @@ describe("runGround SAM lens (W11-06)", () => {
   it("never caches an empty SAM response", async () => {
     const { r2, manifest, env } = lensSetup({ type: "CHECKPOINT", clip: false });
     stubMeta("", "");
-    const result = await runGround(env, "job1", manifest, lensScout());
+    const result = await runGroundLens(env, "job1", manifest, lensScout());
 
     expect(result.checkpoints[0].candidates[0].source).toBe("AI_BOX_ONLY");
     expect([...r2.store.keys()].filter((k) => k.includes("/sam/cache/"))).toEqual([]);
@@ -396,7 +396,7 @@ describe("runGround SAM lens (W11-06)", () => {
   it("records the reason when a non-retryable SAM failure falls back", async () => {
     const { r2, manifest, env } = lensSetup({ type: "CHECKPOINT", clip: false });
     stubMeta("", new Response("bad request body", { status: 400 }));
-    const result = await runGround(env, "job1", manifest, lensScout());
+    const result = await runGroundLens(env, "job1", manifest, lensScout());
 
     expect(result.checkpoints[0].candidates[0].source).toBe("AI_BOX_ONLY");
     const notes = (await (await r2.get("jobs/job1/sam/notes.json"))?.json()) as Array<{
@@ -447,7 +447,7 @@ describe("runGround SAM lens (W11-06)", () => {
       ],
     } as never;
     const calls = stubMeta("", imgLine(0.92));
-    const result = await runGround(env, "job1", manifest, scout);
+    const result = await runGroundLens(env, "job1", manifest, scout);
 
     // One frame of budget: DESTINATION spends it, CHECKPOINT is refused.
     expect(calls).toEqual(["image"]);
@@ -460,7 +460,7 @@ describe("runGround SAM lens (W11-06)", () => {
   it("serves a repeat run from cache at zero frames", async () => {
     const { manifest, env } = lensSetup({ type: "CHECKPOINT" });
     stubMeta("", imgLine(0.92));
-    const first = await runGround(env, "job1", manifest, lensScout());
+    const first = await runGroundLens(env, "job1", manifest, lensScout());
     expect(first.checkpoints[0].candidates[0].source).toBe("AI_GROUNDED");
 
     let fetches = 0;
@@ -468,7 +468,7 @@ describe("runGround SAM lens (W11-06)", () => {
       fetches++;
       return new Response("must not be called", { status: 500 });
     });
-    const second = await runGround(env, "job1", manifest, lensScout());
+    const second = await runGroundLens(env, "job1", manifest, lensScout());
 
     expect(fetches).toBe(0);
     expect(second.checkpoints[0].candidates[0].source).toBe("AI_GROUNDED");
@@ -496,7 +496,7 @@ describe("runGround SAM lens (W11-06)", () => {
       recorded.set(name, structuredClone(out));
       return out;
     };
-    await expect(runGround(env, "job1", manifest, lensScout(), workflow)).rejects.toThrow(
+    await expect(runGroundLens(env, "job1", manifest, lensScout(), workflow)).rejects.toThrow(
       "simulated step loss after bill",
     );
     expect(ran.filter((n) => n === target)).toHaveLength(1);
@@ -505,7 +505,7 @@ describe("runGround SAM lens (W11-06)", () => {
     // The Workflow retries only the lost step; every other step replays from
     // its record and the lost one replays from the SAM cache.
     ran.length = 0;
-    const retried = await runGround(env, "job1", manifest, lensScout(), workflow);
+    const retried = await runGroundLens(env, "job1", manifest, lensScout(), workflow);
     expect(callSteps(ran)).toEqual([target]);
     expect(calls).toEqual(["image"]);
     expect(retried.checkpoints[0].candidates[0].source).toBe("AI_GROUNDED");
@@ -536,7 +536,7 @@ describe("runGround SAM lens (W11-06)", () => {
       recorded.set(name, structuredClone(out));
       return out;
     };
-    const first = await runGround(env, "job1", manifest, lensScout(), replaying);
+    const first = await runGroundLens(env, "job1", manifest, lensScout(), replaying);
     const eventsAfterFirst = await readJobEvents(env, "job1");
     expect(first.usage.samFramesBilled).toBe(13); // 12 vendor-reported + 1 sent hero frame (R10-05 fallback)
     expect(first.checkpoints[0].candidates[0].source).toBe("AI_GROUNDED");
@@ -544,7 +544,7 @@ describe("runGround SAM lens (W11-06)", () => {
     vi.stubGlobal("fetch", async () => {
       throw new Error("a replay must not reach SAM");
     });
-    const second = await runGround(env, "job1", manifest, lensScout(), replaying);
+    const second = await runGroundLens(env, "job1", manifest, lensScout(), replaying);
 
     expect(second).toEqual(first);
     expect(await readJobEvents(env, "job1")).toEqual(eventsAfterFirst);
@@ -558,7 +558,7 @@ describe("runGround SAM lens (W11-06)", () => {
       scoutCandidate({ title: "Red pillar A" }),
       scoutCandidate({ title: "Red pillar B" }),
     ]);
-    await runGround(env, "job1", manifest, twins, stepRecorder(names));
+    await runGroundLens(env, "job1", manifest, twins, stepRecorder(names));
 
     const steps = callSteps(names);
     expect(steps).toHaveLength(2);
@@ -578,7 +578,7 @@ describe("runGround SAM lens (W11-06)", () => {
         }),
     );
     await expect(
-      runGround(env, "job1", manifest, lensScout(), inlineRunner, { samIdleMs: 25 }),
+      runGroundLens(env, "job1", manifest, lensScout(), inlineRunner, { samIdleMs: 25 }),
     ).rejects.toThrow();
   });
 
@@ -587,7 +587,7 @@ describe("runGround SAM lens (W11-06)", () => {
     // flags survive intake instead of being stripped.
     const { manifest, env } = lensSetup({ type: "CHECKPOINT", keyframeFlags: { faceFree: false } });
     const calls = stubMeta(STRIP_VIDEO, imgLine(0.9));
-    const result = await runGround(env, "job1", manifest, lensScout());
+    const result = await runGroundLens(env, "job1", manifest, lensScout());
 
     expect(calls).toEqual([]);
     const c = result.checkpoints[0].candidates[0];
@@ -599,7 +599,7 @@ describe("runGround SAM lens (W11-06)", () => {
   it("emits checkpoint and usage events", async () => {
     const { manifest, env } = lensSetup({ type: "CHECKPOINT" });
     stubMeta("", imgLine(0.92));
-    await runGround(env, "job1", manifest, lensScout());
+    await runGroundLens(env, "job1", manifest, lensScout());
 
     const events = await readJobEvents(env, "job1");
     // Same-millisecond order is not contract (R10-08); assert the set.
@@ -660,7 +660,7 @@ describe("runGround SAM lens (W11-06)", () => {
           releases.push(() => resolve(sseResponse(imgLine(0.9))));
         }),
     );
-    const run = runGround(env, "job1", manifest, scout);
+    const run = runGroundLens(env, "job1", manifest, scout);
     await vi.waitFor(() => expect(releases.length).toBe(1));
     releases.forEach((r) => r());
     const result = await run;
@@ -720,7 +720,7 @@ describe("runGround SAM lens (W11-06)", () => {
       ],
     } as never;
     const calls = stubMeta(STRIP_VIDEO, imgLine(0.9));
-    const result = await runGround(env, "job1", manifest, scout);
+    const result = await runGroundLens(env, "job1", manifest, scout);
 
     expect(calls).toEqual(["image", "video"]);
     expect(result.usage.budgetExhausted).toBe(true);
@@ -737,7 +737,7 @@ describe("runGround SAM lens (W11-06)", () => {
     const { r2, manifest, env } = lensSetup({ type: "CHECKPOINT" });
     const legacyEnv = { ...(env as Record<string, unknown>), GROUND_MODE: "legacy" } as never;
     stubMeta("", imgLine(0.92));
-    const result = await runGround(legacyEnv, "job1", manifest, lensScout());
+    const result = await runGroundLens(legacyEnv, "job1", manifest, lensScout());
     expect(result.checkpoints[0].candidates[0].source).toBe("AI_GROUNDED");
     // The lens ran (content-hash cache written), not the removed legacy path.
     expect([...r2.store.keys()].some((k) => k.startsWith("jobs/job1/sam/cache/"))).toBe(true);
@@ -750,7 +750,7 @@ describe("R12-07 clip faceFree contract", () => {
     // The schema keeps the flag: parsing must not strip it.
     expect(manifest.checkpoints[0].clip?.faceFree).toBe(false);
     const calls = stubMeta(STRIP_VIDEO, imgLine(0.9));
-    await runGround(env, "job1", manifest, lensScout());
+    await runGroundLens(env, "job1", manifest, lensScout());
     expect(calls).toEqual(["image"]);
   });
 
@@ -758,7 +758,7 @@ describe("R12-07 clip faceFree contract", () => {
     const { manifest, env } = lensSetup({ type: "TURN" });
     expect(manifest.checkpoints[0].clip?.faceFree).toBeUndefined();
     const calls = stubMeta(STRIP_VIDEO, imgLine(0.9));
-    await runGround(env, "job1", manifest, lensScout());
+    await runGroundLens(env, "job1", manifest, lensScout());
     expect(calls).toEqual(["image", "video"]);
   });
 });

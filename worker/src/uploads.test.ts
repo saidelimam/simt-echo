@@ -1211,7 +1211,7 @@ describe("R12-10 request body caps", () => {
   it("stops an unlabelled stream at the cap instead of buffering it", async () => {
     // The multipart parser reads through `cappedBody`, so the bound holds
     // without a Content-Length header. Exercised at a small limit: production
-    // uses the same function with MAX_TOTAL_BYTES + 1 MiB.
+    // uses the same function with MAX_UPLOAD_BYTES + 1 MiB.
     let exceeded = false;
     const source = new ReadableStream<Uint8Array>({
       start(controller) {

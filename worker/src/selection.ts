@@ -1,6 +1,6 @@
 // Generic §6.6 track selection and ranking (slice W3-05).
 //
-// Pure geometry shared by the ground step (`ground.ts`) and W3-06's assemble:
+// Pure geometry shared by the ground step (`samLens.ts`) and W3-06's assemble:
 // `bestBy` picks any item by score, `iou` works on any box tuple, and
 // `selectTrack`/`rankCandidate` implement the plan formulas without I/O so
 // both callers reuse them instead of re-implementing §6.6.
@@ -115,7 +115,6 @@ export function selectTrack(
   obs: readonly SamObs[],
   sparkBoxPx: Box,
   heroIdx: number,
-  _fps: number,
 ): TrackSelection {
   const empty: TrackSelection = {
     obs: [],

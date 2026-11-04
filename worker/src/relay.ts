@@ -8,8 +8,8 @@ import { readBodyCapped } from "./uploads";
  * The relay stores one sealed bundle (`ECX1` ciphertext) per code for
  * 30 minutes. It never receives the bundle key — the key travels in the
  * QR (`k=`) and the relay code in `c=` — so the server can only ever
- * inspect ciphertext. Codes are 8 characters of Crockford-style base32
- * without ambiguous glyphs (no 0/O, 1/I/L): 10 characters, ≈ 49.5 bits.
+ * inspect ciphertext. Codes are 10 characters of Crockford-style base32
+ * without ambiguous glyphs (no 0/O, 1/I/L), ≈ 49.5 bits.
  *
  * R12-03 (review 0012, F3): the code itself is the capability. Sender and
  * receiver are different installs, so an owner check on the read refused
