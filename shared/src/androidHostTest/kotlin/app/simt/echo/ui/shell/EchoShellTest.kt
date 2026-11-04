@@ -4,7 +4,10 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.input.InputModeManager
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
@@ -15,6 +18,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.requestFocus
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import app.simt.echo.host.HostTestResourcesShadow
@@ -300,6 +304,41 @@ class EchoShellTest {
                 compose.onNodeWithTag(EchoShellDeckTag).assertDoesNotExist()
             }
         }
+    }
+
+    @Test
+    fun headingRingAppearsOnlyUnderKeyboardInput() {
+        var input by mutableStateOf(InputMode.Keyboard)
+        val manager = object : InputModeManager {
+            override val inputMode: InputMode get() = input
+            override fun requestInputMode(inputMode: InputMode): Boolean = true
+        }
+        compose.setContent {
+            CompositionLocalProvider(LocalInputModeManager provides manager) {
+                EchoTheme(darkTheme = true) {
+                    EchoShell(
+                        config = shellConfigFor(EchoRoute.RouteDetail("r")),
+                        onBack = {},
+                        onClose = {},
+                        onSettings = {},
+                        onRecord = {},
+                        onReceive = {},
+                    ) {
+                        androidx.compose.material3.Text(text = "body")
+                    }
+                }
+            }
+        }
+        compose.waitForIdle()
+        compose.onNodeWithTag(EchoShellHeadingTag).requestFocus()
+        compose.waitForIdle()
+        compose.onNodeWithTag(EchoShellHeadingTag).assertIsFocused()
+        compose.onNodeWithTag(EchoShellFocusRingTag, useUnmergedTree = true).assertExists()
+
+        // A touch-driven device keeps focus for announcements but shows no box.
+        compose.runOnIdle { input = InputMode.Touch }
+        compose.waitForIdle()
+        compose.onNodeWithTag(EchoShellFocusRingTag, useUnmergedTree = true).assertDoesNotExist()
     }
 
     @Test
