@@ -57,6 +57,15 @@ internal fun echoFieldLoopSec(nowMs: Long): Float {
     return wrapped / 1000f
 }
 
+/**
+ * Radius of the dawn glow in the fallback renderer. It never exceeds the
+ * horizon band, so the radial reaches transparent before the clipped band
+ * ends; otherwise short, wide screens show a straight horizontal cut where
+ * the still-opaque glow is clipped at `horizonPx`.
+ */
+internal fun horizonGlowRadius(widthPx: Float, horizonPx: Float): Float =
+    minOf(widthPx * 0.75f, horizonPx)
+
 /** Star parallax: degrees of starfield rotation per unit of tilt. */
 private const val TILT_STAR_DEGREES = 1.2f
 
@@ -155,7 +164,7 @@ internal class CanvasEchoField : EchoFieldRenderer {
             brush = Brush.radialGradient(
                 colors = listOf(uniforms.warm.copy(alpha = 0.45f * a), Color.Transparent),
                 center = Offset(size.width * (0.2f + 0.05f * uniforms.tilt.x), 0f),
-                radius = size.width * 0.75f,
+                radius = horizonGlowRadius(size.width, horizonPx),
             ),
             size = size.copy(height = horizonPx),
         )

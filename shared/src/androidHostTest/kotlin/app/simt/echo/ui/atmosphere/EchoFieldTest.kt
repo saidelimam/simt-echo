@@ -58,6 +58,16 @@ class EchoFieldTest {
         assertTrue(echoFieldLoopSec(-1L) >= 0f)
     }
 
+    @Test
+    fun fallbackGlowFadesInsideTheHorizonBand() {
+        // Short, wide screens are the case where a width-based radius stayed
+        // opaque at the band's clipped bottom edge.
+        assertEquals(480f, horizonGlowRadius(2560f, 480f))
+        assertEquals(720f, horizonGlowRadius(1080f, 720f))
+        assertEquals(300f, horizonGlowRadius(400f, 600f))
+        assertTrue(horizonGlowRadius(2560f, 480f) <= 480f)
+    }
+
     private fun assertNoAccessibleContent() {
         val root: SemanticsNode = compose.onNode(isRoot(), useUnmergedTree = true).fetchSemanticsNode()
         val all = generateSequence(listOf(root)) { level ->
