@@ -119,8 +119,9 @@ enum class ThermalState {
 /**
  * Pure frame-rate governor. [shouldEmit] returns true at most once per
  * [baseIntervalNs] of frame-clock time: 125 ms (8 Hz) for Record,
- * 500 ms (2 Hz) for Navigate. MODERATE doubles the interval; SEVERE never
- * emits. Deterministic: the clock is a parameter, so tests drive it
+ * 500 ms (2 Hz) for Navigate. MODERATE doubles the interval except for the
+ * declared 4 Hz visual-gate rate; SEVERE never emits. Deterministic: the
+ * clock is a parameter, so tests drive it
  * exactly; the analyzer thread calls this before touching any buffer, so
  * rejected frames cost one comparison and zero allocation.
  */
@@ -144,7 +145,11 @@ class FrameRateGovernor(baseIntervalNs: Long) {
     fun shouldEmit(nowNs: Long, thermal: ThermalState = ThermalState.NORMAL): Boolean {
         val base = baseIntervalNs
         if (base == 0L || thermal == ThermalState.SEVERE) return false
-        val interval = if (thermal == ThermalState.MODERATE) base.coerceAtMost(Long.MAX_VALUE / 2) * 2 else base
+        val interval = if (thermal == ThermalState.MODERATE && base != VISUAL_GATE_INTERVAL_NS) {
+            base.coerceAtMost(Long.MAX_VALUE / 2) * 2
+        } else {
+            base
+        }
         if (hasEmitted && (nowNs < lastEmitNs || nowNs - lastEmitNs < interval)) return false
         lastEmitNs = nowNs
         hasEmitted = true

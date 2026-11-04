@@ -100,4 +100,42 @@ class VisualSchedulerTest {
         assertEquals(2.0, VisualScheduler.rateHz(turnNs), 1e-6)
         assertTrue(VisualScheduler.rateHz(straightNs) <= 1.0)
     }
+
+    @Test
+    fun standingNeverPausesTheStepWitness() {
+        assertEquals(
+            2.0,
+            VisualScheduler.rateHz(VisualScheduler.intervalNs(isStanding = true, sigmaM = 1.0, visualAssist = true)),
+            1e-6,
+        )
+        assertEquals(
+            0.0,
+            VisualScheduler.rateHz(VisualScheduler.intervalNs(isStanding = true, sigmaM = 1.0)),
+            1e-6,
+        )
+        assertEquals(
+            2.0,
+            VisualScheduler.rateHz(
+                VisualScheduler.intervalNs(
+                    isStanding = true,
+                    sigmaM = 1.0,
+                    thermal = ThermalState.MODERATE,
+                    visualAssist = true,
+                ),
+            ),
+            1e-6,
+        )
+        assertEquals(
+            0.0,
+            VisualScheduler.rateHz(
+                VisualScheduler.intervalNs(
+                    isStanding = true,
+                    sigmaM = 1.0,
+                    thermal = ThermalState.SEVERE,
+                    visualAssist = true,
+                ),
+            ),
+            1e-6,
+        )
+    }
 }
