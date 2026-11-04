@@ -19,8 +19,13 @@ import androidx.compose.ui.unit.dp
  * consent sheets. A consent sheet that describes an upload without a way to
  * read the notice is the gap this closes.
  */
-internal const val PrivacyPolicyUrl = "https://simt.app/privacy"
-internal const val TermsOfUseUrl = "https://simt.app/terms"
+// The documents themselves, not the company site: simt.app carries the SIMT
+// brand, not ECHO's privacy notice or terms, so linking there sent users to
+// pages that never state this app's policy.
+internal const val PrivacyPolicyUrl =
+    "https://github.com/saidelimam/simt-echo/blob/main/docs/legal/privacy-policy.md"
+internal const val TermsOfUseUrl =
+    "https://github.com/saidelimam/simt-echo/blob/main/docs/legal/terms-of-use.md"
 
 /** Test seam: the row, and each link inside it. */
 internal const val LegalLinksTag = "LegalLinks"
