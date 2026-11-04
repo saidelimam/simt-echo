@@ -406,12 +406,14 @@ class TransferServiceTest {
     }
 
     @Test
-    fun lanAddressPrefersWlanThenHotspotThenAny() {
+    fun lanAddressPrefersHotspotThenWlanThenAny() {
         val wlan = LanInterface("wlan0", "192.168.1.20", true, false, true)
         val hotspot = LanInterface("ap0", "192.168.43.1", true, false, true)
         val other = LanInterface("eth0", "10.0.0.5", true, false, true)
-        assertEquals("192.168.1.20", selectLanIpv4(listOf(hotspot, other, wlan)))
-        assertEquals("192.168.43.1", selectLanIpv4(listOf(other, hotspot)))
+        // R14-03: a phone sharing its own hotspot advertises the address its
+        // peer is actually attached to, never its isolated client uplink.
+        assertEquals("192.168.43.1", selectLanIpv4(listOf(other, hotspot, wlan)))
+        assertEquals("192.168.1.20", selectLanIpv4(listOf(other, wlan)))
         assertEquals("10.0.0.5", selectLanIpv4(listOf(other)))
     }
 
