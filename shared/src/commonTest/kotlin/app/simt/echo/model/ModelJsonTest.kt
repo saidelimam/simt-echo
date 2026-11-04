@@ -15,6 +15,31 @@ import kotlin.test.assertFailsWith
 class ModelJsonTest {
 
     @Test
+    fun trialGateCountersRoundTripAndDefault() {
+        val trial = Trial(
+            trialId = "t1",
+            routeId = "r1",
+            mode = TrialMode.ECHO,
+            device = "pixel",
+            startedAtEpochMs = 1_000L,
+            durationS = 10.0,
+            distanceM = 12.0,
+            arrived = true,
+            visualGateAccepted = 7,
+            visualGateRejected = 3,
+            visualGateUnwitnessed = 2,
+            visualGateSuspects = 1,
+        )
+        assertEquals(trial, EchoJson.decodeFromString<Trial>(EchoJson.encodeToString(trial)))
+        val legacy = """{"trialId":"old","routeId":"r","mode":"ECHO","device":"d","startedAtEpochMs":1,"durationS":1.0,"distanceM":1.0,"arrived":true}"""
+        val decoded = EchoJson.decodeFromString<Trial>(legacy)
+        assertEquals(0, decoded.visualGateAccepted)
+        assertEquals(0, decoded.visualGateRejected)
+        assertEquals(0, decoded.visualGateUnwitnessed)
+        assertEquals(0, decoded.visualGateSuspects)
+    }
+
+    @Test
     fun echoRouteRoundTrips() {
         val decoded = EchoJson.decodeFromString<EchoRoute>(
             EchoJson.encodeToString(Fixtures.L_ROUTE),

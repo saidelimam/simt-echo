@@ -18,6 +18,7 @@ import app.simt.echo.capture.RotSample
 import app.simt.echo.capture.FrameTap
 import app.simt.echo.capture.visual.VisualImuHistory
 import app.simt.echo.capture.visual.VisualMotionConsumer
+import app.simt.echo.capture.visual.VisualGateCounters
 import app.simt.echo.capture.visual.VisualMotionFrame
 import app.simt.echo.capture.visual.VisualMotionSource
 import kotlinx.coroutines.CoroutineScope
@@ -77,7 +78,17 @@ class BuiltInPdrMotionSource internal constructor(
     @Volatile private var visualSession: VisualSession? = null
 
     override val visualAssistActive: Boolean
-        get() = visualSession?.consumer?.hasUsableFrame == true
+        get() = visualSession?.consumer?.isLockedAt(SystemClock.elapsedRealtimeNanos()) == true
+
+    override val gateCounters: VisualGateCounters
+        get() = engine.stepGate.let {
+            VisualGateCounters(
+                accepted = it.acceptedStepCount,
+                rejected = it.rejectedPhantomCount,
+                unwitnessed = it.unwitnessedCount,
+                suspects = it.missedStepSuspectCount,
+            )
+        }
 
     override fun attachVisual(tap: FrameTap, enabled: Boolean, intervalNs: Long): Boolean {
         detachVisual()

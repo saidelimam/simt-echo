@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import app.simt.echo.capture.FrameTap
 import app.simt.echo.capture.visual.VisualMotionFrame
 import app.simt.echo.capture.visual.VisualMotionSource
+import app.simt.echo.capture.visual.VisualGateCounters
 import app.simt.echo.data.ConfigRepository
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.data.TrialRepository
@@ -116,6 +117,10 @@ class NavigateViewModel(
     fun detachVisualTap() {
         (motion as? VisualMotionSource)?.detachVisual()
     }
+
+    /** Live gate counters for the research HUD; zero when assist is off. */
+    val visualGateCounters: VisualGateCounters
+        get() = (motion as? VisualMotionSource)?.gateCounters ?: VisualGateCounters()
 
     val ui: StateFlow<NavUi?> =
         navigator?.ui ?: MutableStateFlow<NavUi?>(null).asStateFlow()
@@ -268,6 +273,10 @@ class NavigateViewModel(
                 confirmations = confirmations,
                 uncertainEpisodes = uncertainEpisodes,
                 offRouteEpisodes = offRouteEpisodes,
+                visualGateAccepted = visualGateCounters.accepted,
+                visualGateRejected = visualGateCounters.rejected,
+                visualGateUnwitnessed = visualGateCounters.unwitnessed,
+                visualGateSuspects = visualGateCounters.suspects,
                 markers = markers.toList(),
             ),
         )

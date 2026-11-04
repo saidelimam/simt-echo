@@ -5,6 +5,10 @@ import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.viewmodel.viewModelFactory
 import app.simt.echo.Fixtures
 import app.simt.echo.capture.ReplayMotionSource
+import app.simt.echo.capture.FrameTap
+import app.simt.echo.capture.visual.VisualGateCounters
+import app.simt.echo.capture.visual.VisualMotionFrame
+import app.simt.echo.capture.visual.VisualMotionSource
 import app.simt.echo.data.ConfigRepository
 import app.simt.echo.data.FileStore
 import app.simt.echo.data.RouteRepository
@@ -17,6 +21,7 @@ import app.simt.echo.nav.endedWearState
 import app.simt.echo.nav.walkLog
 import app.simt.echo.platform.HapticPattern
 import app.simt.echo.platform.Haptics
+import app.simt.echo.platform.MotionSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
@@ -60,6 +65,15 @@ class NavigateViewModelTest {
         override fun play(pattern: HapticPattern) {
             played += pattern
         }
+    }
+
+    private class CountingVisualMotion(private val inner: ReplayMotionSource) :
+        MotionSource by inner, VisualMotionSource {
+        override val visualAssistActive = true
+        override val gateCounters = VisualGateCounters(7, 3, 2, 1)
+        override fun attachVisual(tap: FrameTap, enabled: Boolean, intervalNs: Long) = true
+        override fun detachVisual() = Unit
+        override fun drainVisual(tNs: Long): VisualMotionFrame? = null
     }
 
     private fun routesWithLRoute(): RouteRepository {
@@ -213,6 +227,31 @@ class NavigateViewModelTest {
         assertTrue(trial.anchors >= 1, "turn anchors counted, got ${trial.anchors}")
         assertEquals(0, trial.confirmations)
         assertTrue(trial.distanceM > 0.0)
+    }
+
+    @Test
+    fun arrivalWritesVisualGateCounters() = runTest(dispatcher) {
+        val store = FileStore(FakeFileSystem(), "/data".toPath())
+        val routes = RouteRepository(store)
+        routes.save(Fixtures.L_ROUTE)
+        val trials = TrialRepository(store)
+        val source = CountingVisualMotion(
+            ReplayMotionSource(walkLog(listOf(20.0 to 0.0, 15.0 to 90.0, 10.0 to 0.0)), this),
+        )
+        val vm = NavigateViewModel(
+            Fixtures.L_ROUTE.routeId, routes, source, FakeHaptics(),
+            trials = trials, device = "pixel-8", nowMs = { 5_000L },
+        ) {}
+        runCurrent()
+        vm.start()
+        vm.align()
+        driveToArrived(vm)
+
+        val trial = trials.list().single()
+        assertEquals(7, trial.visualGateAccepted)
+        assertEquals(3, trial.visualGateRejected)
+        assertEquals(2, trial.visualGateUnwitnessed)
+        assertEquals(1, trial.visualGateSuspects)
     }
 
     @Test

@@ -243,6 +243,23 @@ class VisualMotionConsumerTest {
     }
 
     @Test
+    fun lockDecaysWithoutConfidentFrames() {
+        val world = world()
+        val tap = TestTap()
+        val consumer = VisualMotionConsumer(tap, TestInput(), intervalNs = INTERVAL_NS)
+        assertTrue(consumer.start())
+        val first = sample(world, START, START_NS)
+        val second = sample(world, START.copy(y = START.y + 0.04), START_NS + INTERVAL_NS)
+        tap.mux.onFrame(first)
+        tap.mux.onFrame(second)
+        assertTrue(consumer.hasUsableFrame)
+        assertTrue(consumer.isLockedAt(second.tNs))
+        assertTrue(consumer.isLockedAt(second.tNs + 1_900_000_000L))
+        assertFalse(consumer.isLockedAt(second.tNs + 2_000_000_001L))
+        consumer.stop()
+    }
+
+    @Test
     fun deviceToWorldQuaternionUsesRearCameraAxesForYawAndPitch() {
         val world = world()
         for (to in listOf(START.copy(yawRad = 0.015), START.copy(yawRad = -0.015), START.copy(pitchRad = 0.015), START.copy(pitchRad = -0.015))) {

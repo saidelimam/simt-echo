@@ -31,6 +31,10 @@ class TrialRepositoryTest {
         confirmations = 2,
         uncertainEpisodes = 1,
         offRouteEpisodes = 0,
+        visualGateAccepted = 4,
+        visualGateRejected = 3,
+        visualGateUnwitnessed = 2,
+        visualGateSuspects = 1,
         mistakenConfirmations = 1,
         lighting = "bright, even",
         holdingStyle = "hand, portrait",
@@ -90,6 +94,7 @@ class TrialRepositoryTest {
         assertEquals(
             "trialId,routeId,mode,device,startedAtEpochMs,durationS,distanceM,arrived," +
                 "anchors,confirmations,mistakenConfirmations,uncertainEpisodes,offRouteEpisodes," +
+                "visualGateAccepted,visualGateRejected,visualGateUnwitnessed,visualGateSuspects," +
                 "lighting,holdingStyle,notes,markerCount,meanAbsDriftM,maxAbsDriftM",
             lines.first(),
         )
@@ -98,7 +103,7 @@ class TrialRepositoryTest {
         // single baseline record.
         assertEquals(
             "e1,route-1,ECHO,pixel-8,1000,61.5,62.0,true,3,2,1,1,0," +
-                "\"bright, even\",\"hand, portrait\",,1,1.5,1.5",
+                "4,3,2,1,\"bright, even\",\"hand, portrait\",,1,1.5,1.5",
             lines[1],
         )
         assertTrue(lines.any { it.startsWith("s1,route-1,SENSOR_ONLY,") })

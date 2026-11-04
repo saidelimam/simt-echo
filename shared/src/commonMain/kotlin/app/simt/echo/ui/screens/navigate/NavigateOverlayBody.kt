@@ -2,7 +2,9 @@ package app.simt.echo.ui.screens.navigate
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import app.simt.echo.data.RouteRepository
@@ -14,6 +16,7 @@ import app.simt.echo.ui.components.oneDecimal
 import app.simt.echo.ui.components.overlayScrimAlpha
 import app.simt.echo.ui.screens.record.RollingDistance
 import app.simt.echo.ui.theme.EchoExtras
+import app.simt.echo.ui.theme.EchoSpace12
 
 @Composable
 internal fun NavigateOverlayBody(
@@ -104,6 +107,12 @@ internal fun NavigateOverlayBody(
             },
             modifier = Modifier.fillMaxSize(),
         )
+        if (researchMode) {
+            ResearchGateTelemetry(
+                counters = viewModel.visualGateCounters,
+                modifier = Modifier.align(Alignment.TopStart).padding(EchoSpace12),
+            )
+        }
         if (instrument.glowSide != null) {
             NavigatePeripheryGlow(
                 side = instrument.glowSide,

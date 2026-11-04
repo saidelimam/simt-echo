@@ -55,6 +55,11 @@ data class Trial(
     val mistakenConfirmations: Int = 0,
     val uncertainEpisodes: Int = 0,
     val offRouteEpisodes: Int = 0,
+    /** Visual step-gate outcomes, additive and zero when assist was off. */
+    val visualGateAccepted: Int = 0,
+    val visualGateRejected: Int = 0,
+    val visualGateUnwitnessed: Int = 0,
+    val visualGateSuspects: Int = 0,
     /** Lighting noted for the run (§11: note lighting and holding style). */
     val lighting: String = "",
     /** How the phone was held (§11). */
