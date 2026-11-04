@@ -11,6 +11,8 @@ import kotlin.math.abs
 import kotlin.math.atan
 import kotlin.math.cos
 import kotlin.math.sin
+import kotlin.math.sqrt
+import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -130,14 +132,38 @@ class EgoMotionFitTest {
     }
 
     @Test
-    fun missingTextureAndFlatHoldCannotClaimUsableConfidence() {
+    fun missingTextureFailsClosedAndUsabilityNeverScalesConfidence() {
         val fitter = EgoMotionFit()
         val textured = egoMotionTestFlow()
         assertTrue(fitter.fit(textured, usability01 = 1.0).confidence01 > 0.5)
         val blank = egoMotionTestFlow()
         blank.texture.fill(0.0)
         assertTrue(fitter.fit(blank, usability01 = 1.0).confidence01 in 0.0..<0.3)
-        assertTrue(fitter.fit(textured, usability01 = 0.0).confidence01 in 0.0..<0.3)
+        val fitOnly = fitter.fit(textured, usability01 = 0.2)
+        assertTrue(fitOnly.confidence01 > 0.5, "usability is the upstream gate, not a confidence factor")
+    }
+
+    @Test
+    fun expansionSigmaIsFiniteAndMatchesMonteCarloSpread() {
+        val random = Random(7)
+        val estimates = DoubleArray(120)
+        val sigmas = DoubleArray(estimates.size)
+        repeat(estimates.size) { seed ->
+            val flow = egoMotionTestFlow(expansionPerSec = 0.16)
+            for (i in 0 until flow.count) {
+                flow.dx[i] += random.nextDouble(-0.0002, 0.0002)
+                flow.dy[i] += random.nextDouble(-0.0002, 0.0002)
+            }
+            val result = EgoMotionFit().fit(flow, usability01 = 1.0)
+            assertTrue(result.expansionSigmaPerSec.isFinite() && result.expansionSigmaPerSec > 0.0)
+            estimates[seed] = result.expansionPerSec
+            sigmas[seed] = result.expansionSigmaPerSec
+        }
+        val mean = estimates.average()
+        val empirical = sqrt(estimates.sumOf { (it - mean) * (it - mean) } / (estimates.size - 1))
+        val reported = sigmas.average()
+        val ratio = empirical / reported
+        assertTrue(ratio in 0.7..1.4, "empirical/reported expansion sigma $ratio, empirical $empirical reported $reported")
     }
 
     @Test

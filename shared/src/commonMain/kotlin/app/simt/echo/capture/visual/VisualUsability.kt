@@ -1,6 +1,7 @@
 package app.simt.echo.capture.visual
 
 import app.simt.echo.capture.FrameQuality
+import kotlin.math.abs
 
 enum class VisualReason { NONE, FLAT, BLANK_WALL, BLUR, DARK, GLARE, POCKET, SWINGING, EAR, UNKNOWN }
 
@@ -40,13 +41,19 @@ class VisualUsability {
         exposureFraction01 = FrameQuality.exposureFraction(luma)
         sharpnessFactor01 = (FrameQuality.sharpness(luma, width, height) / SHARPNESS_FULL).coerceIn(0.0, 1.0)
         stabilityFactor01 = FrameQuality.stability(angularRateRadPerSec)
+        if (abs(angularRateRadPerSec) > MAX_ANGULAR_RATE_RAD_PER_SEC) {
+            reason = VisualReason.BLUR
+            return value01
+        }
         textureEigenvalue = StructureTensor.minEigenvalue(luma, width, height)
         val textureFactor = textureFactor01(textureEigenvalue)
-        value01 = sharpnessFactor01 * exposureFraction01 * textureFactor * stabilityFactor01
+        // Rotation is already removed geometrically before matching. The
+        // stability term remains telemetry, not a second confidence penalty.
+        value01 = sharpnessFactor01 * exposureFraction01 * textureFactor
         reason = when {
             exposureFraction01 < 0.5 -> if (meanLuma(luma) >= 128.0) VisualReason.GLARE else VisualReason.DARK
             textureEigenvalue < MIN_TEXTURE_EIGENVALUE -> VisualReason.BLANK_WALL
-            sharpnessFactor01 < 0.3 || stabilityFactor01 < 0.5 -> VisualReason.BLUR
+            sharpnessFactor01 < 0.3 -> VisualReason.BLUR
             else -> VisualReason.NONE
         }
         return value01
@@ -54,6 +61,8 @@ class VisualUsability {
 
     companion object {
         const val MIN_TEXTURE_EIGENVALUE = 4.0
+        /** Above this rate the gyro de-rotation is not trusted; reject the frame. */
+        const val MAX_ANGULAR_RATE_RAD_PER_SEC = 1.5
         private const val TEXTURE_FULL = 64.0
         private const val SHARPNESS_FULL = 256.0
 

@@ -21,7 +21,7 @@ class EgoMotionFit {
     private val row = DoubleArray(4)
     private val coefficients = DoubleArray(4)
     private val consensus = TranslationConsensus()
-    private var inverseYawInformation = 0.0
+    private var inverseInformation = 0.0
 
     fun fit(flow: BlockFlow, usability01: Double): VisualEgo {
         result.clear()
@@ -33,11 +33,13 @@ class EgoMotionFit {
         for (i in 0 until flow.count) {
             val valid = flow.x[i].isFinite() && flow.y[i].isFinite() && flow.dx[i].isFinite() && flow.dy[i].isFinite() &&
                 flow.texture[i].isFinite() && flow.texture[i] >= VisualUsability.MIN_TEXTURE_EIGENVALUE && flow.quality[i].isFinite()
-            baseWeights[i] = if (valid) VisualUsability.textureFactor01(flow.texture[i]) * flow.quality[i].coerceIn(0.0, 1.0) else 0.0
+            // Texture is consumed once by VisualUsability's gate; block validity
+            // still requires trackable texture, but confidence must not count it again.
+            baseWeights[i] = if (valid) flow.quality[i].coerceIn(0.0, 1.0) else 0.0
             weights[i] = baseWeights[i]
         }
         consensus.evaluate(flow, inverseTime, baseWeights)
-        if (consensus.valid && !consensus.sharedDepth) return publishMixedDepth(flow, inverseTime, usability01)
+        if (consensus.valid && !consensus.sharedDepth) return publishMixedDepth(flow, inverseTime)
         if (consensus.valid) {
             for (i in 0 until flow.count) {
                 if (consensus.keep[i] == 0.0) {
@@ -105,8 +107,9 @@ class EgoMotionFit {
         result.yawResidualRadPerSec = yawResidual
         result.yawSigmaRadPerSec = yawSigma
         result.inliers = inliers
-        result.confidence01 = (countFactor * (inlierWeight / inliers) * usability01.coerceIn(0.0, 1.0) *
+        result.confidence01 = (countFactor * (inlierWeight / inliers) *
             exp(-rmsPixels * rmsPixels / (RMS_SCALE_PIXELS * RMS_SCALE_PIXELS))).coerceIn(0.0, 1.0)
+        result.expansionSigmaPerSec = profileExpansionSigma(flow, inverseTime, dimensions)
         if (consensus.valid && abs(coefficients[0]) >= MIN_EXPANSION_PER_SEC) {
             val foeX = -coefficients[1] / coefficients[0]
             val foeY = -coefficients[2] / coefficients[0]
@@ -121,7 +124,7 @@ class EgoMotionFit {
     }
 
     /** Direction is identified; a single depth is not, so yaw stays unresolved. */
-    private fun publishMixedDepth(flow: BlockFlow, inverseTime: Double, usability01: Double): VisualEgo {
+    private fun publishMixedDepth(flow: BlockFlow, inverseTime: Double): VisualEgo {
         var residualSquares = 0.0
         var weight = 0.0
         var used = 0
@@ -149,8 +152,24 @@ class EgoMotionFit {
         result.foeY = consensus.focusY
         result.hasFoe = abs(consensus.medianScalePerSec) >= MIN_EXPANSION_PER_SEC
         result.inliers = used
-        result.confidence01 = (countFactor * (weight / used) * usability01.coerceIn(0.0, 1.0) *
+        result.confidence01 = (countFactor * (weight / used) *
             exp(-rmsPixels * rmsPixels / (RMS_SCALE_PIXELS * RMS_SCALE_PIXELS))).coerceIn(0.0, 1.0)
+        var radialSum = 0.0
+        var radialSquares = 0.0
+        for (i in 0 until flow.count) {
+            if (consensus.keep[i] == 0.0) continue
+            val radiusX = flow.x[i] - consensus.focusX
+            val radiusY = flow.y[i] - consensus.focusY
+            val radiusSquared = radiusX * radiusX + radiusY * radiusY
+            if (radiusSquared <= 0.0) continue
+            val radial = (flow.dx[i] * radiusX + flow.dy[i] * radiusY) / radiusSquared * inverseTime
+            val sampleWeight = baseWeights[i]
+            radialSum += sampleWeight * radial
+            radialSquares += sampleWeight * radial * radial
+        }
+        val mean = radialSum / weight
+        val variance = (radialSquares / weight - mean * mean).coerceAtLeast(0.0)
+        result.expansionSigmaPerSec = if (used > 1) sqrt(variance / used) else Double.POSITIVE_INFINITY
         return result
     }
 
@@ -167,8 +186,23 @@ class EgoMotionFit {
             residualSquares += weights[i] * error * error
             observations += 2
         }
-        if (observations <= 4 || !solve(4, inverseYaw = true)) return Double.POSITIVE_INFINITY
-        val sigma = sqrt(residualSquares / (observations - 4) * inverseYawInformation)
+        if (observations <= 4 || !solve(4, inverseColumn = 3)) return Double.POSITIVE_INFINITY
+        val sigma = sqrt(residualSquares / (observations - 4) * inverseInformation)
+        return if (sigma.isFinite()) sigma else Double.POSITIVE_INFINITY
+    }
+
+    /** Standard error of the expansion coefficient from the same normal matrix. */
+    private fun profileExpansionSigma(flow: BlockFlow, inverseTime: Double, dimensions: Int): Double {
+        var residualSquares = 0.0
+        var observations = 0
+        for (i in 0 until flow.count) {
+            if (weights[i] == 0.0) continue
+            val error = residual(flow, i, inverseTime)
+            residualSquares += weights[i] * error * error
+            observations += 2
+        }
+        if (observations <= dimensions || !solve(dimensions, inverseColumn = 0)) return Double.POSITIVE_INFINITY
+        val sigma = sqrt(residualSquares / (observations - dimensions) * inverseInformation)
         return if (sigma.isFinite()) sigma else Double.POSITIVE_INFINITY
     }
 
@@ -190,9 +224,9 @@ class EgoMotionFit {
     }
 
     /** Partial-pivot Gauss–Jordan; singular/non-finite systems fail closed. */
-    private fun solve(dimensions: Int, inverseYaw: Boolean = false): Boolean {
+    private fun solve(dimensions: Int, inverseColumn: Int = -1): Boolean {
         normal.copyInto(equations)
-        if (inverseYaw) for (i in 0..3) equations[i * 5 + 4] = if (i == 3) 1.0 else 0.0
+        if (inverseColumn >= 0) for (i in 0..3) equations[i * 5 + 4] = if (i == inverseColumn) 1.0 else 0.0
         var scale = 0.0
         for (i in 0 until dimensions) scale = maxOf(scale, abs(equations[i * 5 + i]))
         if (!scale.isFinite() || scale == 0.0) return false
@@ -215,9 +249,9 @@ class EgoMotionFit {
                 for (j in column..4) equations[r * 5 + j] -= factor * equations[column * 5 + j]
             }
         }
-        if (inverseYaw) {
-            inverseYawInformation = equations[19]
-            return inverseYawInformation.isFinite() && inverseYawInformation > 0.0
+        if (inverseColumn >= 0) {
+            inverseInformation = equations[inverseColumn * 5 + 4]
+            return inverseInformation.isFinite() && inverseInformation > 0.0
         }
         coefficients.fill(0.0)
         for (i in 0 until dimensions) {

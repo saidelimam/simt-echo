@@ -47,8 +47,20 @@ class VisualUsabilityTest {
         assertEquals(FrameQuality.exposureFraction(plane), usability.exposureFraction01)
         assertEquals(FrameQuality.stability(0.1), usability.stabilityFactor01)
         assertEquals((FrameQuality.sharpness(plane, width, height) / 256.0).coerceIn(0.0, 1.0), usability.sharpnessFactor01)
-        assertEquals(usability.sharpnessFactor01 * usability.exposureFraction01 * (usability.textureEigenvalue / 64.0).coerceIn(0.0, 1.0) * usability.stabilityFactor01, value)
+        assertEquals(usability.sharpnessFactor01 * usability.exposureFraction01 * (usability.textureEigenvalue / 64.0).coerceIn(0.0, 1.0), value)
         assertTrue(value > 0.7)
+    }
+
+    @Test
+    fun rotationCompensatedBobDoesNotReduceUsabilityButExtremeRateRejects() {
+        val plane = texture()
+        val usability = VisualUsability()
+        val still = usability.evaluate(plane, width, height, PoseMode.HELD_UP, 0.0)
+        val bob = usability.evaluate(plane, width, height, PoseMode.HELD_UP, 0.45)
+        assertEquals(still, bob, "de-rotated bob must not change the usable measurement")
+        assertEquals(VisualReason.NONE, usability.reason)
+        assertEquals(0.0, usability.evaluate(plane, width, height, PoseMode.HELD_UP, VisualUsability.MAX_ANGULAR_RATE_RAD_PER_SEC + 0.01))
+        assertEquals(VisualReason.BLUR, usability.reason)
     }
 
     @Test
