@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    LAN sharing (plan 0005 §1): a peer fetches the sealed bundle over plain
+    HTTP on the same Wi-Fi or hotspot. Confidentiality comes from the AES-GCM
+    seal and the invitation-carried key, never from TLS, so cleartext has to
+    be permitted for that dial. Every cloud call stays https-only in code
+    (EchoApiClient), and the relay is https.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

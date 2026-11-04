@@ -43,6 +43,12 @@ class KtorLanTransport(
     private val afterDownloadStopMs: Long = AFTER_DOWNLOAD_STOP_MS,
     private val offerLifetimeMs: Long = OFFER_LIFETIME_MS,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO),
+    /**
+     * The sockets this transport dials through (R14-01). A phone supplies
+     * [NetworkBoundSocketFactory] over its active Wi-Fi/hotspot network, so a
+     * same-network fetch cannot leave over cellular or a VPN; the default
+     * keeps previews and host tests on the ordinary socket factory.
+     */
     private val clientFactory: () -> HttpClient = ::defaultClient,
 ) : PeerTransport {
 
@@ -178,7 +184,11 @@ class KtorLanTransport(
         const val AFTER_DOWNLOAD_STOP_MS = 3_000L
         const val OFFER_LIFETIME_MS = 600_000L
 
-        /** Redirects off (plan 0005 §4.2): the LAN fetch follows no Location. */
+        /**
+         * Redirects off (plan 0005 §4.2): the LAN fetch follows no Location.
+         * Every socket is created by [socketFactory], which is what pins the
+         * dial to the sharing network rather than the process default.
+         */
         fun defaultClient(): HttpClient = HttpClient(OkHttp) {
             followRedirects = false
             install(HttpTimeout) {

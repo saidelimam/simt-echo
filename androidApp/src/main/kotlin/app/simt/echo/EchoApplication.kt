@@ -6,6 +6,7 @@ import app.simt.echo.capture.MlKitFaceScanner
 import app.simt.echo.platform.AndroidLiveUpdateSink
 import app.simt.echo.platform.AndroidNetworkGate
 import app.simt.echo.platform.AndroidPlatform
+import app.simt.echo.platform.createLanTransport
 import app.simt.echo.BuildConfig
 
 /**
@@ -32,6 +33,9 @@ class EchoApplication : Application() {
             faceScanner = MlKitFaceScanner(),
             // W11-09: walk-time uploads follow the active network's policy.
             networkGate = AndroidNetworkGate(this),
+            // R14-01: LAN sharing dials through the Wi-Fi/hotspot network,
+            // never the process default (cellular, VPN).
+            lanTransport = createLanTransport(this),
         )
     }
 
