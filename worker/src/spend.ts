@@ -13,7 +13,8 @@
 // whose etag no longer matches, so concurrent creates on the same day
 // retry against the fresh value, and a contention storm fails closed
 // (job_create_failed, nothing written) rather than double-booking the
-// day. The reserve is a cap, not a bill — the governor is what bounds the
+// day. An existing but unreadable ledger fails closed the same way
+// (R12-06): a corrupt object must not reset the day's reservation. The reserve is a cap, not a bill — the governor is what bounds the
 // SAM calls a job actually makes; a reserve with no job is spent toward
 // the cap, never under it.
 //
@@ -51,12 +52,12 @@ function utcDayKey(now: Date): string {
   return `${LEDGER_PREFIX}${now.toISOString().slice(0, 10)}.json`;
 }
 
-/** A ledger that is present but unreadable as `{reserved: n}` (wrong
- * shape, negative, fractional) reads as 0. A non-JSON object cannot reach
- * this — `obj.json()` throws and the caller treats it as 0 too. */
-function reservedFrom(raw: unknown): number {
+/** A ledger that is present but unreadable as `{reserved: n}` (wrong shape,
+ * negative, fractional) yields null: R12-06 treats an unreadable ledger as
+ * corrupt, never as an empty one. */
+function reservedFrom(raw: unknown): number | null {
   const n = (raw as { reserved?: unknown } | null)?.reserved;
-  return typeof n === "number" && Number.isInteger(n) && n >= 0 ? n : 0;
+  return typeof n === "number" && Number.isInteger(n) && n >= 0 ? n : null;
 }
 
 /**
@@ -73,12 +74,16 @@ export async function reserveDailySpend(
     const obj = await env.MEDIA.get(key);
     let reserved = 0;
     if (obj) {
-      // A corrupt object (partial write, hand-edit) reads as 0: the day
-      // restarts its budget rather than failing every create.
+      // R12-06 (review 0012, F6.3): fail closed on a corrupt ledger. Reading
+      // it as 0 and overwriting it wiped the day's reservation and let the
+      // cap be spent again; an unreadable ledger blocks creates (503) until
+      // ops repairs or clears it.
       try {
-        reserved = reservedFrom(await obj.json());
+        const parsed = reservedFrom(await obj.json());
+        if (parsed === null) return { ok: false, reason: "contention" };
+        reserved = parsed;
       } catch {
-        reserved = 0;
+        return { ok: false, reason: "contention" };
       }
     }
     if (reserved + frames > dailyMaxFrames(env)) return { ok: false, reason: "over_cap" };
