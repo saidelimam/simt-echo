@@ -359,7 +359,9 @@ export function registerJobsRoutes(app: Hono<AppEnv>): void {
       {
         headers: {
           "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
+          // R12-11: event data is per-install route state; a cache may not
+          // keep it, not even to revalidate.
+          "Cache-Control": "no-store",
         },
       },
     );

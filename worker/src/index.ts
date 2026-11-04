@@ -16,6 +16,8 @@ export interface Env {
   PIPELINE?: Workflow;
   AI?: Ai;
   RL?: RateLimit;
+  /** R12-11: the stricter bucket for POST /v1/device. */
+  RL_MINT?: RateLimit;
   SCOUT_ORDER: string;
   GROUND_ORDER: string;
   AI_GATEWAY_ID: string;
@@ -59,11 +61,13 @@ function bearerToken(req: HeaderReader): string | null {
   return token === "" ? null : token;
 }
 
+/** R12-11 (review 0012, F11.1): only Cloudflare's own header is trusted. The
+ * old `X-Forwarded-For` fallback let any request that reached the worker
+ * without `CF-Connecting-IP` choose a fresh bucket per call and bypass both
+ * limits. An absent header is one shared bucket, never a client choice. */
 function clientIp(req: HeaderReader): string {
   const direct = req.header("CF-Connecting-IP")?.trim();
   if (direct) return direct;
-  const forwarded = req.header("X-Forwarded-For")?.split(",")[0]?.trim();
-  if (forwarded) return forwarded;
   return "unknown";
 }
 
@@ -103,6 +107,13 @@ app.onError((err, c) => {
   return res;
 });
 
+// R12-11 (F11.3): no response may be sniffed into a different type — a JSON
+// error must never be interpreted as HTML by a browser.
+app.use("*", async (c, next) => {
+  await next();
+  c.res.headers.set("X-Content-Type-Options", "nosniff");
+});
+
 // Auth + rate limit for every /v1/* route except the public health probe and
 // the device-mint route. Registered before any route so later slices inherit
 // the policy automatically. Future routes only add handlers.
@@ -119,8 +130,14 @@ app.use("/v1/*", async (c, next) => {
   // In front of auth: the shared-secret gate only throttled token holders and
   // left unauthenticated requests unlimited. Key on IP alone so the limit
   // exists before any credential is checked.
-  if (rl) {
-    const { success } = await rl.limit({ key: `pre:${ip}` });
+  // R12-11 (F11.2): minting a device record is the one public write, so it
+  // gets its own, much smaller bucket. The shared 30/min bucket let one IP
+  // mint 30 keys a minute and rotate `deviceId` to escape the per-install
+  // limit; without a strict binding configured, the shared one still applies.
+  const minting = c.req.method === "POST" && c.req.path === "/v1/device";
+  const limiter = minting ? (c.env?.RL_MINT ?? rl) : rl;
+  if (limiter) {
+    const { success } = await limiter.limit({ key: minting ? `mint:${ip}` : `pre:${ip}` });
     if (!success) {
       // R10-12 (review 0010, F11): the limit is 30/60 s (wrangler.jsonc) —
       // tell the client when it may retry.
