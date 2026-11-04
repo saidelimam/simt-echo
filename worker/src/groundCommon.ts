@@ -1,11 +1,11 @@
 // Shared ground builders (slice W11-06).
 //
-// Pure/frozen pieces of the W3-05 ground step reused by both the legacy
-// path (`ground.ts`) and the SAM lens (`samLens.ts`): `boxOnlyOne` builds
+// Pure/frozen pieces of the W3-05 ground step, used by the SAM lens
+// (`samLens.ts`) and the box-only path it degrades to: `boxOnlyOne` builds
 // the box-only fallback for one candidate, `boxOnly` maps it over a
 // checkpoint, `decodeHeroMask` decodes the hero observation's mask, and
 // `toGrounded` finalises an AI_GROUNDED candidate. Moved verbatim from
-// `ground.ts` — the §6.6 formulas live here exactly once.
+// — the §6.6 formulas live here exactly once.
 
 import { decodeMaskToSVGPath, formats, frameIndexOf, recordsOfKind } from "@meta-sam/parser";
 import type { SamObs } from "./samParse";
@@ -23,10 +23,8 @@ export function boxOnlyOne(
   checkpoint: Checkpoint,
   c: ScoutCandidate,
   k: number,
-  tMs: number,
   models: string = `${scoutModel} (box-only)`,
 ): Candidate {
-  void tMs;
   return {
     candidateId: `${checkpoint.nodeId}_${k}`,
     title: c.title,
@@ -66,11 +64,8 @@ export function boxOnly(
   scoutModel: string,
   checkpoint: Checkpoint,
   candidates: ScoutCandidate[],
-  keyframeTMs: Map<string, number>,
 ): Candidate[] {
-  return candidates.map((c, k) =>
-    boxOnlyOne(jobId, scoutModel, checkpoint, c, k, keyframeTMs.get(c.imageId) ?? checkpoint.tMs),
-  );
+  return candidates.map((c, k) => boxOnlyOne(jobId, scoutModel, checkpoint, c, k));
 }
 
 /**
@@ -114,7 +109,7 @@ export function toGrounded(
   const frameW = obs[0]?.w ?? GRID;
   const frameH = obs[0]?.h ?? GRID;
   const sparkPx = sparkBoxToPixels(sc.box, frameW, frameH);
-  const sel = selectTrack(obs, sparkPx, imageFallback ? 0 : clip.heroIdx, clip.fps);
+  const sel = selectTrack(obs, sparkPx, imageFallback ? 0 : clip.heroIdx);
   // No hero observation means no SAM box in this frame's pixels. Emitting
   // the scout's 0–1000-grid box against SAM frame dims would mix two
   // coordinate systems (review 0002): degrade to the box-only candidate.

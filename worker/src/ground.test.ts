@@ -4,7 +4,7 @@
 // null-degrading to box-only, never crashing — the slice acceptance.
 
 import { describe, expect, it } from "vitest";
-import { runGround } from "./ground";
+import { runGroundLens } from "./samLens";
 import {
   bestBy,
   heroIndex,
@@ -108,7 +108,7 @@ describe("selectTrack (§6.6)", () => {
   const sparkPx = sparkBoxToPixels([573, 180, 819, 703], 720, 1280);
 
   it("picks the overlapping track and clears the mismatch flag", () => {
-    const sel = selectTrack(parseSam(TWO_OBJECT), sparkPx, 1, 10);
+    const sel = selectTrack(parseSam(TWO_OBJECT), sparkPx, 1);
     expect(sel.hero?.id).toBe(1);
     expect(sel.boxMismatch).toBe(false);
     expect(sel.present).toBeGreaterThan(0);
@@ -116,12 +116,12 @@ describe("selectTrack (§6.6)", () => {
 
   it("sets boxMismatch when nothing overlaps the scout box", () => {
     const far: [number, number, number, number] = [0, 0, 5, 5];
-    const sel = selectTrack(parseSam(TWO_OBJECT), far, 1, 10);
+    const sel = selectTrack(parseSam(TWO_OBJECT), far, 1);
     expect(sel.boxMismatch).toBe(true);
   });
 
   it("never throws on empty observations", () => {
-    const sel = selectTrack([], sparkPx, 1, 10);
+    const sel = selectTrack([], sparkPx, 1);
     expect(sel.obs).toEqual([]);
     expect(sel.boxMismatch).toBe(true);
   });
@@ -260,7 +260,7 @@ describe("runGround box-only path", () => {
         },
       ],
     } as never;
-    const result = await runGround(env, "job1", manifest, scout);
+    const result = await runGroundLens(env, "job1", manifest, scout);
     expect(result.models.ground).toBe("none");
     const c = result.checkpoints[0].candidates[0];
     expect(c.source).toBe("AI_BOX_ONLY");
@@ -288,7 +288,7 @@ describe("runGround box-only path", () => {
       model: "scout-model",
       checkpoints: [{ nodeId: "n2", candidates: [] }],
     } as never;
-    const result = await runGround(env, "job1", manifest, scout);
+    const result = await runGroundLens(env, "job1", manifest, scout);
     expect(result.models.ground).toBe("none");
     expect(result.checkpoints[0].candidates).toEqual([]);
   });
@@ -316,7 +316,7 @@ describe("runGround box-only path", () => {
       ],
     } as never;
 
-    const result = await runGround(env, "job1", manifest, scout);
+    const result = await runGroundLens(env, "job1", manifest, scout);
 
     expect(result.checkpoints[0].candidates.map((c) => c.title)).toEqual(["Strong", "Weak"]);
   });

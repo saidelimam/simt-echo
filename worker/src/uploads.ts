@@ -1,5 +1,7 @@
 import { Hono, type Context } from "hono";
 import type { AppEnv, Env } from "./index";
+import { sha256Hex } from "./hash";
+import { deletePrefix, listPages, readJson } from "./r2";
 import { reserveDailySpend, spendDisabled } from "./spend";
 import {
   CreateJobV11RequestSchema,
@@ -48,28 +50,6 @@ interface StoredUploadMeta {
   createdAt: number;
 }
 
-async function readJson<T>(env: Env, key: string): Promise<T | null> {
-  const obj = await env.MEDIA.get(key);
-  if (!obj) return null;
-  try {
-    return (await obj.json()) as T;
-  } catch {
-    return null;
-  }
-}
-
-export async function deletePrefix(env: Env, prefix: string): Promise<void> {
-  let cursor: string | undefined;
-  for (;;) {
-    const page = await env.MEDIA.list({ prefix, cursor });
-    if (page.objects.length > 0) {
-      await env.MEDIA.delete(page.objects.map((o) => o.key));
-    }
-    if (!page.truncated) break;
-    cursor = page.cursor;
-  }
-}
-
 function isExpired(createdAt: number, now: number): boolean {
   return now - createdAt > STAGING_TTL_MS;
 }
@@ -92,21 +72,6 @@ export async function writeJobOwner(env: Env, jobId: string, deviceId: string): 
   await env.MEDIA.put(jobOwnerKey(jobId), JSON.stringify({ owner: deviceId }));
 }
 
-async function hexSha256Hex(data: Uint8Array | string): Promise<string> {
-  const bytes = typeof data === "string" ? new TextEncoder().encode(data) : data;
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    bytes as unknown as ArrayBuffer,
-  );
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-/**
- * The job id for an idempotency key: the first 128 bits of its sha256 in
- * RFC 4122 shape (version 5, variant 10), so it is a valid UUID and equal
- * keys always name the same job. That makes concurrent creates collide on
- * the Workflow instance id instead of racing to make two jobs.
- */
 /**
  * The job id an install's idempotency key names: sha256 of
  * `deviceId\0idempotencyKey`, shaped like a UUIDv5.
@@ -119,7 +84,7 @@ async function hexSha256Hex(data: Uint8Array | string): Promise<string> {
  * retry land on the same Workflow instance.
  */
 async function jobIdForKey(deviceId: string, idempotencyKey: string): Promise<string> {
-  const hex = await hexSha256Hex(`${deviceId}\u0000${idempotencyKey}`);
+  const hex = await sha256Hex(`${deviceId}\u0000${idempotencyKey}`);
   const variant = ((parseInt(hex[16], 16) & 0x3) | 0x8).toString(16);
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
@@ -182,15 +147,11 @@ async function loadUploadMeta(
 async function stagedNames(env: Env, uploadId: string): Promise<Set<string>> {
   const prefix = stagingPrefix(uploadId);
   const names = new Set<string>();
-  let cursor: string | undefined;
-  for (;;) {
-    const page = await env.MEDIA.list({ prefix, cursor });
+  for await (const page of listPages(env, { prefix })) {
     for (const o of page.objects) {
       const suffix = o.key.slice(prefix.length);
       if (suffix !== "" && suffix !== "meta.json" && !suffix.includes("/")) names.add(suffix);
     }
-    if (!page.truncated) break;
-    cursor = page.cursor;
   }
   return names;
 }
@@ -204,9 +165,7 @@ function missingOf(meta: StoredUploadMeta, staged: Set<string>): string[] {
  * the id of a job that is gone. */
 async function sweepOrphanedIdem(env: Env): Promise<void> {
   const orphaned: string[] = [];
-  let cursor: string | undefined;
-  for (;;) {
-    const page = await env.MEDIA.list({ prefix: "jobs/idem/", cursor });
+  for await (const page of listPages(env, { prefix: "jobs/idem/" })) {
     for (const o of page.objects) {
       const rec = await readJson<{ jobId?: unknown }>(env, o.key);
       const jobId = typeof rec?.jobId === "string" ? rec.jobId : null;
@@ -214,8 +173,6 @@ async function sweepOrphanedIdem(env: Env): Promise<void> {
         orphaned.push(o.key);
       }
     }
-    if (!page.truncated) break;
-    cursor = page.cursor;
   }
   if (orphaned.length > 0) await env.MEDIA.delete(orphaned);
 }
@@ -228,9 +185,7 @@ async function sweepOrphanedIdem(env: Env): Promise<void> {
  */
 export async function sweepExpiredUploads(env: Env, now: number = Date.now()): Promise<number> {
   const groups = new Map<string, { keys: string[]; metaKey: string | null }>();
-  let cursor: string | undefined;
-  for (;;) {
-    const page = await env.MEDIA.list({ prefix: "jobs/staging/", cursor });
+  for await (const page of listPages(env, { prefix: "jobs/staging/" })) {
     for (const o of page.objects) {
       const rest = o.key.slice("jobs/staging/".length);
       const slash = rest.indexOf("/");
@@ -244,8 +199,6 @@ export async function sweepExpiredUploads(env: Env, now: number = Date.now()): P
       g.keys.push(o.key);
       if (rest.slice(slash + 1) === "meta.json") g.metaKey = o.key;
     }
-    if (!page.truncated) break;
-    cursor = page.cursor;
   }
   let swept = 0;
   for (const g of groups.values()) {
@@ -304,9 +257,7 @@ async function dropJobInstance(pipeline: Workflow | undefined, jobId: string): P
  */
 export async function sweepExpiredJobs(env: Env, now: number = Date.now()): Promise<number> {
   const groups = new Map<string, { keys: string[]; oldestUploaded: number }>();
-  let cursor: string | undefined;
-  for (;;) {
-    const page = await env.MEDIA.list({ prefix: "jobs/", cursor });
+  for await (const page of listPages(env, { prefix: "jobs/" })) {
     for (const o of page.objects) {
       const rest = o.key.slice("jobs/".length);
       const slash = rest.indexOf("/");
@@ -323,8 +274,6 @@ export async function sweepExpiredJobs(env: Env, now: number = Date.now()): Prom
         : g.oldestUploaded;
       groups.set(id, g);
     }
-    if (!page.truncated) break;
-    cursor = page.cursor;
   }
   let swept = 0;
   for (const [id, g] of groups) {
@@ -358,18 +307,14 @@ export async function sweepExpiredJobs(env: Env, now: number = Date.now()): Prom
  */
 export async function sweepExpiredRelayObjects(env: Env, now: number = Date.now()): Promise<number> {
   const expired: string[] = [];
-  let cursor: string | undefined;
-  for (;;) {
-    // R12-04 (review 0012, F4): production R2 omits customMetadata unless it
-    // is requested, so the old list made every object look unknown and this
-    // sweep deleted nothing. The include is part of the read contract.
-    const page = await env.MEDIA.list({ prefix: "relay/", cursor, include: ["customMetadata"] });
+  // R12-04 (review 0012, F4): production R2 omits customMetadata unless it
+  // is requested, so the old list made every object look unknown and this
+  // sweep deleted nothing. The include is part of the read contract.
+  for await (const page of listPages(env, { prefix: "relay/", include: ["customMetadata"] })) {
     for (const o of page.objects) {
       const expiresAt = Number(o.customMetadata?.expiresAt ?? NaN);
       if (Number.isFinite(expiresAt) && expiresAt <= now) expired.push(o.key);
     }
-    if (!page.truncated) break;
-    cursor = page.cursor;
   }
   if (expired.length > 0) await env.MEDIA.delete(expired);
   return expired.length;
@@ -418,7 +363,7 @@ export async function handleCreateJobV11(c: Context<AppEnv>): Promise<Response> 
   // payload. zod's parsed.data is canonical — declared field order, unknown
   // keys dropped — so the hash is stable across replays of the same logical
   // request and differs for a changed one.
-  const payloadHash = await hexSha256Hex(JSON.stringify(parsed.data));
+  const payloadHash = await sha256Hex(JSON.stringify(parsed.data));
 
   // The id is derived from this install and the idempotency key (R12-05), so
   // concurrent creates from one install with one key name the same Workflow
@@ -632,16 +577,12 @@ async function activeStagingSessions(
   now: number,
 ): Promise<number> {
   let count = 0;
-  let cursor: string | undefined;
-  for (;;) {
-    const page = await env.MEDIA.list({ prefix: "jobs/staging/", cursor });
+  for await (const page of listPages(env, { prefix: "jobs/staging/" })) {
     for (const o of page.objects) {
       if (!o.key.endsWith("/meta.json")) continue;
       const meta = await readJson<StoredUploadMeta>(env, o.key);
       if (meta?.owner === deviceId && !isExpired(meta.createdAt, now)) count++;
     }
-    if (!page.truncated) break;
-    cursor = page.cursor;
   }
   return count;
 }
@@ -795,7 +736,7 @@ export function registerUploadRoutes(app: Hono<AppEnv>): void {
       return c.json({ ok: false, error: "size_mismatch" }, 400);
     }
     const bytes = body.buffer as ArrayBuffer;
-    const actual = await hexSha256Hex(body);
+    const actual = await sha256Hex(body);
     if (actual !== declared.sha256) {
       return c.json({ ok: false, error: "sha_mismatch" }, 400);
     }

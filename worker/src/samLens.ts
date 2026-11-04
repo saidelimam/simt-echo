@@ -28,6 +28,7 @@ import { NonRetryableError } from "cloudflare:workflows";
 import type { Env } from "./index";
 import { emitJobEvent, newEventId } from "./jobs";
 import { metaResponsesDetailed } from "./meta";
+import { sha256Hex } from "./hash";
 import { parseSam } from "./samParse";
 import { boxOnly, boxOnlyOne, toGrounded } from "./groundCommon";
 import {
@@ -100,14 +101,9 @@ function toBase64(bytes: Uint8Array): string {
   return nodeBuffer.from(bytes).toString("base64");
 }
 
-async function hexSha256(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", bytes as unknown as ArrayBuffer);
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
 /** Step-name hash: first 12 hex of sha256(samPhrase), deterministic. */
 export async function phraseHash(phrase: string): Promise<string> {
-  return (await hexSha256(new TextEncoder().encode(phrase))).slice(0, 12);
+  return (await sha256Hex(phrase)).slice(0, 12);
 }
 
 /** `k` is the candidate's checkpoint-local index, so two survivors that
@@ -271,7 +267,7 @@ async function cacheKeyHex(media: Uint8Array, phrase: string, params: string): P
   const bytes = new Uint8Array(head.length + media.length);
   bytes.set(head, 0);
   bytes.set(media, head.length);
-  return hexSha256(bytes);
+  return sha256Hex(bytes);
 }
 
 interface SamCall {
@@ -398,7 +394,7 @@ export function frameFailsFlags(cp: Checkpoint, imageId: string): boolean {
 }
 
 function lensFallback(jobId: string, scoutModel: string, cp: Checkpoint, sc: ScoutCandidate, k: number): Candidate {
-  const base = boxOnlyOne(jobId, scoutModel, cp, sc, k, cp.tMs);
+  const base = boxOnlyOne(jobId, scoutModel, cp, sc, k);
   return {
     ...base,
     models: `${scoutModel} + sam-3.1`,
@@ -509,7 +505,6 @@ export async function runGroundLens(
         scout.model,
         cp,
         scoutByNode.get(cp.nodeId)?.candidates ?? [],
-        new Map(cp.keyframes.map((k) => [k.id, k.tMs])),
       ).sort((a, b) => b.rank - a.rank),
     }));
     const result = JobResultSchema.parse({
@@ -751,7 +746,7 @@ export async function runGroundLens(
   const bandDecision = new Map<number, PlanDecision>();
   bandCalls.forEach((v, i) => bandDecision.set(v.p.index, bandDecisions[i]));
   const videoTasks: Array<{ name: string; perCp: Map<number, Candidate>; run: () => Promise<VideoStepResult> }> = [];
-  for (const [i, { p, perCp, topK, top, key }] of videoCalls.entries()) {
+  for (const { p, perCp, topK, top, key } of videoCalls) {
     const decision =
       p.cp.type === "TURN" || p.cp.type === "DESTINATION"
         ? headroomDecision.get(p.index)

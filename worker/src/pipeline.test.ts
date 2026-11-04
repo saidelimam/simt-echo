@@ -8,7 +8,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { assembleFromGround, EchoPipeline } from "./pipeline";
-import { runGround } from "./ground";
+import { runGroundLens } from "./samLens";
 import { readJobEvents } from "./jobs";
 import { JobResultSchema, type Candidate, type JobResult, type Manifest } from "./types";
 
@@ -218,7 +218,7 @@ describe("assembleFromGround", () => {
       ],
     } as never;
 
-    const ground = await runGround(env, "job1", manifest, scout);
+    const ground = await runGroundLens(env, "job1", manifest, scout);
     const result = await assembleFromGround(env, "job1", manifest, ground, { scoutMs: 5 });
 
     expect(result.models).toEqual({ scout: "scout-model", ground: "none" });

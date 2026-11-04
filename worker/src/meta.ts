@@ -94,7 +94,7 @@ export async function metaResponsesDetailed(
         continue;
       }
       if (j.type === "response.output_text.delta") {
-        out += j.delta;
+        if (typeof j.delta === "string") out += j.delta;
         sawDelta = true;
       } else if (j.type === "response.output_text.done" && !sawDelta && typeof j.text === "string") {
         // Live-verified (review 0003 R5): SAM 3.1 sends no deltas at

@@ -1,19 +1,20 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import type { AppEnv, Env } from "./index";
 import {
   acceptedMediaType,
-  deletePrefix,
   handleCreateJobV11,
   idemKey,
   readJobOwner,
   writeJobOwner,
 } from "./uploads";
+import { deletePrefix, listPages, readJson } from "./r2";
 import { reserveDailySpend, spendDisabled } from "./spend";
 import {
   JobEventSchema,
   JobResultSchema,
   ManifestSchema,
   MAX_SAM_FRAMES,
+  MAX_UPLOAD_BYTES,
   type JobEvent,
   type JobStage,
   type Manifest,
@@ -27,7 +28,6 @@ import {
 //   jobs/<id>/error.json      {error} detail when the pipeline fails
 
 const MAX_FILES = 60;
-const MAX_TOTAL_BYTES = 80 * 1024 * 1024;
 
 const jobsPrefix = (jobId: string) => `jobs/${jobId}/`;
 
@@ -106,15 +106,11 @@ export async function readJobEvents(
   const prefix = eventsPrefix(jobId);
   const after = afterId === undefined ? Number.NaN : eventIdTimestamp(afterId);
   const keys: string[] = [];
-  let cursor: string | undefined;
-  for (;;) {
-    const page = await env.MEDIA.list({ prefix, cursor });
+  for await (const page of listPages(env, { prefix })) {
     for (const o of page.objects) {
       const ts = eventIdTimestamp(o.key.slice(prefix.length));
       if (!Number.isFinite(after) || !Number.isFinite(ts) || ts >= after) keys.push(o.key);
     }
-    if (!page.truncated) break;
-    cursor = page.cursor;
   }
   keys.sort();
   const out: JobEvent[] = [];
@@ -195,17 +191,6 @@ export function jobEventStream(
   });
 }
 
-async function readJson<T>(env: Env, key: string): Promise<T | null> {
-  const obj = await env.MEDIA.get(key);
-  if (!obj) return null;
-  try {
-    return (await obj.json()) as T;
-  } catch {
-    return null;
-  }
-}
-
-
 /** R12-10 (review 0012, F10): a stream that stops at `limit`, so the parser
  * reading it cannot buffer more. `onExceeded` records that the stop was the
  * cap and not a malformed body. */
@@ -240,129 +225,137 @@ export function cappedBody(
   });
 }
 
+/** POST /v1/jobs with the frozen v1 multipart body (v1 clients). The
+ * route above dispatches here; JSON creates go to `handleCreateJobV11`
+ * in uploads.ts. */
+async function handleCreateJobMultipart(c: Context<AppEnv>): Promise<Response> {
+  if (!c.env.PIPELINE) {
+    return c.json({ ok: false, error: "server_misconfigured" }, 500);
+  }
+  // R10-05 (F4): the daily cap precedes storage — a halted deployment
+  // creates nothing, and the ledger is untouched.
+  if (spendDisabled(c.env)) {
+    return c.json({ ok: false, error: "spend_disabled" }, 503);
+  }
+  let form: FormData;
+  let manifest: Manifest;
+  let files: Array<{ name: string; file: File; mediaType: string }>;
+  let totalBytes: number;
+  // R12-10 (review 0012, F10): bound the multipart stream before it is
+  // buffered. `formData()` reads to the end of the stream, so a 128 MB
+  // body exhausted the isolate before the size checks below could run.
+  // A declared length past the ceiling is refused outright; otherwise the
+  // stream itself stops at the cap, so the bound holds with or without a
+  // Content-Length header.
+  const maxBody = MAX_UPLOAD_BYTES + 1_048_576;
+  const declaredLength = Number(c.req.header("content-length") ?? NaN);
+  if (Number.isFinite(declaredLength) && declaredLength > maxBody) {
+    return c.json({ ok: false, error: "payload_too_large" }, 413);
+  }
+  let tooLarge = false;
+  try {
+    form = await new Response(
+      cappedBody(c.req.raw.body, maxBody, () => {
+        tooLarge = true;
+      }),
+      { headers: { "content-type": c.req.header("content-type") ?? "" } },
+    ).formData();
+    manifest = ManifestSchema.parse(JSON.parse(String(form.get("manifest"))));
+  } catch {
+    // A body past the cap can only fail to parse for its size.
+    return tooLarge
+      ? c.json({ ok: false, error: "payload_too_large" }, 413)
+      : c.json({ ok: false, error: "invalid_manifest" }, 400);
+  }
+  if (!manifest.consent.sendFramesToCloudAi) {
+    return c.json({ ok: false, error: "consent_required" }, 400);
+  }
+  // R10-11 (review 0010, F10): part names are validated against the
+  // manifest — the old loop silently dropped unknown and duplicate
+  // parts. These are client errors, not manifest problems, so they sit
+  // outside the parse catch and report their own 400s.
+  const allowed = new Set(
+    manifest.checkpoints.flatMap((k) => [
+      ...k.keyframes.map((f) => f.id),
+      ...(k.clip ? [k.clip.id] : []),
+    ]),
+  );
+  files = [];
+  totalBytes = 0;
+  const partSeen = new Set<string>();
+  for (const [name, v] of form.entries()) {
+    if (v instanceof File) {
+      if (!allowed.has(name)) {
+        return c.json({ ok: false, error: "unknown_file", file: name }, 400);
+      }
+      if (partSeen.has(name)) {
+        return c.json({ ok: false, error: "duplicate_file", file: name }, 400);
+      }
+      // R12-10 (F10): the part's declared type has to survive a look at the
+      // bytes, and the sniffed type is what gets stored. Checked here, before
+      // the spend reserve and before any write, so a mislabelled part can
+      // never leave a half-written job behind.
+      const head = new Uint8Array(await v.slice(0, 8).arrayBuffer());
+      const mediaType = acceptedMediaType(head, v.type);
+      if (mediaType === null) {
+        return c.json({ ok: false, error: "unsupported_media_type", file: name }, 415);
+      }
+      partSeen.add(name);
+      files.push({ name, file: v, mediaType });
+      totalBytes += v.size;
+    }
+  }
+  if (files.length > MAX_FILES) {
+    return c.json({ ok: false, error: "too_many_files" }, 413);
+  }
+  if (totalBytes > MAX_UPLOAD_BYTES) {
+    return c.json({ ok: false, error: "payload_too_large" }, 413);
+  }
+  // R10-05 (F4): reserve the job's worst case before any file lands —
+  // v1 carries no budget, so the hard ceiling is what a job can spend.
+  // Over the cap is 503; a contention storm is the handler's 500 —
+  // nothing was written.
+  const reserve = await reserveDailySpend(c.env, MAX_SAM_FRAMES);
+  if (!reserve.ok) {
+    return reserve.reason === "over_cap"
+      ? c.json({ ok: false, error: "daily_budget_exceeded" }, 503)
+      : c.json({ ok: false, error: "job_create_failed" }, 500);
+  }
+  // Storage/creation failures are 500s: the manifest above was valid,
+  // so reporting invalid_manifest here would mask an outage.
+  const jobId = crypto.randomUUID();
+  try {
+    for (const { name, file, mediaType } of files) {
+      await c.env.MEDIA.put(inputKey(jobId, name), await file.arrayBuffer(), {
+        httpMetadata: { contentType: mediaType },
+      });
+    }
+    await c.env.MEDIA.put(manifestKey(jobId), JSON.stringify(manifest));
+    // R10-01: bind the job to the creating install.
+    await writeJobOwner(c.env, jobId, c.get("deviceId"));
+    await putProgress(c.env, jobId, "queued");
+    await c.env.PIPELINE.create({ id: jobId, params: { jobId } });
+    return c.json({ ok: true, jobId }, 202);
+  } catch {
+    // No instance was created, so nothing will read the partial writes.
+    try {
+      await deletePrefix(c.env, jobsPrefix(jobId));
+    } catch {
+      // Best effort: an unreferenced job prefix is inert.
+    }
+    return c.json({ ok: false, error: "job_create_failed" }, 500);
+  }
+}
+
 export function registerJobsRoutes(app: Hono<AppEnv>): void {
   app.post("/v1/jobs", async (c) => {
-    if (!c.env.PIPELINE) {
-      return c.json({ ok: false, error: "server_misconfigured" }, 500);
-    }
     // W11-05: JSON bodies are v1.1 creates (uploadId/budget/idempotencyKey);
-    // the frozen v1 multipart path below is untouched for v1 clients.
+    // the frozen v1 multipart path is untouched for v1 clients. Both
+    // handlers check the PIPELINE binding, so the route only dispatches.
     if ((c.req.header("content-type") ?? "").includes("application/json")) {
       return handleCreateJobV11(c);
     }
-    // R10-05 (F4): the daily cap precedes storage — a halted deployment
-    // creates nothing, and the ledger is untouched.
-    if (spendDisabled(c.env)) {
-      return c.json({ ok: false, error: "spend_disabled" }, 503);
-    }
-    let form: FormData;
-    let manifest: Manifest;
-    let files: Array<{ name: string; file: File; mediaType: string }>;
-    let totalBytes: number;
-    // R12-10 (review 0012, F10): bound the multipart stream before it is
-    // buffered. `formData()` reads to the end of the stream, so a 128 MB
-    // body exhausted the isolate before the size checks below could run.
-    // A declared length past the ceiling is refused outright; otherwise the
-    // stream itself stops at the cap, so the bound holds with or without a
-    // Content-Length header.
-    const maxBody = MAX_TOTAL_BYTES + 1_048_576;
-    const declaredLength = Number(c.req.header("content-length") ?? NaN);
-    if (Number.isFinite(declaredLength) && declaredLength > maxBody) {
-      return c.json({ ok: false, error: "payload_too_large" }, 413);
-    }
-    let tooLarge = false;
-    try {
-      form = await new Response(
-        cappedBody(c.req.raw.body, maxBody, () => {
-          tooLarge = true;
-        }),
-        { headers: { "content-type": c.req.header("content-type") ?? "" } },
-      ).formData();
-      manifest = ManifestSchema.parse(JSON.parse(String(form.get("manifest"))));
-    } catch {
-      // A body past the cap can only fail to parse for its size.
-      return tooLarge
-        ? c.json({ ok: false, error: "payload_too_large" }, 413)
-        : c.json({ ok: false, error: "invalid_manifest" }, 400);
-    }
-    if (!manifest.consent.sendFramesToCloudAi) {
-      return c.json({ ok: false, error: "consent_required" }, 400);
-    }
-    // R10-11 (review 0010, F10): part names are validated against the
-    // manifest — the old loop silently dropped unknown and duplicate
-    // parts. These are client errors, not manifest problems, so they sit
-    // outside the parse catch and report their own 400s.
-    const allowed = new Set(
-      manifest.checkpoints.flatMap((k) => [
-        ...k.keyframes.map((f) => f.id),
-        ...(k.clip ? [k.clip.id] : []),
-      ]),
-    );
-    files = [];
-    totalBytes = 0;
-    const partSeen = new Set<string>();
-    for (const [name, v] of form.entries()) {
-      if (v instanceof File) {
-        if (!allowed.has(name)) {
-          return c.json({ ok: false, error: "unknown_file", file: name }, 400);
-        }
-        if (partSeen.has(name)) {
-          return c.json({ ok: false, error: "duplicate_file", file: name }, 400);
-        }
-        // R12-10 (F10): the part's declared type has to survive a look at the
-        // bytes, and the sniffed type is what gets stored. Checked here, before
-        // the spend reserve and before any write, so a mislabelled part can
-        // never leave a half-written job behind.
-        const head = new Uint8Array(await v.slice(0, 8).arrayBuffer());
-        const mediaType = acceptedMediaType(head, v.type);
-        if (mediaType === null) {
-          return c.json({ ok: false, error: "unsupported_media_type", file: name }, 415);
-        }
-        partSeen.add(name);
-        files.push({ name, file: v, mediaType });
-        totalBytes += v.size;
-      }
-    }
-    if (files.length > MAX_FILES) {
-      return c.json({ ok: false, error: "too_many_files" }, 413);
-    }
-    if (totalBytes > MAX_TOTAL_BYTES) {
-      return c.json({ ok: false, error: "payload_too_large" }, 413);
-    }
-    // R10-05 (F4): reserve the job's worst case before any file lands —
-    // v1 carries no budget, so the hard ceiling is what a job can spend.
-    // Over the cap is 503; a contention storm is the handler's 500 —
-    // nothing was written.
-    const reserve = await reserveDailySpend(c.env, MAX_SAM_FRAMES);
-    if (!reserve.ok) {
-      return reserve.reason === "over_cap"
-        ? c.json({ ok: false, error: "daily_budget_exceeded" }, 503)
-        : c.json({ ok: false, error: "job_create_failed" }, 500);
-    }
-    // Storage/creation failures are 500s: the manifest above was valid,
-    // so reporting invalid_manifest here would mask an outage.
-    const jobId = crypto.randomUUID();
-    try {
-      for (const { name, file, mediaType } of files) {
-        await c.env.MEDIA.put(inputKey(jobId, name), await file.arrayBuffer(), {
-          httpMetadata: { contentType: mediaType },
-        });
-      }
-      await c.env.MEDIA.put(manifestKey(jobId), JSON.stringify(manifest));
-      // R10-01: bind the job to the creating install.
-      await writeJobOwner(c.env, jobId, c.get("deviceId"));
-      await putProgress(c.env, jobId, "queued");
-      await c.env.PIPELINE.create({ id: jobId, params: { jobId } });
-      return c.json({ ok: true, jobId }, 202);
-    } catch {
-      // No instance was created, so nothing will read the partial writes.
-      try {
-        await deletePrefix(c.env, jobsPrefix(jobId));
-      } catch {
-        // Best effort: an unreferenced job prefix is inert.
-      }
-      return c.json({ ok: false, error: "job_create_failed" }, 500);
-    }
+    return handleCreateJobMultipart(c);
   });
 
   app.get("/v1/jobs/:id", async (c) => {

@@ -14,9 +14,10 @@
 // retry against the fresh value, and a contention storm fails closed
 // (job_create_failed, nothing written) rather than double-booking the
 // day. An existing but unreadable ledger fails closed the same way
-// (R12-06): a corrupt object must not reset the day's reservation. The reserve is a cap, not a bill — the governor is what bounds the
-// SAM calls a job actually makes; a reserve with no job is spent toward
-// the cap, never under it.
+// (R12-06): a corrupt object must not reset the day's reservation.
+// The reserve is a cap, not a bill — the governor is what bounds the SAM
+// calls a job actually makes; a reserve with no job is spent toward the
+// cap, never under it.
 //
 // SPEND_KILL_SWITCH=on rejects every create (503 spend_disabled) without
 // touching the ledger. Ops: docs/operations/spend.md.

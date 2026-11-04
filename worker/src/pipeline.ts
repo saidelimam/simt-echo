@@ -5,7 +5,7 @@ import type { Env } from "./index";
 import { JobResultSchema, ManifestSchema, type JobResult, type JobStage, type Manifest } from "./types";
 import { emitJobEvent, newEventId, putError, putProgress } from "./jobs";
 import { runScout, ScoutError, type ScoutResult } from "./scout";
-import { runGroundLens } from "./ground";
+import { runGroundLens } from "./samLens";
 import { emitStep, type StepRunner } from "./samLens";
 
 export interface PipelineParams {
