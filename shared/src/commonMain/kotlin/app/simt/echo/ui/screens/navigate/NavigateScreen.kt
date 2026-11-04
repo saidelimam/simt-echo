@@ -25,7 +25,9 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
@@ -48,7 +50,9 @@ import app.simt.echo.platform.CaptureScreen
 import app.simt.echo.platform.KeepScreenOn
 import app.simt.echo.platform.LiveUpdateDirector
 import app.simt.echo.platform.MotionSource
+import app.simt.echo.platform.cameraGateCopy
 import app.simt.echo.platform.cameraGraphFor
+import app.simt.echo.platform.rememberCameraPermissionState
 import app.simt.echo.platform.rememberCameraRecorder
 import app.simt.echo.platform.rememberCueOutput
 import app.simt.echo.platform.rememberHaptics
@@ -57,6 +61,7 @@ import app.simt.echo.platform.rememberNotificationPermissionRequest
 import app.simt.echo.platform.rememberOnline
 import app.simt.echo.platform.rememberWearNavSink
 import app.simt.echo.ui.components.CosmosBanner
+import app.simt.echo.ui.components.CosmosDeniedState
 import app.simt.echo.ui.components.CosmosEmptyState
 import app.simt.echo.ui.components.StatusChip
 import app.simt.echo.ui.components.oneDecimal
@@ -157,18 +162,39 @@ fun NavigateScreen(
     }
 
     if (config.cameraOverlayEnabled) {
-        NavigateOverlayBody(
-            nav = nav,
-            routes = routes,
-            routeId = routeId,
-            online = online,
-            legCount = viewModel.legCount,
-            researchMode = researchMode,
-            viewModel = viewModel,
-            camera = camera,
-            modifier = modifier,
-        )
-        return
+        // The overlay needs the camera, so its permission state is a screen,
+        // never a state painted beneath the HUD's scrim and pinned actions
+        // (review 0013 F5 follow-up). A refusal must not trap the walker:
+        // the secondary path drops to the sensor-only body.
+        val permission = rememberCameraPermissionState()
+        var sensorOnly by remember { mutableStateOf(false) }
+        val gateCopy = cameraGateCopy(permission.status)
+        if (gateCopy != null && !sensorOnly) {
+            CosmosDeniedState(
+                title = gateCopy.title,
+                body = gateCopy.body,
+                actionLabel = gateCopy.actionLabel,
+                onAction = if (gateCopy.opensSettings) permission.openSettings else permission.request,
+                secondaryLabel = "Continue without camera",
+                onSecondary = { sensorOnly = true },
+                modifier = modifier.fillMaxSize(),
+            )
+            return
+        }
+        if (!sensorOnly) {
+            NavigateOverlayBody(
+                nav = nav,
+                routes = routes,
+                routeId = routeId,
+                online = online,
+                legCount = viewModel.legCount,
+                researchMode = researchMode,
+                viewModel = viewModel,
+                camera = camera,
+                modifier = modifier,
+            )
+            return
+        }
     }
 
     // Overlay off: the Analysis-only graph still binds (no visible

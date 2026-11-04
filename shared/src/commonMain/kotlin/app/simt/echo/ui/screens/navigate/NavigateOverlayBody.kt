@@ -67,12 +67,9 @@ internal fun NavigateOverlayBody(
             progress01 = nav.progress01.toFloat(),
             legText = "Leg ${nav.legIndex + 1} of $legCount",
             scrimAlpha = overlayScrimAlpha(distanceM),
-            // The camera starts only behind the W4-03 permission gate.
-            preview = {
-                app.simt.echo.platform.CameraPermissionGate {
-                    camera.Preview(modifier = Modifier.fillMaxSize())
-                }
-            },
+            // NavigateScreen resolves permission before composing this body,
+            // so the HUD can never paint over a denial state.
+            preview = { camera.Preview(modifier = Modifier.fillMaxSize()) },
             actions = { NavigateActions(presentation = presentation, viewModel = viewModel) },
             arrow = {
                 InstrumentArrow(instrument = instrument, arrowRad = nav.arrowRad, color = accent)
