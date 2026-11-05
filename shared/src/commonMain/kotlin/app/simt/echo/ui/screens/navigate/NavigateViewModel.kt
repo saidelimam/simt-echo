@@ -184,6 +184,7 @@ class NavigateViewModel(
                                 reason = drained.reason,
                                 tNs = drained.tNs,
                             )
+                            if (drained.hasViewStrip) nav.onViewStrip(drained.viewStrip)
                         }
                     }
                     nav.onInput(NavInput.Motion(it))

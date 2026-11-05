@@ -4,6 +4,7 @@ import app.simt.echo.capture.CameraIntrinsics
 import app.simt.echo.capture.FrameConsumer
 import app.simt.echo.capture.FrameSample
 import app.simt.echo.capture.FrameTap
+import app.simt.echo.model.ViewStrip
 import kotlin.concurrent.Volatile
 import kotlin.math.abs
 import kotlin.math.atan2
@@ -40,6 +41,10 @@ class VisualMotionConsumer(
     private val pose = VisualFramePose()
     private val unavailable = VisualEgo()
     private val drained = VisualMotionFrame()
+    private val stripLevel = LumaView(ParallaxProfiler.LEVEL_WIDTH, ParallaxProfiler.LEVEL_HEIGHT)
+    private val stripCols = DoubleArray(ViewStrip.COLUMNS)
+    private val stripRows = DoubleArray(ViewStrip.ROWS)
+    private val stripBytes = ByteArray(ViewStrip.BYTES)
     private var hasDrained = false
     private var defaultIntrinsics: CameraIntrinsics? = null
     @Volatile private var running = false
@@ -141,8 +146,16 @@ class VisualMotionConsumer(
             hasUsableFrame = true
             lastUsableFrameNs = sample.tNs
         }
-        ring.publish(sample.tNs, ego, usable, usability.reason)
+        ring.publish(sample.tNs, ego, usable, usability.reason, viewStrip = extractViewStrip(sample.luma))
         onEgo?.invoke(ego, sample.tNs, usability.reason)
+    }
+
+    /** Reuses the 120x90 level and scratch; must stay allocation-free per frame. */
+    private fun extractViewStrip(luma: ByteArray): ByteArray? {
+        if (width != ParallaxProfiler.LEVEL_WIDTH * 2 || height != ParallaxProfiler.LEVEL_HEIGHT * 2) return null
+        if (luma.size != width * height) return null
+        stripLevel.reduceFrom(luma, width)
+        return ParallaxProfiler.extractViewStrip120x90(stripLevel.data, stripCols, stripRows, stripBytes)
     }
 
     private fun reject(tNs: Long, reason: VisualReason, usable: Double = 0.0) {

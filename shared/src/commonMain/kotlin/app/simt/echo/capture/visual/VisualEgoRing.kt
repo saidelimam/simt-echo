@@ -1,5 +1,6 @@
 package app.simt.echo.capture.visual
 
+import app.simt.echo.model.ViewStrip
 import kotlin.concurrent.Volatile
 
 /** SPSC overwrite ring. The producer never writes the consumer's cursor. */
@@ -22,6 +23,8 @@ class VisualEgoRing(val capacity: Int = 16) {
         @Volatile var hasFoe = false
         @Volatile var usability = 0.0
         @Volatile var reason = VisualReason.UNKNOWN.ordinal
+        @Volatile var hasViewStrip = false
+        val viewStrip = ByteArray(ViewStrip.BYTES)
     }
 
     private val slots = Array(capacity) { Slot() }
@@ -31,8 +34,15 @@ class VisualEgoRing(val capacity: Int = 16) {
     var dropped = 0L
         private set
 
-    fun publish(tNs: Long, ego: VisualEgo, usability01: Double, reason: VisualReason): Boolean {
+    fun publish(
+        tNs: Long,
+        ego: VisualEgo,
+        usability01: Double,
+        reason: VisualReason,
+        viewStrip: ByteArray? = null,
+    ): Boolean {
         if (tNs <= lastTimeNs) return false
+        require(viewStrip == null || viewStrip.size == ViewStrip.BYTES) { "view strip must be ${ViewStrip.BYTES} bytes" }
         val next = published + 1
         val slot = slots[((next - 1) % capacity).toInt()]
         slot.sequence = -next
@@ -48,6 +58,8 @@ class VisualEgoRing(val capacity: Int = 16) {
         slot.hasFoe = ego.hasFoe
         slot.usability = usability01
         slot.reason = reason.ordinal
+        slot.hasViewStrip = viewStrip != null
+        if (viewStrip != null) viewStrip.copyInto(slot.viewStrip)
         slot.sequence = next
         lastTimeNs = tNs
         published = next
@@ -80,9 +92,12 @@ class VisualEgoRing(val capacity: Int = 16) {
         ego.hasFoe = slot.hasFoe
         target.usability01 = slot.usability
         target.reason = VisualReason.entries[slot.reason]
+        target.hasViewStrip = slot.hasViewStrip
+        if (slot.hasViewStrip) slot.viewStrip.copyInto(target.viewStrip)
         if (slot.sequence != next) {
             ego.clear()
             target.tNs = 0L
+            target.hasViewStrip = false
             return false
         }
         consumed = next
