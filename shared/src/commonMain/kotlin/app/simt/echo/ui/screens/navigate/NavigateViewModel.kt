@@ -6,6 +6,7 @@ import app.simt.echo.capture.FrameTap
 import app.simt.echo.capture.visual.VisualMotionFrame
 import app.simt.echo.capture.visual.VisualMotionSource
 import app.simt.echo.capture.visual.VisualGateCounters
+import app.simt.echo.capture.visual.VisualScheduler
 import app.simt.echo.data.ConfigRepository
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.data.TrialRepository
@@ -41,6 +42,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.launch
+
+/** No step for this long is a standing walker, not a slow one. */
+private const val STANDING_NS = 2_000_000_000L
 
 /**
  * Navigate screen state (plan W2-06): the [NavUi] flow straight from the
@@ -104,17 +108,25 @@ class NavigateViewModel(
     /** Owned by the navigation collector, not an image or a UI snapshot. */
     var visualFrame: VisualMotionFrame? = null
         private set
+    private var lastMotionTNs = Long.MIN_VALUE
+    private var lastStepTNs = Long.MIN_VALUE
+    private var lastVisualIntervalNs = -1L
 
-    fun attachVisualTap(tap: FrameTap): Boolean =
-        (motion as? VisualMotionSource)?.attachVisual(
+    fun attachVisualTap(tap: FrameTap): Boolean {
+        lastVisualIntervalNs = -1L
+        val attached = (motion as? VisualMotionSource)?.attachVisual(
             tap,
             visualAssistRequested,
             // The step gate's ±1.2 s window needs a frame rate fast enough to
             // cover deferred candidates; 4 Hz gives five frames per window.
             app.simt.echo.capture.FrameRateGovernor.VISUAL_GATE_INTERVAL_NS,
         ) == true
+        if (attached) ui.value?.let(::updateVisualRate)
+        return attached
+    }
 
     fun detachVisualTap() {
+        lastVisualIntervalNs = -1L
         (motion as? VisualMotionSource)?.detachVisual()
     }
 
@@ -159,6 +171,8 @@ class NavigateViewModel(
         if (nav != null) {
             viewModelScope.launch {
                 motion.updates.collect {
+                    lastMotionTNs = it.tNs.coerceAtLeast(lastMotionTNs)
+                    if (it.isStep) lastStepTNs = it.tNs
                     walkedM = it.distanceM
                     if (it.isStep) {
                         val drained = (motion as? VisualMotionSource)?.drainVisual(it.tNs)
@@ -201,6 +215,7 @@ class NavigateViewModel(
                 nav.ui.collect { ui ->
                     if (ui != null) {
                         updateHeartbeat(ui)
+                        updateVisualRate(ui)
                         runCatching { wearNav(ui.toWearState()) }
                         runCatching {
                             liveUpdates?.updateNav(
@@ -214,6 +229,41 @@ class NavigateViewModel(
                 }
             }
         }
+    }
+
+    /** Applies the information-gain scheduler to the attached visual tap. */
+    private fun updateVisualRate(ui: NavUi) {
+        if (!visualAssistRequested) return
+        val route = route ?: return
+        val source = motion as? VisualMotionSource ?: return
+        val leg = route.legs.getOrNull(ui.legIndex)
+        val sM = if (leg == null) {
+            0.0
+        } else {
+            route.legs.take(ui.legIndex).sumOf { it.lengthM } + leg.lengthM * ui.progress01
+        }
+        val interval = VisualScheduler.intervalForRouteNs(
+            route = route,
+            sM = sM,
+            isStanding = isStanding(),
+            sigmaM = ui.uncertaintyM,
+            usability01 = source.usability01,
+            batterySaver = source.batterySaver,
+            // FrameTapSource owns thermal halting; applying it here as well
+            // would halve the same rate twice.
+            visualAssist = true,
+        )
+        if (interval != lastVisualIntervalNs) {
+            lastVisualIntervalNs = interval
+            source.setVisualInterval(interval)
+        }
+    }
+
+    private fun isStanding(): Boolean {
+        val lastStep = lastStepTNs
+        val lastMotion = lastMotionTNs
+        return lastStep == Long.MIN_VALUE ||
+            (lastMotion >= lastStep && lastMotion - lastStep >= STANDING_NS)
     }
 
     /**

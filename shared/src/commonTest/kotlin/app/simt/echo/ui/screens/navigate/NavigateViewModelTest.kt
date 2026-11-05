@@ -9,10 +9,12 @@ import app.simt.echo.capture.FrameTap
 import app.simt.echo.capture.visual.VisualGateCounters
 import app.simt.echo.capture.visual.VisualMotionFrame
 import app.simt.echo.capture.visual.VisualMotionSource
+import app.simt.echo.capture.visual.VisualScheduler
 import app.simt.echo.data.ConfigRepository
 import app.simt.echo.data.FileStore
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.data.TrialRepository
+import app.simt.echo.model.EchoConfig
 import app.simt.echo.model.TrialMode
 import app.simt.echo.nav.NavPhase
 import app.simt.echo.nav.NavWearState
@@ -69,10 +71,16 @@ class NavigateViewModelTest {
 
     private class CountingVisualMotion(private val inner: ReplayMotionSource) :
         MotionSource by inner, VisualMotionSource {
+        val intervals = mutableListOf<Long>()
         override val visualAssistActive = true
+        override val usability01 = 1.0
+        override var batterySaver = false
         override val gateCounters = VisualGateCounters(7, 3, 2, 1)
         override fun attachVisual(tap: FrameTap, enabled: Boolean, intervalNs: Long) = true
         override fun detachVisual() = Unit
+        override fun setVisualInterval(intervalNs: Long) {
+            intervals += intervalNs
+        }
         override fun drainVisual(tNs: Long): VisualMotionFrame? = null
     }
 
@@ -127,6 +135,59 @@ class NavigateViewModelTest {
         )
         // W13-09: the distance heartbeat ticks (and only ticks) in between.
         assertTrue(haptics.played.any { it == HapticPattern.TICK }, "no heartbeat ticks in ${haptics.played}")
+    }
+
+    @Test
+    fun visualSchedulerDrivesTheTapRate() = runTest(dispatcher) {
+        val haptics = FakeHaptics()
+        val source = CountingVisualMotion(
+            ReplayMotionSource(walkLog(listOf(5.0 to 0.0)), this),
+        )
+        val vm = NavigateViewModel(
+            Fixtures.L_ROUTE.routeId,
+            routesWithLRoute(),
+            source,
+            haptics,
+            config = EchoConfig(visualAssist = true),
+        ) {}
+        runCurrent()
+        vm.start()
+        vm.align()
+        advanceUntilIdle()
+
+        assertTrue(source.intervals.isNotEmpty(), "scheduler never updated the visual tap")
+        assertEquals(
+            VisualScheduler.INTERVAL_2_HZ_NS,
+            source.intervals.first(),
+            "a walker who has not stepped yet keeps the 2 Hz standing witness",
+        )
+        assertTrue(
+            source.intervals.contains(VisualScheduler.INTERVAL_1_HZ_NS),
+            "a straight low-σ walk must drop to the 1 Hz probe: ${source.intervals}",
+        )
+    }
+
+    @Test
+    fun batterySaverHalvesTheWalkingProbeRate() = runTest(dispatcher) {
+        val source = CountingVisualMotion(
+            ReplayMotionSource(walkLog(listOf(5.0 to 0.0)), this),
+        ).apply { batterySaver = true }
+        val vm = NavigateViewModel(
+            Fixtures.L_ROUTE.routeId,
+            routesWithLRoute(),
+            source,
+            FakeHaptics(),
+            config = EchoConfig(visualAssist = true),
+        ) {}
+        runCurrent()
+        vm.start()
+        vm.align()
+        advanceUntilIdle()
+
+        assertTrue(
+            source.intervals.contains(VisualScheduler.INTERVAL_HALF_HZ_NS),
+            "Battery Saver must halve the 1 Hz walking probe: ${source.intervals}",
+        )
     }
 
     @Test
