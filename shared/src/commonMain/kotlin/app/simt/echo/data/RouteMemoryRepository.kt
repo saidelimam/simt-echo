@@ -75,6 +75,17 @@ class RouteMemoryRepository(private val store: FileStore) {
         get(routeId, nowMs)?.entries?.map { it.toViewStrip() }.orEmpty()
 
     /**
+     * Encodes [strip] observed at [atDistanceM] into a storable overlay entry,
+     * quantised to the same waypoint grid [recordFollow] prunes on. Returns
+     * null for a position or a strip that cannot be stored.
+     */
+    fun encodeObservedStrip(atDistanceM: Double, strip: ByteArray): ViewStrip? {
+        if (!atDistanceM.isFinite() || atDistanceM < 0.0) return null
+        if (strip.size != ViewStrip.BYTES) return null
+        return ViewStrip(atDistanceM = canonicalWaypointM(atDistanceM), dataB64 = Base64.encode(strip))
+    }
+
+    /**
      * Records follower-captured [observedStrips] after a follow completes.
      *
      * Gate (§8 W18-02): stores only when `arrivalSigmaM < 2.0` AND

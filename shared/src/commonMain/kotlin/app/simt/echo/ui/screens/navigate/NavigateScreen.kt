@@ -39,6 +39,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import app.simt.echo.data.ConfigRepository
+import app.simt.echo.data.RouteMemoryRepository
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.data.TrialRepository
 import app.simt.echo.capture.visual.VisualGateCounters
@@ -114,6 +115,8 @@ fun NavigateScreen(
      * must not touch the stored posterior (the practice tour).
      */
     configs: ConfigRepository? = null,
+    /** Follower-side route memory (W18-02); null for walks that store none. */
+    routeMemory: RouteMemoryRepository? = null,
     /** Live Updates (W13-10); null for walks that post no notification. */
     liveUpdates: LiveUpdateDirector? = null,
 ) {
@@ -131,7 +134,7 @@ fun NavigateScreen(
         key = routeId,
         factory = viewModelFactory {
             addInitializer(NavigateViewModel::class) {
-                NavigateViewModel(routeId, routes, motion, haptics, config, trials, device, baselineMode, configs = configs, wearNav = wearNav, cues = cues, liveUpdates = liveUpdates, onArrived = onArrived, ephemeralRoute = ephemeralRoute)
+                NavigateViewModel(routeId, routes, motion, haptics, config, trials, device, baselineMode, configs = configs, routeMemory = routeMemory, wearNav = wearNav, cues = cues, liveUpdates = liveUpdates, onArrived = onArrived, ephemeralRoute = ephemeralRoute)
             }
         },
     )
