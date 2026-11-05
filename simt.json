@@ -28,8 +28,8 @@
       "name": "simt-commands",
       "from": "simt-dev/skills/simt-commands",
       "variant": null,
-      "bytes": 6689,
-      "sha": "787c04379380"
+      "bytes": 9713,
+      "sha": "9c118258ebe6"
     }
   ],
   "profiles": [],
