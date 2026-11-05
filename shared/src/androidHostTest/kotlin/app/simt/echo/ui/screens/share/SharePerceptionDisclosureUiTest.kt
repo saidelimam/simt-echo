@@ -6,6 +6,7 @@ import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -24,6 +25,7 @@ import app.simt.echo.platform.PeerTransport
 import app.simt.echo.transfer.FILE_PERCEPTION_OPT_IN_LABEL
 import app.simt.echo.transfer.PERCEPTION_DISCLOSURE
 import app.simt.echo.transfer.TransferService
+import app.simt.echo.ui.copy.PairingCopy
 import app.simt.echo.ui.theme.EchoTheme
 import okio.FileSystem
 import okio.Path
@@ -130,5 +132,18 @@ class SharePerceptionDisclosureUiTest {
         compose.onNodeWithText("Share as file").performScrollTo().performClick()
         compose.onNodeWithText("Share anyway").performScrollTo().assertIsDisplayed()
         compose.onAllNodesWithTag(ShareFilePerceptionTag).assertCountEquals(0)
+    }
+
+    @Test
+    fun shareAsFileTriggerIsHiddenWhileTheWarningCardIsOpen() {
+        // With the card on screen the button under it re-fired a no-op
+        // (fileWarning was already true), so the trigger must go away and
+        // come back when the card is dismissed.
+        showShare(Fixtures.L_ROUTE)
+        compose.onNodeWithText(PairingCopy.SHARE_AS_FILE).performScrollTo().performClick()
+        compose.onNodeWithText("Share as file?").performScrollTo().assertIsDisplayed()
+        compose.onAllNodesWithText(PairingCopy.SHARE_AS_FILE, substring = false).assertCountEquals(0)
+        compose.onNodeWithText("Cancel").performScrollTo().performClick()
+        compose.onNodeWithText(PairingCopy.SHARE_AS_FILE).performScrollTo().assertIsDisplayed()
     }
 }

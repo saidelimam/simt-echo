@@ -255,7 +255,9 @@ fun ShareScreen(
         if (ui.fileShared) {
             StatusChip(text = "File shared ✓")
         }
-        if (!ui.fileShared) {
+        // The trigger hides while the warning card is open: re-firing it
+        // would just re-raise the card that is already on screen.
+        if (!ui.fileShared && !ui.fileWarning) {
             CosmosSecondaryButton(
                 label = PairingCopy.SHARE_AS_FILE,
                 onClick = viewModel::requestFileShare,
