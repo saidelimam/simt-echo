@@ -26,17 +26,21 @@ behaviour or dishonest state; **Low** — hygiene. Critical and High BLOCK.
 
 | id | state | slice | tier | lane | depends on | evidence |
 |---|---|---|---|---|---|---|
-| R15-01 | Queued | Realistic stationary/walking harness: `SimWorld` temporal noise + pitch blur, hand-hold kinematics driving camera *and* IMU, frame latency, 8/4/2 Hz; red on HEAD | T (S) | test | — | |
-| R15-02 | Queued | F1 confidence ≠ usability: drop angular-rate "stability" from usability and ego confidence, stop double-counting texture, publish `expansionSigmaPerSec` | S | visual | R15-01 | |
-| R15-03 | Queued | F3 gate decision rule: tri-state MOVING/STILL/UNKNOWN on window-mean **signed** expansion vs its standard error; no `abs`, no single-sample pass | S | gait | R15-02 | |
-| R15-04 | Queued | F2 deferred verdict + rejected frames are evidence: hold a candidate until a post-candidate frame lands (≤ 0.6 s), explicit fail-open policy, `unwitnessed` counter | S | gait | R15-03 | |
-| R15-05 | Queued | F4 single-writer engine: visual ego reaches `PdrEngine` through an SPSC inbox drained on the IMU thread; monotonic update time | T (S) | gait | R15-04 | |
-| R15-06 | Queued | F5 witness-rate floor: thermal MODERATE must not take the gate below 4 Hz (or widen the window); scheduler may never pause the witness for "standing" | T | visual | R15-04 | |
-| R15-07 | Queued | F7 missed-step suspects: same evidence rule as R15-03, quadrature σ in LINEAR, reset at anchors | T | nav | R15-03 | |
-| R15-08 | Queued | F8 honest state + telemetry: recency-based `visualAssistActive`, gate counters on the trial record and research HUD | T | nav | R15-04 | |
+| R15-01 | Complete | Realistic stationary/walking harness: `SimWorld` temporal noise + pitch blur, hand-hold kinematics driving camera *and* IMU, frame latency, 8/4/2 Hz; red on HEAD | T (S) | test | — | 436ed86 |
+| R15-02 | Complete | F1 confidence ≠ usability: drop angular-rate "stability" from usability and ego confidence, stop double-counting texture, publish `expansionSigmaPerSec` | S | visual | R15-01 | df0601a |
+| R15-03 | Complete | F3 gate decision rule: tri-state MOVING/STILL/UNKNOWN on window-mean **signed** expansion vs its standard error; no `abs`, no single-sample pass | S | gait | R15-02 | 9f81e20 |
+| R15-04 | Complete | F2 deferred verdict + rejected frames are evidence: hold a candidate until a post-candidate frame lands (≤ 0.6 s), explicit fail-open policy, `unwitnessed` counter | S | gait | R15-03 | 0e2bb44 |
+| R15-05 | Complete | F4 single-writer engine: visual ego reaches `PdrEngine` through an SPSC inbox drained on the IMU thread; monotonic update time | T (S) | gait | R15-04 | 16ed508 |
+| R15-06 | Complete | F5 witness-rate floor: thermal MODERATE must not take the gate below 4 Hz (or widen the window); scheduler may never pause the witness for "standing" | T | visual | R15-04 | d5fa079 |
+| R15-07 | Complete | F7 missed-step suspects: same evidence rule as R15-03, quadrature σ in LINEAR, reset at anchors | T | nav | R15-03 | 47b2197 |
+| R15-08 | Complete | F8 honest state + telemetry: recency-based `visualAssistActive`, gate counters on the trial record and research HUD | T | nav | R15-04 | 7e387a7 |
 | R15-09 | Complete | F9 tracker honesty: W17-03 ViewFix, W18-02 route memory, W18-03 scheduler are Complete but unwired — reopen or wire | L | plan | — | W17-03 db6d588 · W18-02 8589099 · W18-03 909a4d6 |
-| R15-10 | Decision | F10 IMU-side defence in depth: walking-onset confirmation + peak-to-valley amplitude (changes visual-off behaviour — owner decision) | T | gait | R15-05 | |
+| R15-10 | Complete | F10 IMU-side defence in depth: walking-onset confirmation + peak-to-valley amplitude (changes visual-off behaviour — owner decision) | T | gait | R15-05 | 377e994 |
 | R15-11 | Queued | Device gate: stationary/bobbing/walking protocol on two named phones (§4) | T (V) | device | R15-01…R15-08 | |
+
+R15-11 is the only open slice: no device was driven, so the verdict stays
+**BLOCK** until its two-phone evidence lands. R15-01…R15-10 are complete with
+the SHAs above.
 
 ---
 
@@ -150,10 +154,11 @@ keeps real steps only because it abstains.
 - `FrameRateGovernor.shouldEmit` doubles the interval at MODERATE
   (`FrameTap.kt:144-152`): Navigate's `VISUAL_GATE_INTERVAL_NS` (250 ms,
   `FrameTap.kt:176`) becomes 500 ms and the ±0.4 s window is often empty (row E).
-- `VisualScheduler` (unwired today, F9) returns `OFF_INTERVAL_NS` for
-  `isStanding` (`VisualScheduler.kt:11-12`) — wiring it as designed would switch
-  the witness off precisely when the gate must veto, and "standing" inferred
-  from step absence is circular when phantom steps are the problem.
+- `VisualScheduler` returned `OFF_INTERVAL_NS` for `isStanding`
+  (`VisualScheduler.kt:11-12`) — wiring it as designed would have switched the
+  witness off precisely when the gate must veto, and "standing" inferred from
+  step absence is circular when phantom steps are the problem. R15-06 capped
+  standing at 2 Hz before R15-09 wired the scheduler.
 
 ### F6 — Tests prove only the ideal case (High → R15-01)
 
