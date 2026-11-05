@@ -16,6 +16,7 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
@@ -79,6 +80,25 @@ class VisualMotionConsumerTest {
         assertEquals(0.8, target.usability01)
         assertEquals(VisualReason.NONE, target.reason)
         assertEquals(0L, ring.dropped)
+    }
+
+    @Test
+    fun drainedFrameCarriesTheLatestLiveViewStrip() {
+        val world = world()
+        val consumer = VisualMotionConsumer(TestTap(), TestInput(), intervalNs = INTERVAL_NS)
+        assertTrue(consumer.start())
+        val first = sample(world, START, START_NS)
+        val second = sample(world, START.copy(y = START.y + 0.04), START_NS + INTERVAL_NS)
+        consumer.onFrame(first)
+        consumer.onFrame(second)
+
+        val frame = assertNotNull(consumer.drain(second.tNs))
+        assertTrue(frame.hasViewStrip, "a processed frame must carry its view strip for W17-03")
+        assertContentEquals(
+            ParallaxProfiler.extractViewStripFrom240x180(second.luma),
+            frame.viewStrip,
+        )
+        consumer.stop()
     }
 
     @Test

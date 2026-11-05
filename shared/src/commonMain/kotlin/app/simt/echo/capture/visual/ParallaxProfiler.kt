@@ -324,8 +324,10 @@ class ParallaxProfiler(
             luma120x90: ByteArray,
             colScratch: DoubleArray = DoubleArray(ViewStrip.COLUMNS),
             rowScratch: DoubleArray = DoubleArray(ViewStrip.ROWS),
+            out: ByteArray = ByteArray(ViewStrip.BYTES),
         ): ByteArray {
             require(luma120x90.size == LEVEL_WIDTH * LEVEL_HEIGHT) { "need 120x90 luma plane" }
+            require(out.size == ViewStrip.BYTES) { "need a ${ViewStrip.BYTES}-byte strip output" }
             val bandHeight = BAND_BOTTOM - BAND_TOP
             // 64 columns spanning x in [4, 116)
             val colSpan = LEVEL_WIDTH - 8
@@ -365,7 +367,6 @@ class ParallaxProfiler(
                 rowScratch[r] = if (count > 0) sum / count else 0.0
             }
 
-            val out = ByteArray(ViewStrip.BYTES)
             normaliseAndQuantise(colScratch, ViewStrip.COLUMNS, out, 0)
             normaliseAndQuantise(rowScratch, ViewStrip.ROWS, out, ViewStrip.COLUMNS)
             return out
