@@ -8,6 +8,7 @@ import app.simt.echo.capture.visual.VisualMotionSource
 import app.simt.echo.capture.visual.VisualGateCounters
 import app.simt.echo.capture.visual.VisualScheduler
 import app.simt.echo.data.ConfigRepository
+import app.simt.echo.data.RouteMemoryRepository
 import app.simt.echo.data.RouteRepository
 import app.simt.echo.data.TrialRepository
 import app.simt.echo.model.DriftMarker
@@ -15,6 +16,7 @@ import app.simt.echo.model.EchoConfig
 import app.simt.echo.model.EchoRoute as SavedRoute
 import app.simt.echo.model.Trial
 import app.simt.echo.model.TrialMode
+import app.simt.echo.model.ViewStrip
 import app.simt.echo.nav.NavEvent
 import app.simt.echo.nav.NavInput
 import app.simt.echo.nav.NavPhase
@@ -22,6 +24,7 @@ import app.simt.echo.nav.NavUi
 import app.simt.echo.nav.NavWearState
 import app.simt.echo.nav.Navigator
 import app.simt.echo.nav.endedWearState
+import app.simt.echo.nav.ghost.Observation
 import app.simt.echo.nav.toWearState
 import app.simt.echo.platform.CueOutput
 import app.simt.echo.platform.DistanceHeartbeat
@@ -45,6 +48,9 @@ import kotlinx.coroutines.launch
 
 /** No step for this long is a standing walker, not a slow one. */
 private const val STANDING_NS = 2_000_000_000L
+
+/** A ViewFix below this confidence never lights the lock, so it is never stored. */
+private const val VISUAL_FIX_MIN_CONFIDENCE = 0.5
 
 /**
  * Navigate screen state (plan W2-06): the [NavUi] flow straight from the
@@ -92,6 +98,12 @@ class NavigateViewModel(
      */
     private val liveUpdates: LiveUpdateDirector? = null,
     /**
+     * Follower-side route memory (plan W18-02): its stored strips join the
+     * Navigator's ViewFix candidates, and a successful follow stores the
+     * walker's own strips back. Null for walks that store none.
+     */
+    private val routeMemory: RouteMemoryRepository? = null,
+    /**
      * Ephemeral route (W13-13 practice tour): used directly, never read
      * from nor written to the route store. The tour replays a bundled
      * fixture walk through this same instrument with a null trial sink,
@@ -102,7 +114,14 @@ class NavigateViewModel(
 ) : ViewModel() {
 
     private val route = ephemeralRoute ?: routes.get(routeId)
-    private val navigator = route?.let { Navigator(it, config) }
+    /** Route memory belongs to saved walks only; the practice tour writes nothing. */
+    private val routeMemoryEnabled = routeMemory != null && ephemeralRoute == null
+    private val overlayStrips = if (routeMemoryEnabled) {
+        routeMemory?.loadOverlayStrips(routeId, nowMs()).orEmpty()
+    } else {
+        emptyList()
+    }
+    private val navigator = route?.let { Navigator(it, config, overlayStrips = overlayStrips) }
     private val visualEnabled = config.visualAssist && !baselineMode && navigator != null
     val visualAssistRequested: Boolean get() = visualEnabled && motion is VisualMotionSource
     /** Owned by the navigation collector, not an image or a UI snapshot. */
@@ -111,6 +130,11 @@ class NavigateViewModel(
     private var lastMotionTNs = Long.MIN_VALUE
     private var lastStepTNs = Long.MIN_VALUE
     private var lastVisualIntervalNs = -1L
+    // W18-02 gate inputs: the honest source lock sampled per step, and the
+    // follower's own strips at ViewFix-confirmed positions.
+    private var visualSteps = 0
+    private var visuallyLockedSteps = 0
+    private val observedStrips = LinkedHashMap<Double, ViewStrip>()
 
     fun attachVisualTap(tap: FrameTap): Boolean {
         lastVisualIntervalNs = -1L
@@ -175,7 +199,8 @@ class NavigateViewModel(
                     if (it.isStep) lastStepTNs = it.tNs
                     walkedM = it.distanceM
                     if (it.isStep) {
-                        val drained = (motion as? VisualMotionSource)?.drainVisual(it.tNs)
+                        val visual = motion as? VisualMotionSource
+                        val drained = visual?.drainVisual(it.tNs)
                         visualFrame = drained
                         if (drained != null) {
                             nav.onVisualEgo(
@@ -184,7 +209,14 @@ class NavigateViewModel(
                                 reason = drained.reason,
                                 tNs = drained.tNs,
                             )
-                            if (drained.hasViewStrip) nav.onViewStrip(drained.viewStrip)
+                            if (drained.hasViewStrip) {
+                                val fix = nav.onViewStrip(drained.viewStrip)
+                                if (fix != null) rememberObservedStrip(fix, drained.viewStrip)
+                            }
+                        }
+                        if (visualAssistRequested) {
+                            visualSteps++
+                            if (visual?.visualAssistActive == true) visuallyLockedSteps++
                         }
                     }
                     nav.onInput(NavInput.Motion(it))
@@ -207,6 +239,7 @@ class NavigateViewModel(
                             if (!arrivedFired) {
                                 arrivedFired = true
                                 recordTrial()
+                                recordRouteMemory()
                                 onArrived(routeId)
                             }
                     }
@@ -330,6 +363,42 @@ class NavigateViewModel(
                 visualGateSuspects = visualGateCounters.suspects,
                 markers = markers.toList(),
             ),
+        )
+    }
+
+    /**
+     * W18-02: a ViewFix that cleared its gates is a confirmed place on this
+     * route, so keep the follower's own strip there. One strip per waypoint
+     * (the repository's own 0.5 m quantum), so repeated fixes replace rather
+     * than duplicate.
+     */
+    private fun rememberObservedStrip(fix: Observation.ViewFix, strip: ByteArray) {
+        if (!routeMemoryEnabled) return
+        if (!fix.confidence01.isFinite() || fix.confidence01 < VISUAL_FIX_MIN_CONFIDENCE) return
+        val stored = routeMemory?.encodeObservedStrip(fix.nodeS + fix.dSM, strip) ?: return
+        observedStrips[stored.atDistanceM] = stored
+    }
+
+    /**
+     * W18-02: hand the finished walk to route memory. The repository owns the
+     * gate (arrival σ < 2 m and visual lock ≥ 60 %), so a walk that did not
+     * earn it stores nothing.
+     */
+    private fun recordRouteMemory() {
+        if (!routeMemoryEnabled || observedStrips.isEmpty()) return
+        val saved = route ?: return
+        val arrivalSigmaM = ui.value?.uncertaintyM ?: return
+        val lockRatio01 = if (visualSteps > 0) {
+            visuallyLockedSteps.toDouble() / visualSteps
+        } else {
+            0.0
+        }
+        routeMemory?.recordFollow(
+            route = saved,
+            arrivalSigmaM = arrivalSigmaM,
+            visualLockRatio01 = lockRatio01,
+            observedStrips = observedStrips.values.toList(),
+            nowMs = nowMs(),
         )
     }
 

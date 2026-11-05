@@ -284,6 +284,7 @@ fun EchoNavHost(
                 baselineMode = graph.configRepository.get().baselineMode,
                 motionSource = motion,
                 configs = graph.configRepository,
+                routeMemory = graph.routeMemoryRepository,
                 liveUpdates = graph.liveUpdates,
             )
         }
