@@ -363,4 +363,8 @@ Return `BLOCK` when:
 The last two are complementary, not alternatives. A reviewer that checks only one of them
 misses half of the failure they exist to catch.
 
+## Disclosure
+
+- simt-commands — Command reference for simt-dev: which commands are mutating vs read-only, and a scenario-to-command mapping for the agent.
+
 <!-- simt:end -->

@@ -23,7 +23,15 @@
     "preCommit": [],
     "prePush": []
   },
-  "localSkills": [],
+  "localSkills": [
+    {
+      "name": "simt-commands",
+      "from": "simt-dev/skills/simt-commands",
+      "variant": null,
+      "bytes": 6689,
+      "sha": "787c04379380"
+    }
+  ],
   "profiles": [],
   "substitutions": {},
   "packs": [],
@@ -32,6 +40,6 @@
   ],
   "projection": {
     "simtDevSha": "cadbf6fb6c388f2f81fedab31b78d4e5e240ead2",
-    "version": "0.9.0"
+    "version": "0.10.0"
   }
 }
