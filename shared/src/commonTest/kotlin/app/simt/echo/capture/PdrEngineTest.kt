@@ -10,6 +10,7 @@ import kotlin.math.PI
 import kotlin.math.sin
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /** §6.1/§6.2 gates: heading matrices, the synthetic walk, yaw wrap. */
@@ -182,12 +183,83 @@ class PdrEngineTest {
         }
     }
 
+    @Test
+    fun singleOnsetCandidateDoesNotCountUntilASecondFollows() = runTest {
+        val engine = PdrEngine()
+        engine.start()
+        val collected = mutableListOf<app.simt.echo.platform.MotionUpdate>()
+        val job = launch { engine.updates.collect { collected += it } }
+        runCurrent()
+        feedBobbingTicks(engine, ticks = 30) // one down-crossing at ~0.25 s
+        feedStill(engine, seconds = 1, startNs = 700_000_000L)
+        runCurrent()
+        job.cancel()
+        assertTrue(collected.none { it.isStep }, "a lone onset candidate must not become a step")
+    }
+
+    @Test
+    fun onsetPairCreditsBothCandidates() = runTest {
+        val engine = PdrEngine()
+        engine.start()
+        val collected = mutableListOf<app.simt.echo.platform.MotionUpdate>()
+        val job = launch { engine.updates.collect { collected += it } }
+        runCurrent()
+        feedBobbingTicks(engine, ticks = 50) // down-crossings at ~0.25 s and ~0.75 s
+        feedStill(engine, seconds = 1, startNs = 1_000_000_000L)
+        runCurrent()
+        job.cancel()
+        assertEquals(2, collected.count { it.isStep })
+    }
+
+    @Test
+    fun lateSecondCandidateStartsANewOnset() = runTest {
+        val engine = PdrEngine()
+        engine.start()
+        val collected = mutableListOf<app.simt.echo.platform.MotionUpdate>()
+        val job = launch { engine.updates.collect { collected += it } }
+        runCurrent()
+        feedBobbingTicks(engine, ticks = 30)
+        feedStill(engine, seconds = 1, startNs = 700_000_000L)
+        feedBobbingTicks(engine, ticks = 30, startNs = 2_200_000_000L)
+        runCurrent()
+        job.cancel()
+        assertTrue(collected.none { it.isStep }, "a second candidate outside 1.2 s must not close the onset")
+    }
+
+    @Test
+    fun longGapOnsetCreditsBothCandidates() = runTest {
+        val engine = PdrEngine()
+        engine.start()
+        val collected = mutableListOf<app.simt.echo.platform.MotionUpdate>()
+        val job = launch { engine.updates.collect { collected += it } }
+        runCurrent()
+        feedBobbing(engine, seconds = 5)
+        feedStill(engine, seconds = 3, startNs = 5_000_000_000L)
+        feedBobbingTicks(engine, ticks = 50, startNs = 8_000_000_000L)
+        runCurrent()
+        job.cancel()
+        assertEquals(12, collected.count { it.isStep })
+    }
+
+    @Test
+    fun peakToValleyFloorRejectsShallowCandidate() {
+        val engine = PdrEngine()
+        assertFalse(engine.hasWalkingAmplitude(amax = 1.0, amin = -0.1))
+        assertFalse(engine.hasWalkingAmplitude(amax = 0.8, amin = -0.5))
+        assertTrue(engine.hasWalkingAmplitude(amax = 1.3, amin = -0.1))
+    }
+
     private fun feedBobbing(engine: PdrEngine, seconds: Int) {
+        feedBobbingTicks(engine, ticks = 50 * seconds)
+    }
+
+    private fun feedBobbingTicks(engine: PdrEngine, ticks: Int, startNs: Long = 0L) {
         val hz = 50
-        for (i in 0 until hz * seconds) {
-            val tSec = i.toDouble() / hz
+        for (i in 0 until ticks) {
+            val tNs = startNs + i * 20_000_000L
+            val tSec = tNs / 1_000_000_000.0
             val magnitude = 9.81 + 2.0 * sin(2.0 * PI * 2.0 * tSec)
-            engine.onAccelerometer(ImuSample((tSec * 1_000_000_000).toLong(), 0.0, 0.0, magnitude))
+            engine.onAccelerometer(ImuSample(tNs, 0.0, 0.0, magnitude))
         }
     }
 

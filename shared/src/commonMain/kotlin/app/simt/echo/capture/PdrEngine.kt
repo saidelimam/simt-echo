@@ -100,9 +100,17 @@ class PdrEngine(
         var hadPrior = false
     }
 
+    private class OnsetCandidate(
+        val tNs: Long,
+        val lengthM: Double,
+        val priorLastStepNs: Long?,
+        val hadPrior: Boolean,
+    )
+
     private val pendingSteps = Array(PENDING_CAPACITY) { PendingStep() }
     private var pendingHead = 0
     private var pendingCount = 0
+    private var onsetPending: OnsetCandidate? = null
 
     private val visualInbox = VisualEgoInbox(VISUAL_INBOX_CAPACITY)
     private val visualSample = VisualEgoInbox.Sample()
@@ -130,6 +138,7 @@ class PdrEngine(
         stepGate.reset()
         pendingHead = 0
         pendingCount = 0
+        onsetPending = null
         visualInbox.reset()
         lastEmittedNs = Long.MIN_VALUE
         running = true
@@ -232,44 +241,85 @@ class PdrEngine(
         if (signal > amax) amax = signal
         if (signal < amin) amin = signal
 
-        val crossedDown = prevSignal > 0.0 && signal <= 0.0
-        if (!crossedDown || amax <= 0.9) return
+        if (prevSignal <= 0.0 || signal > 0.0) return
+        val range = (amax - amin).coerceAtLeast(0.0)
+        if (!hasWalkingAmplitude(amax, amin)) {
+            resetStepWindow()
+            return
+        }
 
+        val candidate = OnsetCandidate(
+            tNs = tNs,
+            lengthM = stepLength(range),
+            priorLastStepNs = lastStepNs,
+            hadPrior = lastStepNs != null,
+        )
         val last = lastStepNs
-        val dtMs = if (last == null) null else (tNs - last) / 1_000_000L
-        when {
-            dtMs == null -> acceptStep(tNs)
-            dtMs > 2_000L -> {
-                // Stationary gap: reset the window, do not count a step.
-                amin = signal
-                amax = signal
-                lastStepNs = tNs
-            }
-            dtMs >= 280L -> acceptStep(tNs)
-            else -> Unit // too soon after the previous step: shake, ignore
+        if (onsetPending != null || last == null || tNs - last > LONG_GAP_NS) {
+            confirmOnset(candidate)
+        } else if (tNs - last >= MIN_STEP_SPACING_NS) {
+            acceptStep(candidate)
         }
     }
 
-    private fun acceptStep(tNs: Long) {
-        val range = (amax - amin).coerceAtLeast(0.0)
-        val length = (stepK * range.pow(0.25)).coerceIn(0.35, 0.95)
-        val prior = lastStepNs
-        val priorExists = prior != null
-        lastStepNs = tNs
+    /** A walking candidate needs a real peak above the candidate floor and a deep valley. */
+    internal fun hasWalkingAmplitude(amax: Double, amin: Double): Boolean =
+        amax > MIN_PEAK && amax - amin >= MIN_PEAK_TO_VALLEY
+
+    private fun confirmOnset(candidate: OnsetCandidate) {
+        val pending = onsetPending
+        if (pending == null) {
+            onsetPending = candidate
+            resetStepWindow()
+            return
+        }
+        val dt = candidate.tNs - pending.tNs
+        when {
+            dt < MIN_ONSET_GAP_NS -> resetStepWindow()
+            dt <= MAX_ONSET_GAP_NS -> {
+                onsetPending = null
+                acceptStep(pending)
+                acceptStep(
+                    OnsetCandidate(
+                        tNs = candidate.tNs,
+                        lengthM = candidate.lengthM,
+                        priorLastStepNs = pending.tNs,
+                        hadPrior = true,
+                    ),
+                )
+            }
+            else -> {
+                onsetPending = candidate
+                resetStepWindow()
+            }
+        }
+    }
+
+    private fun acceptStep(candidate: OnsetCandidate) {
+        val prior = candidate.priorLastStepNs
+        lastStepNs = candidate.tNs
         amax = signal
         amin = signal
         if (!visualAssist) {
-            commitStep(tNs, length)
+            commitStep(candidate.tNs, candidate.lengthM)
             return
         }
-        if (pendingCount == PENDING_CAPACITY) resolvePending(tNs, force = true)
+        if (pendingCount == PENDING_CAPACITY) resolvePending(candidate.tNs, force = true)
         val index = (pendingHead + pendingCount) % PENDING_CAPACITY
         val pending = pendingSteps[index]
-        pending.tNs = tNs
-        pending.lengthM = length
-        pending.priorLastStepNs = prior ?: tNs
-        pending.hadPrior = priorExists
+        pending.tNs = candidate.tNs
+        pending.lengthM = candidate.lengthM
+        pending.priorLastStepNs = prior ?: candidate.tNs
+        pending.hadPrior = candidate.hadPrior
         pendingCount++
+    }
+
+    private fun stepLength(range: Double): Double =
+        (stepK * range.pow(0.25)).coerceIn(0.35, 0.95)
+
+    private fun resetStepWindow() {
+        amax = signal
+        amin = signal
     }
 
     private fun commitStep(tNs: Long, lengthM: Double) {
@@ -348,6 +398,12 @@ class PdrEngine(
     private companion object {
         const val SOURCE = "echo_builtin_pdr"
         const val GRAVITY = 9.81
+        const val MIN_PEAK = 0.9
+        const val MIN_PEAK_TO_VALLEY = 1.2
+        const val MIN_STEP_SPACING_NS = 280_000_000L
+        const val LONG_GAP_NS = 2_000_000_000L
+        const val MIN_ONSET_GAP_NS = 300_000_000L
+        const val MAX_ONSET_GAP_NS = 1_200_000_000L
         const val PENDING_CAPACITY = 4
         const val POST_CANDIDATE_NS = 150_000_000L
         const val VERDICT_DEADLINE_NS = 600_000_000L
