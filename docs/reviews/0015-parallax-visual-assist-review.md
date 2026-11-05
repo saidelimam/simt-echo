@@ -36,7 +36,7 @@ behaviour or dishonest state; **Low** — hygiene. Critical and High BLOCK.
 | R15-08 | Complete | F8 honest state + telemetry: recency-based `visualAssistActive`, gate counters on the trial record and research HUD | T | nav | R15-04 | 7e387a7 |
 | R15-09 | Complete | F9 tracker honesty: W17-03 ViewFix, W18-02 route memory, W18-03 scheduler are Complete but unwired — reopen or wire | L | plan | — | W17-03 db6d588 · W18-02 8589099 · W18-03 909a4d6 |
 | R15-10 | Complete | F10 IMU-side defence in depth: walking-onset confirmation + peak-to-valley amplitude (changes visual-off behaviour — owner decision) | T | gait | R15-05 | 377e994 |
-| R15-11 | Queued | Device gate: stationary/bobbing/walking protocol on two named phones (§4) | T (V) | device | R15-01…R15-08 | |
+| R15-11 | Queued | Device gate: stationary/bobbing/walking protocol on two named phones (§4) | T (V) | device | R15-01…R15-08 | runbook [docs/testing/r15-11-device-gate.md](../testing/r15-11-device-gate.md) · not yet run |
 
 R15-11 is the only open slice: no device was driven, so the verdict stays
 **BLOCK** until its two-phone evidence lands. R15-01…R15-10 are complete with
