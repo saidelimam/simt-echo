@@ -11,6 +11,7 @@
 #   2. node_modules/       the pinned project dependency
 #   3. .simt/bin/          the release binary this repository downloaded
 #   4. simt on PATH       a global install
+#   5. the interpreter that wrote this file, used only when 1-4 all miss
 # If none resolves it REFUSES rather than exiting 0.
 
 set -eu
@@ -88,6 +89,13 @@ if command -v simt >/dev/null 2>&1; then
   exec simt agent-hook "$@" --root "$ROOT"
 fi
 
+# 5. The interpreter and entry point that wrote this file, recorded when it was installed.
+# A GUI harness starts a hook with a PATH that carries neither nvm nor a local bin - and a
+# node is not guaranteed either - so 1-4 all miss on the machine this shim was made for.
+if [ -x '/Users/saidelimam/.nvm/versions/node/v26.7.0/bin/node' ] && [ -f '/Users/saidelimam/Documents/GitHub/simt/simt-dev/bin/simt.mjs' ]; then
+  exec '/Users/saidelimam/.nvm/versions/node/v26.7.0/bin/node' '/Users/saidelimam/Documents/GitHub/simt/simt-dev/bin/simt.mjs' agent-hook "$@" --root "$ROOT"
+fi
+
 echo "simt: cannot locate the agent hook." >&2
 # Every expansion in these diagnostics must carry a default. Under `set -eu` an
 # unbound variable aborts the shell, so an unguarded $SIMT_DEV_BIN here would
@@ -97,6 +105,6 @@ echo "  looked for: ${SIMT_DEV_BIN:-<unset>}, $ROOT/node_modules/simt-dev, $ROOT
 # The remedy is assigned single-quoted and echoed, so a command in it - the binary
 # download derives its platform with $(uname) - stays text here and runs only when
 # the reader runs it. A remedy in double quotes would be half-executed by this echo.
-remedy='REMEDY run: mkdir -p .simt/bin && os=$(uname -s | tr A-Z a-z) && arch=$(uname -m | sed "s/x86_64/x64/") && curl -fsSL "https://github.com/QuazarMedia/simt-dev/releases/download/v0.7.1/simt-dev-0.7.1-$os-$arch" -o .simt/bin/simt && chmod +x .simt/bin/simt, or set SIMT_DEV_BIN to the simt binary, or remove the hook entry to opt out'
-echo "REMEDY run: mkdir -p .simt/bin && os=$(uname -s | tr A-Z a-z) && arch=$(uname -m | sed "s/x86_64/x64/") && curl -fsSL "https://github.com/QuazarMedia/simt-dev/releases/download/v0.7.1/simt-dev-0.7.1-$os-$arch" -o .simt/bin/simt && chmod +x .simt/bin/simt, or set SIMT_DEV_BIN to the simt binary, or remove the hook entry to opt out" >&2
+remedy='REMEDY run: mkdir -p .simt/bin && os=$(uname -s | tr A-Z a-z) && arch=$(uname -m | sed "s/x86_64/x64/") && curl -fsSL "https://github.com/QuazarMedia/simt-dev/releases/download/v0.10.0/simt-dev-0.10.0-$os-$arch" -o .simt/bin/simt && chmod +x .simt/bin/simt, or set SIMT_DEV_BIN to the simt binary, or remove the hook entry to opt out'
+echo "REMEDY run: mkdir -p .simt/bin && os=$(uname -s | tr A-Z a-z) && arch=$(uname -m | sed "s/x86_64/x64/") && curl -fsSL "https://github.com/QuazarMedia/simt-dev/releases/download/v0.10.0/simt-dev-0.10.0-$os-$arch" -o .simt/bin/simt && chmod +x .simt/bin/simt, or set SIMT_DEV_BIN to the simt binary, or remove the hook entry to opt out" >&2
 exit 1
