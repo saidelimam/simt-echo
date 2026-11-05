@@ -365,6 +365,16 @@ above a declared floor. It changes visual-off step counts and the sim
 baseline, so it needs an explicit decision and a recorded baseline update; it
 is not needed to pass AT-1…AT-7.
 
+**Decision (2026-11-05): accepted and implemented.** The detector holds the
+first candidate after start or a > 2 s gap, credits both when the second lands
+in 300–1200 ms, and requires `amax − amin ≥ 1.2 m/s²` as well as `amax > 0.9`.
+`PdrEngineTest` covers a lone candidate, a credited pair, a late second
+candidate, a gap onset and the amplitude floor. The 100- and 500-walk seeded
+baseline gates pass unchanged; the committed accuracy baseline drives
+`SimWalk`'s generated motion rather than `PdrEngine`, so no baseline artifact
+edit was warranted. Visual-off step counts change only for an unconfirmed
+onset.
+
 ## 4. Device acceptance (R15-11, manual named gate)
 
 Two named phones (Pixel-class, mid-range Samsung), visual assist on, overlay on
@@ -395,6 +405,7 @@ Failing 2 or 4 on either phone keeps W16-04 flag-off per plan 0004 §4.
 
 ## 6. Open decisions
 
-- R15-10 changes visual-off behaviour — accept, defer, or reject.
-- R15-06: exempt the gate from thermal halving (more heat) or widen the window
-  (more latency) — recommended: exempt at MODERATE, stop at SEVERE.
+- R15-10: **resolved 2026-11-05 — accepted and implemented**; visual-off step
+  counts change only for an unconfirmed onset.
+- R15-06: **resolved — exempt at MODERATE, stop at SEVERE**, implemented in
+  `FrameRateGovernor`/`VisualScheduler`.
