@@ -356,13 +356,14 @@ Tests: `VisualMotionConsumerTest.lockDecaysWithoutConfidentFrames`,
 `ModelJsonTest.trialGateCountersRoundTripAndDefault`, `NavigateViewModelTest`
 asserting counters reach the saved trial; `VisualLockUiTest` green.
 
-### R15-09 — Tracker honesty (docs-only)
+### R15-09 — Tracker honesty (landed)
 
-Set W17-03, W18-02, W18-03 in `docs/plans/0004-echo-parallax.md` to a state that
-says "Complete — unwired at runtime" with this review as the reason, and queue
-wiring slices; or wire them in follow-up slices that cite R15-06's scheduler
-constraint. Give the depth fix its own `Observation` type when it is next touched.
-Check: `simt check`.
+Wired the three slices instead of relabelling them, each in its own worktree and
+with its own acceptance test: ViewFix receives the live strip from the navigate
+frame path (`db6d588`), route memory is read and written on a successful follow
+(`8589099`), and the scheduler runs from each `NavUi` snapshot under R15-06's
+constraint (`909a4d6`). The plan rows now read "wired at runtime" and the depth
+fix keeps `Observation.Magnetic` until the next slice that touches it.
 
 ### R15-10 — IMU onset confirmation (owner decision)
 
