@@ -7,7 +7,7 @@ Authority: [implementation V2](../research/SIMT_ECHO_IMPLEMENTATION_PLAN_V2.md),
 
 ## 1. Product contract and scope
 
-**Share opens in NFC mode; Receive opens in QR mode. Both expose an always-visible NFC / QR selector.** These are per-visit defaults, not remembered preferences. Choosing another method is explicit. Switching methods preserves the route, privacy selection, link expiry, and optional relay choice.
+**Both Share and Receive open in NFC mode. Both expose an always-visible NFC / QR selector.** These are per-visit defaults, not remembered preferences. Choosing another method is explicit. Switching methods preserves the route, privacy selection, link expiry, and optional relay choice. (Revised 2026-11-05: Receive originally opened in QR. On a back-to-back tap the receiver's reader was disarmed, and the private AID gives the OS no signal to react to, so "nothing happens" was indistinguishable from a dead radio — the tap path must be the receiver's default as well. QR becomes explicit on both sides: the sharer chooses it to show a code, the receiver chooses it to scan.)
 
 The complete shipping feature in this plan is **Android ↔ Android**. This follows the current repository's Android-only v1 decision: `DeviceServices.ios.kt` throws for LAN transfer and `QrScanner.ios.kt` never scans. Keep iOS compilation working and report NFC as unsupported there; do not describe QR or NFC transfer as functional on iOS. A future iOS delivery needs its own scanner/transport integration and entitlement/device evidence. Ordinary Core NFC reading does not establish general iPhone card-emulation availability; Apple's HCE and NFC/SE offerings have eligibility restrictions ([Apple HCE](https://developer.apple.com/support/hce-transactions-in-apps/), [Apple NFC/SE](https://developer.apple.com/support/nfc-se-platform/)).
 
@@ -24,7 +24,7 @@ Use foreground Android Host Card Emulation (HCE) on the sender and `IsoDep` read
 | Share, NFC + HCE available and enabled | NFC selected; prepare offer, then show Ready to tap | QR switches immediately using the same offer |
 | Share, NFC disabled | NFC selected with “Turn on NFC to tap” | Open NFC settings or choose QR; no silent switch |
 | Share, NFC/HCE absent | NFC selected with “This phone can share by QR” | Prominent “Use QR instead”; QR/file remain usable |
-| Receive, any Android hardware | QR selected; existing camera permission gate | NFC selector and Import file remain outside the camera gate |
+| Receive, any Android hardware | NFC selected; arm the reader when NFC is available, no camera permission asked | QR selector and Import file remain; QR capture keeps the existing camera permission gate |
 | Receive, user selects NFC | Stop scanner, then arm reader if NFC available | No camera permission required; NFC settings / QR / file recovery |
 | Receive, NFC present but HCE absent | NFC receive is still supported | Only sending requires HCE |
 | Re-enter either destination | Restore its specified default | Never carry a previous visit's choice into the new visit |
@@ -33,7 +33,7 @@ Use foreground Android Host Card Emulation (HCE) on the sender and `IsoDep` read
 ## 2. Experience: a route handed from one phone to another
 
 1. **Sender:** open Share. Above the main panel, a full-width segmented selector reads `NFC · Tap phones` / `QR · Show code`. NFC is selected. The existing route sigil sits between two understated phone outlines, with “Ready to tap” only after the invitation is actually published. Copy: “Ask the other person to open Receive → NFC. Hold the backs of your unlocked phones close together.” Keep “What others receive” and its export controls directly below.
-2. **Receiver:** open Receive. QR is selected, scanner and reticle work as today. The selector is visible before any camera permission control. Choosing `NFC · Tap phones` disposes the camera and replaces its surface with two phone outlines and “Ready to receive a tap”. Copy: “Ask the other person to open Share → NFC. Move the backs of the phones slowly until they connect.” Do not claim every antenna is at the top.
+2. **Receiver:** open Receive. NFC is selected: two phone outlines and “Ready to receive a tap”, with no camera permission asked. The selector is visible; choosing `QR · Scan code` mounts the scanner behind the existing camera permission control. Copy: “Ask the other person to open Share → NFC. Move the backs of the phones slowly until they connect.” Do not claim every antenna is at the top.
 3. **Contact:** a short, restrained pulse accompanies a real reader connection. “Hold still…” while the invitation chunks arrive. The sender can say “Tap details shared”; it must not say the route was received. The receiver's completion haptic fires only after the full invitation validates, once per attempt. “Connected — you can separate the phones” leads into actual byte progress.
 4. **Transfer:** reuse `TransferParticles` and `ProgressRateTracker`; no synthetic percentage or fake peer signal. An NFC read does not trigger transfer-complete animation. Sender completion means “Route downloaded” when `served` fires, not “Saved on the other phone”. The current protocol has no receiver-save acknowledgement, especially through the relay; add none in this plan.
 5. **Preview:** the existing verified import canopy unfolds the route sigil, creator, distance, landmarks and expiry. Explicit **Save route** is still required. No tap auto-saves, overwrites a stored route, starts navigation or launches an arbitrary URI. Existing replacement behavior occurs only after Save.
@@ -44,15 +44,15 @@ Layout intent (selected labels marked with `*`; outlines/sigil are drawn with ex
 ```text
 SHARE                               RECEIVE
 Share route                  Close  Receive route                Close
-[ NFC · Tap phones* | QR ]          [ QR · Scan code* | NFC ]
+[ NFC · Tap phones* | QR ]          [ NFC · Tap phones* | QR ]
 ┌──────────────────────────────┐    ┌──────────────────────────────┐
-│  phone    route sigil  phone │    │       live QR reticle        │
-│         Ready to tap         │    │                              │
-│ Ask them: Receive → NFC      │    │ Scan the other phone's code  │
+│  phone    route sigil  phone │    │  phone    route sigil  phone │
+│         Ready to tap         │    │   Ready to receive a tap     │
+│ Ask them: Receive             │    │ Ask them: Share              │
 └──────────────────────────────┘    └──────────────────────────────┘
 Same Wi-Fi or hotspot needed.       Same Wi-Fi or hotspot needed.
-What others receive       Details  Choose NFC to receive by tap.
-Use QR instead                     Import file
+What others receive       Details  Import file
+Use QR instead
 Share as file
 ```
 

@@ -160,7 +160,7 @@ class ReceiveViewModel(
         viewModelScope.launch {
             pairing.events.collect(::onPairingEvent)
         }
-        // A new visit starts in QR: arm the camera path, not the reader.
+        // A new visit starts in NFC: arm the reader, not the camera path.
         arm()
     }
 

@@ -29,7 +29,7 @@ object PairingCopy {
     const val SHARE_PREPARING = "Preparing tap…"
     const val SHARE_TAP_READ = "Tap details shared"
     const val SHARE_TAP_INSTRUCTION =
-        "Ask the other person to open Receive → NFC. Hold the backs of your unlocked phones close together."
+        "Ask the other person to open Receive. Hold the backs of your unlocked phones close together."
     const val SHARE_BY_QR = "This phone can share by QR"
     const val SHARE_WAITING = "Waiting for the other phone…"
     const val SHARE_STARTING = "Starting offer…"

@@ -5,10 +5,13 @@ import app.simt.echo.platform.NfcCapabilities
 /**
  * Which handshake the user picked for this visit (plan 0005 §1).
  *
- * Share opens in [NFC], Receive opens in [QR]. Those are per-visit
- * defaults, never remembered preferences: re-entering either destination
- * restores its own default. File actions are not methods — they stay
- * secondary actions beside whichever method is selected.
+ * Both destinations open in [NFC]: the tap is the headline exchange, and a
+ * disarmed reader is indistinguishable from a dead radio — the private AID
+ * gives the OS nothing to react to when the phones meet — so the side that
+ * taps must be armed by default. Those are per-visit defaults, never
+ * remembered preferences: re-entering either destination restores the
+ * default. File actions are not methods — they stay secondary actions
+ * beside whichever method is selected.
  */
 enum class PairingMethod {
     NFC,
@@ -71,7 +74,7 @@ object PairingPolicy {
     /** The method a destination opens in, on every new visit. */
     fun defaultMethod(role: PairingRole): PairingMethod = when (role) {
         PairingRole.SHARE -> PairingMethod.NFC
-        PairingRole.RECEIVE -> PairingMethod.QR
+        PairingRole.RECEIVE -> PairingMethod.NFC
     }
 
     /**

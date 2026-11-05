@@ -232,8 +232,9 @@ class PairingModesUiTest {
             }
         }
 
-        // W21-02: the camera gate wraps QR capture only. Choosing a tap with
-        // the permission denied must render the panel, not ask for the camera.
+        // W21-02: the camera gate wraps QR capture only. NFC is the default,
+        // so opening the destination with the permission denied must render
+        // the panel, not ask for the camera; re-selecting NFC is a no-op.
         compose.onNodeWithTag(PairingMethodNfcTag).performScrollTo().performClick()
         awaitTag(NfcTapPanelTag)
 
@@ -275,6 +276,8 @@ class PairingModesUiTest {
             }
         }
 
+        // NFC is the default: the panel is already armed; the click is a
+        // no-op kept to prove re-selecting the current method is harmless.
         compose.onNodeWithTag(PairingMethodNfcTag).performScrollTo().performClick()
         awaitTag(NfcTapPanelTag)
         compose.onNodeWithText("Ready to receive a tap").assertIsDisplayed()
@@ -295,7 +298,7 @@ class PairingModesUiTest {
     }
 
     @Test
-    fun receiveOpensInQrAndChoosingNfcDisposesTheScanner() {
+    fun receiveOpensInNfcAndChoosingQrDisposesTheTapPanel() {
         val service = receiveService()
         compose.setContent {
             EchoTheme(darkTheme = true) {
@@ -308,19 +311,26 @@ class PairingModesUiTest {
             }
         }
 
-        // QR is the default, and the selector is above the camera gate.
-        compose.onNodeWithTag(PairingMethodQrTag).assertIsSelected()
-        compose.onNodeWithTag(PairingMethodQrTag).assertIsDisplayed()
-        compose.onNodeWithTag(NfcTapPanelTag).assertDoesNotExist()
-
-        compose.onNodeWithTag(PairingMethodNfcTag).performScrollTo().performClick()
-        awaitTag(NfcTapPanelTag)
-
+        // NFC is the default (plan 0005 §1, revised 2026-11-05): the reader
+        // is armed on arrival and the camera is never asked for.
         compose.onNodeWithTag(PairingMethodNfcTag).assertIsSelected()
         compose.onNodeWithTag(NfcTapPanelTag).assertIsDisplayed()
-        // The camera is disposed before the reader is armed: no scanner
-        // node survives the switch at all.
         compose.onNodeWithTag(ReceiveScannerTag).assertDoesNotExist()
         compose.onNodeWithText("Ready to receive a tap").assertIsDisplayed()
+
+        // Choosing QR disposes the reader; the scanner itself sits behind
+        // the camera permission gate (play-services, covered by the gate's
+        // own tests), so assert the switch's observable outcome.
+        compose.onNodeWithTag(PairingMethodQrTag).performScrollTo().performClick()
+        compose.waitUntil(timeoutMillis = 10_000) {
+            compose.onAllNodesWithText(PairingCopy.RECEIVE_CHOOSE_NFC).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        compose.onNodeWithTag(PairingMethodQrTag).assertIsSelected()
+        // The tap panel is disposed on the switch, and the hint points
+        // back at the tap path.
+        compose.onNodeWithTag(NfcTapPanelTag).assertDoesNotExist()
+        compose.onNodeWithText(PairingCopy.RECEIVE_CHOOSE_NFC).performScrollTo()
+        compose.onNodeWithText(PairingCopy.RECEIVE_CHOOSE_NFC).assertIsDisplayed()
     }
 }

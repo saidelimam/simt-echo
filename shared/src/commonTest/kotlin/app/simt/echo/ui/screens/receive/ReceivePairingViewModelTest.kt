@@ -160,39 +160,45 @@ class ReceivePairingViewModelTest {
     ) = ReceiveViewModel(rig.receiver, sharing, haptics = haptics, pairing = pairing)
 
     @Test
-    fun everyNewVisitStartsInQr() = runTest(dispatcher) {
+    fun everyNewVisitStartsInNfc() = runTest(dispatcher) {
         val rig = rig()
         val first = viewModel(rig)
         advanceUntilIdle()
-        assertEquals(PairingMethod.QR, first.ui.value.method)
+        // The tap is the headline exchange (plan 0005 §1, revised
+        // 2026-11-05): both visits open with the reader method.
+        assertEquals(PairingMethod.NFC, first.ui.value.method)
 
         // Leaving and returning does not remember the previous choice.
-        first.selectMethod(PairingMethod.NFC)
+        first.selectMethod(PairingMethod.QR)
         advanceUntilIdle()
-        assertEquals(PairingMethod.NFC, first.ui.value.method)
+        assertEquals(PairingMethod.QR, first.ui.value.method)
 
         val second = viewModel(rig)
         advanceUntilIdle()
-        assertEquals(PairingMethod.QR, second.ui.value.method)
+        assertEquals(PairingMethod.NFC, second.ui.value.method)
     }
 
     @Test
-    fun choosingNfcDisarmsTheScannerAndArmsTheReader() = runTest(dispatcher) {
+    fun choosingQrDisarmsTheArmedReader() = runTest(dispatcher) {
         val rig = rig()
         val pairing = FakeNfcPairingController(NfcCapabilities(canRead = true, enabled = true))
         val vm = viewModel(rig, pairing)
         advanceUntilIdle()
-        assertTrue(pairing.readingAttempts.isEmpty(), "QR needs no reader")
-
-        vm.selectMethod(PairingMethod.NFC)
-        advanceUntilIdle()
-
-        assertEquals(listOf(vm.ui.value.generation.toLong()), pairing.readingAttempts)
+        // NFC is the default, so the reader is already armed on arrival —
+        // before any user action.
+        val generation = vm.ui.value.generation
+        assertEquals(listOf(generation.toLong()), pairing.readingAttempts)
         assertTrue(vm.ui.value.nfcListening)
         assertTrue(vm.ui.value.methodLocked.not())
         // Camera permission is never part of this path: the VM has no camera
         // dependency at all, which is what makes NFC receive camera-free.
         assertEquals(NfcReadiness.ARMED, vm.ui.value.nfcReadiness, "listening for a tap")
+
+        vm.selectMethod(PairingMethod.QR)
+        advanceUntilIdle()
+
+        assertEquals(generation.toLong(), pairing.stoppedAttempts.single())
+        assertFalse(vm.ui.value.nfcListening, "the reader is disposed for the scanner")
     }
 
     @Test
@@ -545,10 +551,12 @@ class ReceivePairingViewModelTest {
         assertNotNull(vm.ui.value.preview)
         assertTrue(vm.ui.value.methodLocked)
 
-        vm.selectMethod(PairingMethod.NFC)
+        // NFC is the default, so QR is the real switch; a locked screen
+        // refuses it and the reader stays exactly as it arrived.
+        vm.selectMethod(PairingMethod.QR)
         advanceUntilIdle()
-        assertEquals(PairingMethod.QR, vm.ui.value.method, "the user must Cancel first")
-        assertEquals(0, pairing.readingAttempts.size, "the reader never armed under a preview")
+        assertEquals(PairingMethod.NFC, vm.ui.value.method, "the user must Cancel first")
+        assertEquals(1, pairing.readingAttempts.size, "no re-arm under a preview")
 
         vm.cancel()
         advanceUntilIdle()
@@ -621,12 +629,13 @@ class ReceivePairingViewModelTest {
         advanceUntilIdle()
         assertNotNull(vm.ui.value.savedRouteId)
         val generation = vm.ui.value.generation
+        val armsBeforeResume = pairing.readingAttempts.size
 
         vm.onResumed()
         advanceUntilIdle()
 
         assertEquals(generation, vm.ui.value.generation, "a finished visit does not re-arm")
-        assertTrue(pairing.readingAttempts.isEmpty(), "and it does not open the reader")
+        assertEquals(armsBeforeResume, pairing.readingAttempts.size, "and it does not open the reader")
     }
 
     @Test

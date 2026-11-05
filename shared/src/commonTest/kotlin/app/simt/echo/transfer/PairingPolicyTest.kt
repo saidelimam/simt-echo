@@ -29,10 +29,13 @@ class PairingPolicyTest {
     @Test
     fun everyNewVisitRestoresItsRoleDefault() {
         // Defaults are per-visit, not remembered: both are asked fresh each time.
+        // Both roles open in NFC: the receiver's reader must be armed by
+        // default, because a disarmed reader is indistinguishable from a
+        // dead radio (plan 0005 §1, revised 2026-11-05).
         assertEquals(PairingMethod.NFC, PairingPolicy.defaultMethod(PairingRole.SHARE))
-        assertEquals(PairingMethod.QR, PairingPolicy.defaultMethod(PairingRole.RECEIVE))
+        assertEquals(PairingMethod.NFC, PairingPolicy.defaultMethod(PairingRole.RECEIVE))
         assertEquals(PairingMethod.NFC, PairingPolicy.defaultMethod(PairingRole.SHARE))
-        assertEquals(PairingMethod.QR, PairingPolicy.defaultMethod(PairingRole.RECEIVE))
+        assertEquals(PairingMethod.NFC, PairingPolicy.defaultMethod(PairingRole.RECEIVE))
     }
 
     @Test
