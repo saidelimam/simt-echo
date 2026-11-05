@@ -7,6 +7,7 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.PowerManager
 import android.os.SystemClock
 import app.simt.echo.capture.GyroSample
 import app.simt.echo.capture.ImuSample
@@ -63,6 +64,8 @@ class BuiltInPdrMotionSource internal constructor(
 
     private val sensorManager =
         context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+    private val powerManager =
+        context.getSystemService(Context.POWER_SERVICE) as? PowerManager
 
     private var imuThread: HandlerThread? = null
 
@@ -79,6 +82,16 @@ class BuiltInPdrMotionSource internal constructor(
 
     override val visualAssistActive: Boolean
         get() = visualSession?.consumer?.isLockedAt(SystemClock.elapsedRealtimeNanos()) == true
+
+    override val usability01: Double
+        get() = visualSession?.consumer?.lastUsability01 ?: 1.0
+
+    override val batterySaver: Boolean
+        get() = powerManager?.isPowerSaveMode == true
+
+    override fun setVisualInterval(intervalNs: Long) {
+        visualSession?.consumer?.setInterval(intervalNs)
+    }
 
     override val gateCounters: VisualGateCounters
         get() = engine.stepGate.let {
