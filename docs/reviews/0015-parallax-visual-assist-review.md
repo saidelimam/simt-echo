@@ -34,7 +34,7 @@ behaviour or dishonest state; **Low** — hygiene. Critical and High BLOCK.
 | R15-06 | Queued | F5 witness-rate floor: thermal MODERATE must not take the gate below 4 Hz (or widen the window); scheduler may never pause the witness for "standing" | T | visual | R15-04 | |
 | R15-07 | Queued | F7 missed-step suspects: same evidence rule as R15-03, quadrature σ in LINEAR, reset at anchors | T | nav | R15-03 | |
 | R15-08 | Queued | F8 honest state + telemetry: recency-based `visualAssistActive`, gate counters on the trial record and research HUD | T | nav | R15-04 | |
-| R15-09 | Queued | F9 tracker honesty: W17-03 ViewFix, W18-02 route memory, W18-03 scheduler are Complete but unwired — reopen or wire | L | plan | — | |
+| R15-09 | Complete | F9 tracker honesty: W17-03 ViewFix, W18-02 route memory, W18-03 scheduler are Complete but unwired — reopen or wire | L | plan | — | W17-03 db6d588 · W18-02 8589099 · W18-03 909a4d6 |
 | R15-10 | Decision | F10 IMU-side defence in depth: walking-onset confirmation + peak-to-valley amplitude (changes visual-off behaviour — owner decision) | T | gait | R15-05 | |
 | R15-11 | Queued | Device gate: stationary/bobbing/walking protocol on two named phones (§4) | T (V) | device | R15-01…R15-08 | |
 
@@ -194,6 +194,13 @@ keeps real steps only because it abstains.
 - W18-03 scheduler: `VisualScheduler.intervalNs` has no production caller.
 - The depth-signature fix is injected as `Observation.Magnetic`
   (`Navigator.kt:622`), reusing the magnetic likelihood for a visual fix.
+
+**Fixed (R15-09):** `NavigateViewModel` now drains the live strip into
+`Navigator.onViewStrip`, seeds the matcher from
+`RouteMemoryRepository.loadOverlayStrips` and records the follower view strips
+through `recordFollow` on arrival, and drives
+`VisualScheduler.intervalForRouteNs` from each `NavUi`. The depth-signature
+fix still uses `Observation.Magnetic`; its own type remains open.
 
 ### F10 — The accelerometer detector has no onset rule (Low, decision → R15-10)
 
