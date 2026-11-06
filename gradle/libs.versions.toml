@@ -9,7 +9,7 @@ agp = "9.5.1"
 android-compileSdk = "37"
 android-minSdk = "29"
 android-targetSdk = "36"
-androidx-core = "1.17.0"
+androidx-core = "1.19.1"
 
 androidx-activityCompose = "1.13.0"
 androidx-lifecycle = "2.11.0"
