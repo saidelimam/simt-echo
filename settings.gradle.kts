@@ -16,6 +16,9 @@ pluginManagement {
     }
 }
 plugins {
+    // Gradle limitation (gradle/gradle#24876): version catalogs are
+    // evaluated after pluginManagement, so this build-tooling version
+    // cannot come from gradle/libs.versions.toml. Literal stays here.
     id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
 }
 

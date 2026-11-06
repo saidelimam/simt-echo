@@ -18,8 +18,10 @@ android {
         // for Play Console reasons — do not "align" them.
         minSdk = 30
         targetSdk = 34
+        // versionCode stays the wear companion's own key (separate app);
+        // the versionName string lives in the catalog (wear-app-version).
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = libs.versions.wear.app.version.get()
     }
 
     buildTypes {

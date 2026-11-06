@@ -31,13 +31,17 @@ android {
         targetSdk = libs.versions.android.targetSdk.get().toInt()
         // W9-10 version discipline: versionName is MAJOR.MINOR.PATCH;
         // versionCode = MAJOR * 10000 + MINOR * 100 + PATCH, strictly
-        // increasing per release. Bump the components below; versionCode
-        // follows automatically. Documented in docs/release.md.
-        val appVersionMajor = 0
-        val appVersionMinor = 2
-        val appVersionPatch = 0
-        versionCode = appVersionMajor * 10000 + appVersionMinor * 100 + appVersionPatch
-        versionName = "$appVersionMajor.$appVersionMinor.$appVersionPatch"
+        // increasing per release. Single source of truth: app-version in
+        // gradle/libs.versions.toml — bump it there, versionCode follows.
+        // Documented in docs/release.md.
+        val appVersion = libs.versions.app.version.get()
+        val versionComponents = appVersion.split(".").map(String::toInt)
+        require(versionComponents.size == 3) {
+            "app-version must be MAJOR.MINOR.PATCH, got: $appVersion"
+        }
+        versionName = appVersion
+        versionCode =
+            versionComponents[0] * 10000 + versionComponents[1] * 100 + versionComponents[2]
     }
 
     signingConfigs {
