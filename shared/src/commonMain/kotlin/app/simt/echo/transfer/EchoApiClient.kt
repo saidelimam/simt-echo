@@ -16,7 +16,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
-import io.ktor.utils.io.readUTF8Line
+import io.ktor.utils.io.readLine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -492,7 +492,7 @@ class EchoApiClient(
                 val channel = response.bodyAsChannel()
                 val frame = StringBuilder()
                 while (true) {
-                    val line = channel.readUTF8Line() ?: break
+                    val line = channel.readLine() ?: break
                     if (line.isNotEmpty()) {
                         frame.append(line).append('\n')
                     } else {
@@ -550,7 +550,7 @@ class EchoApiClient(
             status == 413 -> EchoApiError.PayloadTooLarge()
             code == "upload_expired" || code == "upload_not_found" ||
                 code == "unknown_file" || code == "sha_mismatch" ||
-                code == "upload_incomplete" -> EchoApiError.UploadStale(code ?: "unknown")
+                code == "upload_incomplete" -> EchoApiError.UploadStale(code)
             code == "consent_required" -> EchoApiError.ConsentRequired()
             code == "invalid_manifest" || code == "invalid_request" -> EchoApiError.InvalidManifest(body)
             else -> EchoApiError.Server(status, body)
@@ -564,7 +564,7 @@ class EchoApiClient(
             status == 429 -> EchoApiError.RateLimited()
             status == 413 -> EchoApiError.PayloadTooLarge()
             code == "upload_expired" || code == "upload_not_found" ||
-                code == "upload_incomplete" -> EchoApiError.UploadStale(code ?: "unknown")
+                code == "upload_incomplete" -> EchoApiError.UploadStale(code)
             code == "consent_required" -> EchoApiError.ConsentRequired()
             code == "invalid_manifest" || code == "invalid_request" -> EchoApiError.InvalidManifest(body)
             else -> EchoApiError.Server(status, body)

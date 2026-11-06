@@ -208,7 +208,7 @@ class NfcApduPresenter(
         if (command.u8(2) != 0x04 || command.u8(3) != 0x00) {
             return status(NfcApduProtocol.SW_WRONG_AID)
         }
-        if (command.u8(4).toInt() != aid.size) return status(NfcApduProtocol.SW_WRONG_LENGTH)
+        if (command.u8(4) != aid.size) return status(NfcApduProtocol.SW_WRONG_LENGTH)
         val named = command.copyOfRange(5, 5 + aid.size)
         if (!named.contentEquals(aid)) return status(NfcApduProtocol.SW_WRONG_AID)
         if (command.u8(5 + aid.size) != 0x00) return status(NfcApduProtocol.SW_WRONG_LENGTH)

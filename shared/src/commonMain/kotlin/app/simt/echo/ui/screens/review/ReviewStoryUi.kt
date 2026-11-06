@@ -418,7 +418,7 @@ fun KeyframeInspector(
     val content = bitmap
         ?.let { fitContain(Size(it.width.toFloat(), it.height.toFloat()), viewport).size }
         ?: Size.Zero
-    val zoom = rememberTransformableState { zoomChange, panChange, _ ->
+    val zoom = rememberTransformableState { _, zoomChange, panChange, _ ->
         scale = (scale * zoomChange).coerceIn(1f, 5f)
         offset = clampPan(offset + panChange, scale, content, viewport)
     }

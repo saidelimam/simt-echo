@@ -1,6 +1,7 @@
 package app.simt.echo.ai
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 
 /**
  * Local-model seam (plan §7.5 / W5-01).
@@ -51,6 +52,9 @@ const val LOCAL_SYSTEM_PROMPT: String =
         "cue: one short instruction combining the given direction and the landmark. If nothing " +
         "suitable is visible, return an empty candidates list. Answer with JSON only."
 
+/** Shared parser: models wrap the JSON in prose, and stray keys arrive. */
+private val checkpointJson = Json { ignoreUnknownKeys = true }
+
 /** First balanced `{…}` block in [text] (models wrap JSON in prose). */
 fun extractJsonObject(text: String): String? {
     val start = text.indexOf('{')
@@ -80,8 +84,7 @@ fun parseLocalCheckpoint(text: String): LocalCheckpointDto {
     val json = extractJsonObject(text)
         ?: throw LocalModelException("Local model did not answer with JSON.")
     return runCatching {
-        kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
-            .decodeFromString<LocalCheckpointDto>(json)
+        checkpointJson.decodeFromString<LocalCheckpointDto>(json)
     }.getOrElse {
         throw LocalModelException("Local model JSON did not match the landmark schema.")
     }

@@ -11,6 +11,11 @@ plugins {
 }
 
 kotlin {
+    compilerOptions {
+        // expect/actual classes are in Beta (KT-61573); the flag silences the
+        // per-declaration warning across all targets.
+        freeCompilerArgs.add("-Xexpect-actual-classes")
+    }
     android {
         namespace = "app.simt.echo.shared"
         compileSdk = libs.versions.android.compileSdk.get().toInt()

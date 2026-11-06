@@ -147,7 +147,7 @@ class SettingsViewModel(
             return
         }
         configs.update { it.copy(stepK = next).withoutLearnedStride() }
-        val error = calibrationWalkError(CALIBRATION_WALK_M, measured ?: 0.0)
+        val error = calibrationWalkError(CALIBRATION_WALK_M, measured)
         val pct = error?.let { " (walk read ${oneDecimalPct(it)} ${if (it >= 0) "long" else "short"})" } ?: ""
         _ui.update { it.copy(stepK = next, strideLearnedLegs = 0, measuredM = "", calibrationNote = "K = ${round(next * 1000) / 1000.0}$pct") }
     }

@@ -247,18 +247,16 @@ class NavigateViewModel(
             }
             viewModelScope.launch {
                 nav.ui.collect { ui ->
-                    if (ui != null) {
-                        updateHeartbeat(ui)
-                        updateVisualRate(ui)
-                        runCatching { wearNav(ui.toWearState()) }
-                        runCatching {
-                            liveUpdates?.updateNav(
-                                ui = ui,
-                                legLengthsM = legLengthsM,
-                                landmarks = landmarkMarks,
-                                routeName = route?.name.orEmpty(),
-                            )
-                        }
+                    updateHeartbeat(ui)
+                    updateVisualRate(ui)
+                    runCatching { wearNav(ui.toWearState()) }
+                    runCatching {
+                        liveUpdates?.updateNav(
+                            ui = ui,
+                            legLengthsM = legLengthsM,
+                            landmarks = landmarkMarks,
+                            routeName = route?.name.orEmpty(),
+                        )
                     }
                 }
             }

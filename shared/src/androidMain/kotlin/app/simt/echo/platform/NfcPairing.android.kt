@@ -57,7 +57,6 @@ actual fun rememberNfcSettingsOpener(): () -> Unit {
             if (opened.isFailure) {
                 runCatching { context.startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS)) }
             }
-            Unit
         }
     }
 }

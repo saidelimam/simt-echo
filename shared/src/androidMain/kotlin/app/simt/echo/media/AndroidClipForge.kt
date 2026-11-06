@@ -3,8 +3,10 @@ package app.simt.echo.media
 import android.content.Context
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import androidx.annotation.OptIn
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.FrameDropEffect
 import androidx.media3.effect.Presentation
 import androidx.media3.transformer.Composition
@@ -45,6 +47,7 @@ import kotlin.coroutines.resumeWithException
  */
 
 /** Shared video effects for both forge paths: 480p + drop to the forge fps. */
+@OptIn(UnstableApi::class)
 internal fun forgeVideoEffects(): Effects = Effects(
     listOf(),
     listOf(
@@ -54,6 +57,7 @@ internal fun forgeVideoEffects(): Effects = Effects(
 )
 
 /** Encoder factory pinning the forge target bitrate (~600 kbps H.264). */
+@OptIn(UnstableApi::class)
 internal fun forgeEncoderFactory(context: Context): DefaultEncoderFactory =
     DefaultEncoderFactory.Builder(context)
         .setRequestedVideoEncoderSettings(
@@ -70,6 +74,7 @@ internal fun forgeEncoderFactory(context: Context): DefaultEncoderFactory =
  * [kotlinx.coroutines.CancellationException] it is. Must be called on the
  * main looper (plan W3-01).
  */
+@OptIn(UnstableApi::class)
 internal suspend fun export(
     context: Context,
     out: Path,
@@ -134,6 +139,7 @@ internal suspend fun describeExport(
  * pair `ImageAssetLoader` requires), so output frame `i` is `frames[i]`
  * and [buildFrameMap] over the same entries is the exact sidecar.
  */
+@OptIn(UnstableApi::class)
 internal suspend fun forgeStripFromJpegs(
     context: Context,
     frames: List<Path>,
@@ -154,7 +160,9 @@ internal suspend fun forgeStripFromJpegs(
             .build()
     }
     val composition = Composition.Builder(
-        EditedMediaItemSequence.Builder(items).build(),
+        // Video-only sequence: the items carry `setRemoveAudio(true)`, and
+        // TRACK_TYPE_VIDEO makes the sequence itself emit video only.
+        EditedMediaItemSequence.withVideoFrom(items),
     ).build()
     export(context, out, useForgeBitrate = true) { transformer ->
         transformer.start(composition, out.toString())
@@ -167,6 +175,7 @@ internal suspend fun forgeStripFromJpegs(
  * ~600 kbps. The window arrives clamped to the duration by the caller
  * (`stripFallbackWindow`, W10-02 G5) and validated non-empty.
  */
+@OptIn(UnstableApi::class)
 internal suspend fun transcodeStripFromVideo(
     context: Context,
     video: Path,

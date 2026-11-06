@@ -207,6 +207,7 @@ data class LiveUpdatePlan(
 
 fun planLiveUpdate(content: LiveUpdateContent, sdkInt: Int): LiveUpdatePlan {
     val indeterminate = content.progress01 == null
+    val progress01 = content.progress01
     if (content.segments.isEmpty()) {
         val max = 100
         return LiveUpdatePlan(
@@ -215,7 +216,7 @@ fun planLiveUpdate(content: LiveUpdateContent, sdkInt: Int): LiveUpdatePlan {
             indeterminate = indeterminate,
             segmentUnits = emptyList(),
             pointUnits = emptyList(),
-            progressUnits = if (indeterminate) 0 else ((content.progress01 ?: 0f) * max).roundToInt().coerceIn(0, max),
+            progressUnits = if (progress01 == null) 0 else (progress01 * max).roundToInt().coerceIn(0, max),
             progressMaxUnits = max,
         )
     }
@@ -224,10 +225,10 @@ fun planLiveUpdate(content: LiveUpdateContent, sdkInt: Int): LiveUpdatePlan {
     val totalM = content.segments.sumOf { it.lengthM }.takeIf { it > 0.0 } ?: 1.0
     val scale = max / totalM
     val points = content.points.map { (it.positionM * scale).roundToInt().coerceIn(0, max) }
-    val progress = if (indeterminate) {
+    val progress = if (progress01 == null) {
         0
     } else {
-        ((content.progress01 ?: 0f) * max).roundToInt().coerceIn(0, max)
+        (progress01 * max).roundToInt().coerceIn(0, max)
     }
     return LiveUpdatePlan(
         content = content,

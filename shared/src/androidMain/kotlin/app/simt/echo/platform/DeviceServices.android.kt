@@ -152,6 +152,10 @@ private class AndroidCueOutput(
     }
 
     override fun announce(text: String) {
+        // Announcements are the intended cue path (the `CueOutput` contract);
+        // API 36 flags the API itself deprecated but ships no drop-in
+        // replacement, so the suppression stands until the framework adds one.
+        @Suppress("DEPRECATION")
         view.announceForAccessibility(text)
     }
 }

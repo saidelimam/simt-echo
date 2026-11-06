@@ -279,8 +279,10 @@ private fun TopChrome(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     // The eyebrow is decoration: the route title below says
-                    // where the user is (review 0013 F9).
-                    modifier = Modifier
+                    // where the user is (review 0013 F9). `hideFromAccessibility()`
+                    // landed after the 1.7.8 compose pin, so the deprecated
+                    // `invisibleToUser()` is the only API at this version.
+                    modifier = @Suppress("DEPRECATION") Modifier
                         .testTag(EchoShellWordmarkTag)
                         .semantics { invisibleToUser() },
                 )
