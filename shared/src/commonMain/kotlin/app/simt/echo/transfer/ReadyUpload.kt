@@ -229,6 +229,9 @@ suspend fun discardWalkStaging(api: V11CloudApi, drafts: DraftRepository, draftI
  * job exists. A server that no longer has a session throws
  * [EchoApiError.UploadStale]; the record is cleared then too, so the caller
  * can fall back to a full upload without the dead sessions.
+ *
+ * [onFileSent] reports the remainder PUT as `sent` of `total` files so the
+ * caller can show real upload progress; null reports nothing.
  */
 suspend fun createJobFromWalkStaging(
     api: V11CloudApi,
@@ -237,6 +240,7 @@ suspend fun createJobFromWalkStaging(
     manifestJson: String,
     files: List<UploadFile>,
     idempotencyKey: String,
+    onFileSent: ((sent: Int, total: Int) -> Unit)? = null,
 ): String? {
     val staged = drafts.loadReadyStagedRecord(draftId)?.takeIf { it.uploadIds.isNotEmpty() } ?: return null
     val hashed = files.map { it to sha256Hex(it.bytes) }
@@ -246,7 +250,14 @@ suspend fun createJobFromWalkStaging(
         if (remainder.isNotEmpty()) {
             val created = api.createUpload(remainder.map { (file, sha) -> UploadFileRef(file.id, sha, file.bytes.size.toLong()) })
             val byId = remainder.associate { (file, _) -> file.id to file }
-            created.missing.forEach { id -> byId[id]?.let { api.putUploadFile(created.uploadId, it) } }
+            onFileSent?.invoke(0, created.missing.size)
+            var sent = 0
+            created.missing.forEach { id ->
+                val file = byId[id] ?: return@forEach
+                api.putUploadFile(created.uploadId, file)
+                sent++
+                onFileSent?.invoke(sent, created.missing.size)
+            }
             sessions = listOf(created.uploadId) + sessions
         }
         val jobId = api.createJobFromStaged(manifestJson, sessions, idempotencyKey)

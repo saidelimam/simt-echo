@@ -71,6 +71,16 @@ data class ConsentInfo(
 /** How long declining waits for staged uploads to be deleted before it leaves anyway. */
 private const val DISCARD_WAIT_MS = 5_000L
 
+/**
+ * Consecutive event-stream attempts that deliver no events at all before
+ * the stream is given up on and polling takes over. The worker closes each
+ * SSE window after ~25 s, so a healthy minutes-long job reconnects many
+ * times; ten silent windows (~4 min of total silence) rides out the gap
+ * until the first `usage` event arrives, and a dead stream drops to the
+ * polling fallback promptly.
+ */
+private const val MAX_SILENT_STREAM_ATTEMPTS = 10
+
 /** Processing screen phase (plan §8.3): consent → stages → Ready. */
 sealed interface ProcessingPhase {
     data object Loading : ProcessingPhase
@@ -90,6 +100,13 @@ sealed interface ProcessingPhase {
 data class ProcessingUiState(
     val phase: ProcessingPhase = ProcessingPhase.Loading,
     val jobId: String? = null,
+    /**
+     * Files PUT in the current v1.1 send; null until the send knows its
+     * file list. The Uploading phase renders "File X of Y" from this; the
+     * legacy multipart path never sets it and stays indeterminate.
+     */
+    val uploadFilesDone: Int? = null,
+    val uploadFilesTotal: Int? = null,
 )
 
 /** Plan consent copy (W3-02 verbatim): files, retention, training tier, shape. */
@@ -296,7 +313,13 @@ class ProcessingViewModel(
         // A previous job still on the server (errored, not deleted) is the
         // one a fresh job may reuse SAM work from (`resumeOf`).
         val previousJobId = _ui.value.jobId
-        _ui.update { it.copy(phase = ProcessingPhase.Uploading) }
+        _ui.update {
+            it.copy(
+                phase = ProcessingPhase.Uploading,
+                uploadFilesDone = null,
+                uploadFilesTotal = null,
+            )
+        }
         viewModelScope.launch {
             try {
                 val v11 = api as? V11CloudApi
@@ -373,7 +396,14 @@ class ProcessingViewModel(
         }
         try {
             val byId = prepared.files.associateBy { it.id }
-            missing.forEach { id -> byId[id]?.let { v11.putUploadFile(uploadId, it) } }
+            _ui.update { it.copy(uploadFilesDone = 0, uploadFilesTotal = missing.size) }
+            var sent = 0
+            missing.forEach { id ->
+                val file = byId[id] ?: return@forEach
+                v11.putUploadFile(uploadId, file)
+                sent++
+                _ui.update { it.copy(uploadFilesDone = sent) }
+            }
         } catch (e: EchoApiError.UploadStale) {
             return restartUpload(v11, resumeOf, restarted)
         }
@@ -393,7 +423,16 @@ class ProcessingViewModel(
         if (resumeOf != null || drafts.loadUploadRecord(draftId) != null) return null
         return try {
             withContext(ioDispatcher) {
-                createJobFromWalkStaging(v11, drafts, draftId, prepared.manifestJson, prepared.files, sha256Hex(prepared.manifestJson.encodeToByteArray()))
+                createJobFromWalkStaging(
+                    v11,
+                    drafts,
+                    draftId,
+                    prepared.manifestJson,
+                    prepared.files,
+                    sha256Hex(prepared.manifestJson.encodeToByteArray()),
+                ) { sent, total ->
+                    _ui.update { it.copy(uploadFilesDone = sent, uploadFilesTotal = total) }
+                }
             }
         } catch (e: EchoApiError.UploadStale) {
             null
@@ -542,14 +581,17 @@ class ProcessingViewModel(
     }
 
     /**
-     * Collects the event stream to a terminal event. A drop mid-stream
-     * reconnects once with `Last-Event-ID`; a stream that never opens
-     * (or ends eventless) drops straight to polling. Returns true when
-     * the UI reached a terminal phase.
+     * Collects the event stream to a terminal event. The worker closes
+     * each SSE window after ~25 s, so a healthy job reconnects many
+     * times, each with `Last-Event-ID`; an attempt that delivered any
+     * event resets the silent budget, and only
+     * [MAX_SILENT_STREAM_ATTEMPTS] consecutive eventless attempts drop to
+     * polling. Returns true when the UI reached a terminal phase.
      */
     private suspend fun streamToTerminal(v11: V11CloudApi, jobId: String, startEventId: String?): Boolean {
         var lastId = startEventId
-        repeat(2) {
+        var silentAttempts = 0
+        while (true) {
             var sawEvents = false
             var terminal = false
             try {
@@ -567,13 +609,14 @@ class ProcessingViewModel(
                 _ui.update { it.copy(phase = ProcessingPhase.Failed(processingJobGoneCopy())) }
                 return true
             } catch (e: Exception) {
-                // Reconnect below when events already flowed (same
-                // Last-Event-ID), else fall through to polling.
+                // Connection dropped: reconnect below with the same
+                // Last-Event-ID, or fall to polling when the stream
+                // stays silent.
             }
-            if (!sawEvents) return false
             if (terminal) return true
+            silentAttempts = if (sawEvents) 0 else silentAttempts + 1
+            if (silentAttempts >= MAX_SILENT_STREAM_ATTEMPTS) return false
         }
-        return false
     }
 
     /** Applies one stream event; true when the phase is terminal. */

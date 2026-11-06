@@ -113,6 +113,8 @@ class ProcessingViewModelStagedTest {
         var staged: MutableSet<String> = mutableSetOf(),
         /** One flow per [watchEvents] call; empty when exhausted. */
         var flows: ArrayDeque<Flow<JobEvent>> = ArrayDeque(),
+        /** Invoked on every PUT; lets a test observe the UI mid-loop. */
+        var onPut: (UploadFile) -> Unit = {},
     ) : V11CloudApi {
         val submits = mutableListOf<Pair<String, List<UploadFile>>>()
         val deletes = mutableListOf<String>()
@@ -145,6 +147,7 @@ class ProcessingViewModelStagedTest {
 
         override suspend fun putUploadFile(uploadId: String, file: UploadFile) {
             puts += file
+            onPut(file)
         }
 
         override suspend fun createJob(
@@ -345,6 +348,31 @@ class ProcessingViewModelStagedTest {
         val (_, upload, _) = api.jobCreates.single()
         assertEquals("upload-1", upload, "a normal single-session job")
         assertTrue(api.puts.map { it.id }.containsAll(listOf("kf_n1_0", "clip_n1")), "everything was sent again")
+    }
+
+    @Test
+    fun uploadProgressCountsEveryFileThroughThePutLoop() = runTest(dispatcher) {
+        val h = harness()
+        val api = FakeCloudApi(polls = ArrayDeque(listOf(complete())))
+        val vm = h.vm(api)
+        advanceUntilIdle()
+        val progress = mutableListOf<Pair<Int?, Int?>>()
+        api.onPut = { progress += vm.ui.value.uploadFilesDone to vm.ui.value.uploadFilesTotal }
+
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
+        val total = api.puts.size
+        assertTrue(total > 0, "the harness draft has files to send")
+        // Each PUT observed the files finished *before* it — 0/T before the
+        // first, (T-1)/T before the last — and the state settles at T/T
+        // after the loop. The Uploading phase renders this as a determinate
+        // "File X of Y" bar, not all-Todo stages.
+        val expected: List<Pair<Int?, Int?>> = (0 until total).map { it to total }
+        assertEquals(expected, progress)
+        val finalCount: Pair<Int?, Int?> = vm.ui.value.uploadFilesDone to vm.ui.value.uploadFilesTotal
+        assertEquals(total to total, finalCount)
     }
 
     @Test
@@ -622,6 +650,42 @@ class ProcessingViewModelStagedTest {
         // The partial landed before the drop and survived to Ready.
         assertEquals(listOf("n1"), vm.partials.value.keys.toList())
         assertEquals("Red pillar", vm.partials.value.getValue("n1").single().title)
+    }
+
+    @Test
+    fun reconnectRidesOutSilentWindowsSoLateUsageMovesTheMeter() = runTest(dispatcher) {
+        val h = harness()
+        // The worker closes each SSE window after ~25 s: the first window
+        // delivers an early stage event, the next two are silent (heartbeat
+        // comments only), and the `usage` event lands with the seal, minutes
+        // in. Giving up after two attempts (the old behavior) dropped to the
+        // usage-less poll and left the meter frozen at 0.
+        val api = FakeCloudApi(
+            flows = ArrayDeque(
+                listOf(
+                    flowOf(JobEvent.Stage("e1", JobStage.GROUNDING)),
+                    flowOf(),
+                    flowOf(),
+                    flowOf(
+                        JobEvent.Usage("u-2", samFramesBilled = 38),
+                        JobEvent.Complete("e-3", null),
+                    ),
+                ),
+            ),
+        )
+        val vm = h.vm(api)
+        advanceUntilIdle()
+        vm.send()
+        advanceUntilIdle()
+
+        assertIs<ProcessingPhase.Ready>(vm.ui.value.phase)
+        // Every reconnect carried the last-seen event id, and the stream —
+        // not the poll — covered the whole job.
+        assertEquals(listOf(null, "e1", "e1", "e1"), api.watchIds)
+        assertTrue(api.getCalls == 0, "the stream stayed the source of truth")
+        // The late usage event moved the meter; the high-water mark holds.
+        assertEquals(38, vm.constellation.value.framesUsed)
+        assertEquals("38 / 120 frames", constellationBudgetText(vm.constellation.value.framesUsed))
     }
 
     @Test

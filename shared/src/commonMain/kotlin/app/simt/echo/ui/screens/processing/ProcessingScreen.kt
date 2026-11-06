@@ -87,11 +87,23 @@ fun ProcessingScreen(
                 onDeleteNow = viewModel::deleteNow,
             )
             ProcessingPhase.Uploading -> {
-                // The upload itself reports no byte progress: honest
-                // indeterminate bar above the stage list. Leaving does not
-                // cancel the upload; cancelling AI is a separate, named
-                // choice (review 0013 F8).
-                StageInstrument(current = -1, determinate = false)
+                // The upload reports file counts, not bytes: a determinate
+                // "File X of Y" bar on the v1.1 path, indeterminate on the
+                // legacy multipart path, which reports nothing. Leaving
+                // does not cancel the upload; cancelling AI is a separate,
+                // named choice (review 0013 F8).
+                val done = ui.uploadFilesDone
+                val total = ui.uploadFilesTotal
+                if (done != null && total != null && total > 0) {
+                    StageInstrument(
+                        current = 0,
+                        determinate = true,
+                        fraction = done.toFloat() / total,
+                        caption = "File $done of $total",
+                    )
+                } else {
+                    StageInstrument(current = 0, determinate = false)
+                }
                 CosmosPrimaryButton(
                     label = "Leave in background",
                     onClick = onDone,
@@ -227,15 +239,20 @@ private fun stageLabel(stage: JobStage): String = when (stage) {
 
 /**
  * Staged instrument: the four stages with Done/Now/Todo marks plus a
- * progress bar that is determinate only where honest — stage-level
- * fractions while working or ready, indeterminate while the upload
- * itself is in flight (no byte progress is reported).
+ * progress bar that is determinate only where honest — file counts while
+ * the v1.1 upload is in flight, stage-level fractions while working or
+ * ready, indeterminate on the legacy multipart path (no progress is
+ * reported there).
  */
 @Composable
 private fun StageInstrument(
     /** Index of the current stage, -1 while the upload itself is in flight. */
     current: Int,
     determinate: Boolean,
+    /** Bar fraction override, e.g. the uploaded-file fraction. */
+    fraction: Float? = null,
+    /** Caption override for the determinate bar, e.g. "File 3 of 8". */
+    caption: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val stages = listOf("Uploading", "Reading scenes", "Grounding", "Ready")
@@ -255,14 +272,14 @@ private fun StageInstrument(
             if (determinate) {
                 val done = (current + 1).coerceIn(0, stages.size)
                 LinearProgressIndicator(
-                    progress = { done.toFloat() / stages.size },
+                    progress = { fraction ?: done.toFloat() / stages.size },
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag(ProcessingProgressTag)
                         .semantics { liveRegion = LiveRegionMode.Polite },
                 )
                 Text(
-                    text = "Stage $done of ${stages.size}",
+                    text = caption ?: "Stage $done of ${stages.size}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
