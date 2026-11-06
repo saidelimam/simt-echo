@@ -2,25 +2,18 @@ package app.simt.echo.nav
 
 import app.simt.echo.capture.circularMean
 import app.simt.echo.capture.wrapPi
-import app.simt.echo.capture.MagProfiler
 import app.simt.echo.model.EchoConfig
 import app.simt.echo.model.EchoRoute
 import app.simt.echo.model.Landmark
-import app.simt.echo.model.MagProfile
 import app.simt.echo.model.NavigatorEngine
 import app.simt.echo.model.NodeType
 import app.simt.echo.model.RouteLeg
 import app.simt.echo.model.RouteNode
-import app.simt.echo.model.TurnDir
 import app.simt.echo.model.defaultCue
 import app.simt.echo.nav.ghost.GhostFilter
 import app.simt.echo.nav.ghost.HitDebounce
-import app.simt.echo.nav.ghost.DepthSignatureMatch
-import app.simt.echo.nav.ghost.DepthSignatureTracker
 import app.simt.echo.nav.ghost.FingerprintHit
-import app.simt.echo.nav.ghost.FixGate
 import app.simt.echo.nav.ghost.FingerprintPrompt
-import app.simt.echo.nav.ghost.MagneticMatch
 import app.simt.echo.nav.ghost.Observation
 import app.simt.echo.nav.ghost.RouteGeometry
 import app.simt.echo.nav.ghost.StrideLearner
@@ -165,14 +158,10 @@ class Navigator(
     private var lastMotionTNs: Long = 0L
 
     /**
-     * Lost → relock search (W12-06): odo + clock where the search began,
-     * the (dist, yaw, tNs) trail feeding the turn-signature DTW (kept to
-     * the ≤ 10 s / 8 m window), and the 1 m bucket of the last signature
-     * observation so each metre feeds the filter at most once.
+     * Lost → relock search (W12-06): the evidence trail and convergence
+     * bookkeeping; the filter and the state a lock applies to stay here.
      */
-    private var relockStartOdo: Double = 0.0
-    private val relockTrail = mutableListOf<RelockSample>()
-    private var lastSignatureBucket: Int = -1
+    private val relock = Relock(geometry)
 
     /**
      * Transient "Found you" cue after a relock: the nearest landmark
@@ -195,23 +184,10 @@ class Navigator(
     private val yawTrail = mutableListOf<Pair<Double, Double>>()
 
     /**
-     * Live magnetic signature (W12-04): the last 10 m observed, bucketed
-     * from motion updates carrying magnetometer data. Matched against the
-     * route's stored mag profile at most once per 0.5 m bucket; silent
-     * when the route has no profile or the device has no magnetometer.
+     * Auxiliary signature fix sources (W12-04 magnetic, W17-04 depth):
+     * bucketed profile matching, soft observations only.
      */
-    private val magProfiler = MagProfiler()
-    private var lastMagMatchBucket: Int = -1
-    private val magFixGate = FixGate()
-
-    /**
-     * Live depth-profile signature (W17-04): accumulates (ρ, s_odometer)
-     * buckets from visual ego frames and matches against the route's
-     * ParallaxProfile by DTW (including as a fourth Relock source).
-     */
-    private val depthTracker = DepthSignatureTracker()
-    private var lastDepthMatchBucket: Int = -1
-    private val depthFixGate = FixGate()
+    private val signatureFixes = SignatureFixes(route, relock)
 
     // Honest-light visual lock + usability nudge state (plan W19-01).
     private var lastVisualObsTNs: Long = Long.MIN_VALUE
@@ -277,8 +253,7 @@ class Navigator(
         missedStepPolicy.reset()
         missedStepSuspectCount = 0
         viewFixMatcher.reset()
-        depthTracker.reset()
-        lastDepthMatchBucket = -1
+        signatureFixes.reset()
         lastVisualObsTNs = Long.MIN_VALUE
         lastVisualConfidence01 = 0.0
         lastVisualReason = app.simt.echo.capture.visual.VisualReason.NONE
@@ -355,7 +330,7 @@ class Navigator(
         }
         applyCorridorSnapping(update)
         levelAwareness.onSample(update.pressureHpa, update.stepCount, update.tNs)?.let { onLevelEvent(it) }
-        onMagneticUpdate(update)
+        signatureFixes.onMagnetic(ghost, update, dist)
         val detected = turnDetector.onSample(update.tNs, update.yawRad)
         if (detected != null) {
             onTurnDetected(detected)
@@ -392,7 +367,7 @@ class Navigator(
                         setPhase(NavPhase.APPROACH)
                         if (tickedLegIndex != legIndex) {
                             tickedLegIndex = legIndex
-                            emit(NavEvent.Haptic(turnCueFor(target)))
+                            emit(NavEvent.Haptic(NavCopy.turnCueFor(target)))
                         }
                     }
                 }
@@ -422,8 +397,8 @@ class Navigator(
         ghost?.observe(Observation.Turn(detected.dir))
         val expected = target.turn?.takeIf { target.type == NodeType.TURN }
         when {
-            expected == null -> enterOffRoute(offRouteCopy())
-            detected.dir != expected -> enterOffRoute(offRouteCopy())
+            expected == null -> enterOffRoute(NavCopy.offRouteCopy(anchorNode?.label))
+            detected.dir != expected -> enterOffRoute(NavCopy.offRouteCopy(anchorNode?.label))
             phase == NavPhase.TURNING -> {
                 // A consistent turn event also resolves a pending
                 // fingerprint suggestion (W12-05 confirm rule).
@@ -464,7 +439,7 @@ class Navigator(
             target.type == NodeType.TURN -> {
                 if (phase != NavPhase.TURNING) {
                     setPhase(NavPhase.TURNING)
-                    emit(NavEvent.Haptic(turnCueFor(target)))
+                    emit(NavEvent.Haptic(NavCopy.turnCueFor(target)))
                 }
             }
             target.type == NodeType.DESTINATION && isLastLeg -> arrive()
@@ -548,7 +523,7 @@ class Navigator(
             strideLearner.observeVisualSpeed(obs.nominalMps, obs.visualMps, obs.sigmaMps)
             usedObservation = true
         }
-        if (onDepthSignatureUpdate(ego, nominalMps)) {
+        if (signatureFixes.onDepth(ghost, ego, nominalMps, dist, phase == NavPhase.RELOCKING)) {
             usedObservation = true
         }
         if (usedObservation && ego.confidence01.isFinite() && ego.confidence01 >= 0.5) {
@@ -590,40 +565,6 @@ class Navigator(
         if (phase == NavPhase.RELOCKING) checkRelockConvergence()
         refresh()
         return fix
-    }
-
-    /**
-     * Depth-profile signature update (W17-04): accumulates `ρ = expansionPerSec / nominalMps`
-     * into 0.5 m odometer buckets and matches the last window against the
-     * route's [app.simt.echo.model.ParallaxProfile]. Feeds Relock as a fourth
-     * source after turn signature, fingerprints and magnetic.
-     */
-    private fun onDepthSignatureUpdate(
-        ego: app.simt.echo.capture.visual.VisualEgo,
-        nominalMps: Double,
-    ): Boolean {
-        val g = ghost ?: return false
-        val parallax = route.perception?.parallax ?: return false
-        if (!ego.confidence01.isFinite() || ego.confidence01 < 0.5) return false
-        if (!ego.expansionPerSec.isFinite() || ego.expansionPerSec <= 0.0) return false
-        val speed = if (nominalMps.isFinite() && nominalMps > 0.15) nominalMps else 1.0
-        val rho = ego.expansionPerSec / speed
-        depthTracker.onSample(dist, rho)
-        val bucket = (dist / app.simt.echo.model.ParallaxProfile.STEP_M).toInt()
-        if (bucket == lastDepthMatchBucket) return false
-        lastDepthMatchBucket = bucket
-        val windowM = if (phase == NavPhase.RELOCKING) {
-            (dist - relockStartOdo).coerceIn(DepthSignatureMatch.MIN_RELOCK_QUERY_M, DepthSignatureMatch.QUERY_M)
-        } else {
-            DepthSignatureMatch.QUERY_M
-        }
-        val obsRho = depthTracker.lastWindow(windowM, dist) ?: return false
-        val fix = DepthSignatureMatch.match(parallax, obsRho, g.meanS, g.sigma) ?: return false
-        if (phase == NavPhase.RELOCKING || depthFixGate.accept(dist, fix.estimatedS)) {
-            g.observe(Observation.Magnetic(fix.estimatedS))
-            return true
-        }
-        return false
     }
 
     fun onFingerprintHit(hit: FingerprintHit) {
@@ -691,31 +632,6 @@ class Navigator(
         emit(NavEvent.Haptic(HapticPattern.CONFIRM))
     }
 
-    /**
-     * Magnetic-signature fix (W12-04): feeds the live mag samples into the
-     * profiler and, at most once per 0.5 m bucket, matches the last 10 m
-     * against the route's stored mag profile around the Ghost belief. A
-     * passing match is a soft filter observation — never a phase change,
-     * never an anchor event — and only when [magFixGate] finds it new
-     * information (consecutive buckets re-match ~95 % the same window).
-     * Silent on LINEAR (no filter), without a route profile, or without
-     * magnetometer data.
-     */
-    private fun onMagneticUpdate(update: MotionUpdate) {
-        val g = ghost ?: return
-        val mag = update.magMag ?: return
-        val vert = update.magVert ?: return
-        val profile = route.perception?.magProfile ?: return
-        magProfiler.onSample(dist, mag, vert)
-        val bucket = (dist / MagProfile.MAG_STEP_M).toInt()
-        if (bucket == lastMagMatchBucket) return
-        lastMagMatchBucket = bucket
-        val (obsMag, obsVert) = magProfiler.lastWindow(MagneticMatch.QUERY_M, dist) ?: return
-        MagneticMatch.match(profile, obsMag, obsVert, g.meanS, g.sigma)?.let {
-            if (magFixGate.accept(dist, it.estimatedS)) g.observe(Observation.Magnetic(it.estimatedS))
-        }
-    }
-
     private fun onNotYet() {
         if (phase != NavPhase.CONFIRM) return
         // Dismissed, not confirmed: keep walking this leg; auto-advance only
@@ -730,14 +646,12 @@ class Navigator(
         if (g == null) {
             // LINEAR has no particles to re-spread: today's sheets,
             // honestly and immediately.
-            enterOffRoute(offRouteCopy())
+            enterOffRoute(NavCopy.offRouteCopy(anchorNode?.label))
             return
         }
         fingerprintPrompt = null
         g.respreadUniform()
-        relockStartOdo = dist
-        relockTrail.clear()
-        lastSignatureBucket = (dist / RELOCK_SIGNATURE_STEP_M).toInt()
+        relock.begin(dist)
         emit(NavEvent.Haptic(HapticPattern.WARN))
         setPhase(NavPhase.RELOCKING)
     }
@@ -757,70 +671,24 @@ class Navigator(
      */
     private fun onRelockMotion(update: MotionUpdate) {
         val g = ghost ?: run {
-            clearRelockTrail()
-            enterOffRoute(offRouteCopy())
+            relock.clear()
+            enterOffRoute(NavCopy.offRouteCopy(anchorNode?.label))
             return
         }
-        relockTrail += RelockSample(update.distanceM, update.yawRad, update.tNs)
-        relockTrail.removeAll {
-            update.distanceM - it.d > RELOCK_WINDOW_M || update.tNs - it.tNs > RELOCK_WINDOW_NS
-        }
-        val bucket = (update.distanceM / RELOCK_SIGNATURE_STEP_M).toInt()
-        if (bucket != lastSignatureBucket) {
-            lastSignatureBucket = bucket
-            buildRelockSignature(update.distanceM)?.let { g.observe(Observation.TurnSignature(it, RELOCK_SIGNATURE_STEP_M)) }
-        }
+        relock.onMotion(update.distanceM, update.yawRad, update.tNs)
+            ?.let { g.observe(Observation.TurnSignature(it, Relock.RELOCK_SIGNATURE_STEP_M)) }
         if (checkRelockConvergence()) return
-        if (update.distanceM - relockStartOdo >= RELOCK_FALLBACK_M) {
-            clearRelockTrail()
-            enterOffRoute(offRouteCopy())
+        if (relock.fallbackDue(update.distanceM)) {
+            relock.clear()
+            enterOffRoute(NavCopy.offRouteCopy(anchorNode?.label))
         }
-    }
-
-    /**
-     * Observed heading-change sequence ending at the walker's current
-     * position: yaw deltas per [RELOCK_SIGNATURE_STEP_M] over the last up
-     * to 8 whole metres walked since the search began (a sliding window,
-     * never anchored to where the search started). Null until at least one
-     * full metre is walked. Rotation-invariant (yaw deltas), so the
-     * unknown alignment offset cancels.
-     */
-    private fun buildRelockSignature(distM: Double): DoubleArray? {
-        val walked = distM - relockStartOdo
-        val steps = walked.toInt().coerceAtMost(GhostFilter.MAX_SIGNATURE_STEPS)
-        if (steps < 1) return null
-        val base = distM - steps * RELOCK_SIGNATURE_STEP_M
-        return DoubleArray(steps) { k ->
-            wrapPi(yawAt(base + (k + 1) * RELOCK_SIGNATURE_STEP_M) - yawAt(base + k * RELOCK_SIGNATURE_STEP_M))
-        }
-    }
-
-    /** Yaw of the nearest relock-trail sample to along-walk [d]. */
-    private fun yawAt(d: Double): Double {
-        var best = relockTrail.lastOrNull()?.yaw ?: yaw
-        var bestDist = Double.MAX_VALUE
-        for (sample in relockTrail) {
-            val dd = abs(sample.d - d)
-            if (dd < bestDist) {
-                bestDist = dd
-                best = sample.yaw
-            }
-        }
-        return best
     }
 
     /** σ < 3 m completes the search; anything else keeps searching. */
     private fun checkRelockConvergence(): Boolean {
         val g = ghost ?: return false
-        if (!g.sigma.isFinite() || g.sigma >= RELOCK_SIGMA_M) return false
-        val s = g.meanS
-        // A posterior crowded against either route end is indistinguishable
-        // from clamp pile-up after a uniform re-spread (predict pins
-        // overshooting particles at the boundary, so σ collapses without
-        // evidence). Keep searching rather than announce a lock the
-        // evidence cannot support; the 20 m fallback stays honest.
-        if (s < RELOCK_EDGE_M || s > geometry.totalLengthM - RELOCK_EDGE_M) return false
-        finalizeRelock(s)
+        if (!relock.converged(g.sigma, g.meanS)) return false
+        finalizeRelock(g.meanS)
         return true
     }
 
@@ -843,7 +711,7 @@ class Navigator(
         foundNearLabel = nearestLandmarkTitle(clamped)
         foundAtS = clamped
         fingerprintPrompt = null
-        clearRelockTrail()
+        relock.clear()
         turnDetector.reset()
         yawTrail.clear()
         legYaws.clear()
@@ -853,24 +721,8 @@ class Navigator(
     }
 
     /** Title of the landmark nearest to along-route [s], if the route has any. */
-    private fun nearestLandmarkTitle(s: Double): String? {
-        var best: String? = null
-        var bestDist = Double.MAX_VALUE
-        for (landmark in route.landmarks) {
-            val nodeS = geometry.nodeS(landmark.nodeId) ?: continue
-            val d = abs(nodeS - s)
-            if (d < bestDist) {
-                bestDist = d
-                best = landmark.title
-            }
-        }
-        return best
-    }
-
-    private fun clearRelockTrail() {
-        relockTrail.clear()
-        lastSignatureBucket = -1
-    }
+    private fun nearestLandmarkTitle(s: Double): String? =
+        NavCopy.nearestLandmarkTitle(route.landmarks, geometry::nodeS, s)
 
     private fun restart(toLegIndex: Int) {
         if (phase != NavPhase.OFF_ROUTE && phase != NavPhase.UNCERTAIN) return
@@ -1005,22 +857,6 @@ class Navigator(
         )
     }
 
-    private fun offRouteCopy(): String =
-        "Off route — go back to ${anchorNode?.label ?: "the last landmark"}"
-
-    /**
-     * Turn haptic (W10-08): the approach and turning cues speak the next
-     * turn's direction; a node with no turn (straight checkpoint) keeps
-     * the neutral TICK. Geometry and phases are untouched — this only
-     * selects the pattern.
-     */
-    private fun turnCueFor(node: RouteNode?): HapticPattern = when (node?.turn) {
-        TurnDir.LEFT -> HapticPattern.LEFT
-        TurnDir.RIGHT -> HapticPattern.RIGHT
-        TurnDir.U_TURN -> HapticPattern.U_TURN
-        null -> HapticPattern.TICK
-    }
-
     /**
      * Corridor snapping (§6.4): on a straight, steady corridor the arrow
      * error is gyro/alignment drift, so absorb a fraction of it into
@@ -1076,7 +912,12 @@ class Navigator(
         return NavUi(
             phase = phase,
             legIndex = legIndex,
-            instruction = instructionFor(target, landmark),
+            instruction = NavCopy.instruction(
+                phase, target, landmark, route.start.alignmentHint,
+                foundNearLabel, foundAtS, ::levelCueFor, isLastLeg,
+                remaining, config.navArrivePromptM, anchorNode?.label,
+                uncertainInstruction, offRouteInstruction,
+            ),
             distanceToNextM = remaining.coerceAtLeast(0.0),
             arrowRad = arrow,
             nextTurn = target?.turn?.takeIf { target.type == NodeType.TURN },
@@ -1102,65 +943,14 @@ class Navigator(
         }
     }
 
-    private fun instructionFor(target: RouteNode?, landmark: Landmark?): String = when (phase) {
-        NavPhase.ALIGN -> route.start.alignmentHint
-        NavPhase.RELOCKING -> "Finding you…"
-        NavPhase.WALK -> if (foundAtS.isFinite()) {
-            foundNearLabel?.let { "Found you — near $it" } ?: "Found you — back on route"
-        } else when {
-            target?.type == NodeType.LEVEL_CHANGE -> levelCueFor(target)
-            target?.type == NodeType.DESTINATION && isLastLeg &&
-                remaining <= config.navArrivePromptM -> "You're here — ${target.label}"
-            else -> "Walk straight · ${ceil(remaining.coerceAtLeast(0.0)).toInt()} m"
-        }
-        NavPhase.APPROACH -> {
-            val dir = turnWord(target?.turn)
-            val place = landmark?.title ?: target?.label ?: "the turn"
-            "In ${ceil(remaining.coerceAtLeast(0.0)).toInt()} m turn $dir at the $place"
-        }
-        NavPhase.TURNING -> "Turn ${turnWord(target?.turn)} now"
-        NavPhase.CONFIRM -> landmark?.cue?.takeIf { it.isNotEmpty() }
-            ?: target?.cue?.takeIf { it.isNotEmpty() }
-            ?: "Confirm: ${target?.label ?: "landmark"}"
-        NavPhase.UNCERTAIN -> uncertainInstruction ?: "Location uncertain — confirm landmark"
-        NavPhase.OFF_ROUTE -> offRouteInstruction ?: offRouteCopy()
-        NavPhase.ARRIVED -> "Arrived at ${target?.label ?: "destination"}"
-    }
-
-    private fun turnWord(dir: TurnDir?): String = when (dir) {
-        TurnDir.LEFT -> "left"
-        TurnDir.RIGHT -> "right"
-        TurnDir.U_TURN -> "around"
-        null -> "ahead"
-    }
-
     /**
      * Level cue (W12-08): the stamped cue until the barometer confirms,
-     * then the cue confirms itself ("Down 1 level ✓"). The only new copy
-     * is the confirmation marker; the words come from the node's
-     * [RouteNode.levelDelta] like [defaultCue].
+     * then the cue confirms itself ("Down 1 level ✓"). The copy lives in
+     * [NavCopy]; the Navigator supplies the confirmed-node set.
      */
     private fun levelCueFor(node: RouteNode): String =
-        if (node.id in confirmedLevelNodeIds) confirmedLevelCue(node)
+        if (node.id in confirmedLevelNodeIds) NavCopy.confirmedLevelCue(node)
         else node.cue.ifEmpty { defaultCue(node) }
-
-    private fun confirmedLevelCue(node: RouteNode): String {
-        val floors = abs(node.levelDelta)
-        return when {
-            floors == 0 -> "Change level ✓"
-            node.levelDelta > 0 && floors == 1 -> "Up 1 level ✓"
-            node.levelDelta > 0 -> "Up $floors levels ✓"
-            floors == 1 -> "Down 1 level ✓"
-            else -> "Down $floors levels ✓"
-        }
-    }
-
-    /**
-     * One relock-trail sample (W12-06): where the walker was, which way
-     * they faced, and when — the signature window reads yaw deltas off
-     * these, pruned to ≤ 10 s / 8 m.
-     */
-    private data class RelockSample(val d: Double, val yaw: Double, val tNs: Long)
 
     companion object {
         /**
@@ -1169,27 +959,6 @@ class Navigator(
          * instead of once per ~100 Hz motion update.
          */
         const val HEADING_OBS_STEP_M = 0.5
-
-        /** Relock lock criterion: σ below 3 m announces "Found you". */
-        const val RELOCK_SIGMA_M = 3.0
-
-        /**
-         * Relock end margin: a lock crowded within 3 m of either route end
-         * reads as clamp pile-up, not evidence — the search continues.
-         */
-        const val RELOCK_EDGE_M = 3.0
-
-        /** Relock gives up after 20 m walked without convergence. */
-        const val RELOCK_FALLBACK_M = 20.0
-
-        /** Turn-signature window: the next ≤ 8 m of heading changes. */
-        const val RELOCK_WINDOW_M = 8.0
-
-        /** Turn-signature window: the next ≤ 10 s of heading changes, ns. */
-        const val RELOCK_WINDOW_NS = 10_000_000_000L
-
-        /** Turn-signature resolution: one heading change per metre. */
-        const val RELOCK_SIGNATURE_STEP_M = 1.0
 
         /** "Found you" cue expires after 5 m of further walking. */
         const val FOUND_COPY_EXPIRE_M = 5.0

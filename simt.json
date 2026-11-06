@@ -11,12 +11,7 @@
       "error": 1000,
       "exclude": [
         "worker/package-lock.json",
-        "docs/research/SIMT_ECHO_IMPLEMENTATION_PLAN_V2.md",
-        "shared/src/commonMain/kotlin/app/simt/echo/nav/Navigator.kt",
-        "shared/src/commonTest/kotlin/app/simt/echo/ui/screens/processing/ProcessingViewModelTest.kt",
-        "worker/src/jobs.test.ts",
-        "worker/src/scout.test.ts",
-        "worker/src/uploads.test.ts"
+        "docs/research/SIMT_ECHO_IMPLEMENTATION_PLAN_V2.md"
       ]
     }
   },

@@ -136,6 +136,13 @@ kotlin {
 afterEvaluate {
     val androidHostTest = tasks.named<Test>("testAndroidHostTest")
     val baselineArtifact = rootProject.file("docs/perf/accuracy-baseline.json")
+    tasks.withType<Test>().configureEach {
+        // Robolectric 4.17 reflects into jdk.internal.access.SharedSecrets,
+        // which JDK 25 no longer exports to the unnamed module by default
+        // (robolectric#11434): "Failed to interact with raw FileDescriptor
+        // internals; perhaps JRE has changed?".
+        jvmArgs("--add-exports=java.base/jdk.internal.access=ALL-UNNAMED")
+    }
     androidHostTest.configure {
         systemProperty("simt.repositoryRoot", rootProject.projectDir.absolutePath)
         inputs.file(baselineArtifact).withPropertyName("accuracyBaseline").withPathSensitivity(PathSensitivity.RELATIVE)
