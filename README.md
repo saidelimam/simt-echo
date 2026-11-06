@@ -34,6 +34,8 @@ worker deploy evidence.
   and install the `simt-echo-vX.Y.Z.apk` asset (allow installs from this source).
 - [Watch the demo run end-to-end](docs/demo.md) on the release APK, including
   the honest fail-closed states.
+- [Watch the hackathon submission video](https://www.youtube.com/watch?v=AVNrF17zDU8)
+  (the Meta AI Hackathon 2026 presentation of the product).
 
 ### What ECHO is not (yet)
 

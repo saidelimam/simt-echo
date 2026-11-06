@@ -8,10 +8,11 @@ friend navigating the recorded route:
 > share (QR / relay) → navigate.**
 
 Every step below was driven on the release APK with `adb`; screenshots are in
-the run's `shots/` directory, and a video of the run is on
-[YouTube](https://www.youtube.com/watch?v=AVNrF17zDU8). The run is honest
-about what an emulator can and cannot do — where the scene is static, the app
-fails closed rather than pretending, and that failure is part of the demo.
+the run's `shots/` directory. (The [hackathon submission
+video](https://www.youtube.com/watch?v=AVNrF17zDU8) is the presentation of the
+product, not a recording of this run.) The run is honest about what an
+emulator can and cannot do — where the scene is static, the app fails closed
+rather than pretending, and that failure is part of the demo.
 
 ## Environment
 
