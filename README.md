@@ -1,3 +1,5 @@
+[![ci](https://github.com/saidelimam/simt-echo/actions/workflows/ci.yml/badge.svg)](https://github.com/saidelimam/simt-echo/actions/workflows/ci.yml)
+
 ![ECHO planet end card](res/marketing/marketing-assets/little-world/04-echo-planet-end-card.png)
 
 # ECHO — simt-echo
