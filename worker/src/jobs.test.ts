@@ -71,7 +71,11 @@ class FakeR2 {
     const entry = this.store.get(key);
     if (!entry) return null;
     return {
-      httpEtag: entry.etag,
+      // R2 exposes the tag two ways: `etag` is the bare value
+      // `onlyIf.etagMatches` compares against; `httpEtag` is the quoted
+      // HTTP entity tag (a conditional put with the quoted form 412s).
+      etag: entry.etag,
+      httpEtag: `"${entry.etag}"`,
       body: new Response(entry.body).body,
       size: entry.body.byteLength,
       text: async () => new TextDecoder().decode(entry.body),

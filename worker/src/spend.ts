@@ -91,11 +91,14 @@ export async function reserveDailySpend(
     try {
       // Conditional on the etag we just read: a concurrent create landing
       // between get and put makes R2 reject this one, and the retry sees
-      // the fresh total.
+      // the fresh total. `etag`, not `httpEtag`: the latter is the quoted
+      // HTTP entity tag ("…"), and R2 rejects a conditional put whose
+      // etagMatches is quoted — every put after the first of a UTC day
+      // 412'd, so the eighth retry failed closed as contention.
       await env.MEDIA.put(
         key,
         JSON.stringify({ reserved: reserved + frames }),
-        obj ? { onlyIf: { etagMatches: obj.httpEtag } } : undefined,
+        obj ? { onlyIf: { etagMatches: obj.etag } } : undefined,
       );
       return { ok: true };
     } catch {

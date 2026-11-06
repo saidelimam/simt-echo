@@ -39,9 +39,12 @@ class LedgerR2 {
   async get(key: string) {
     const entry = this.store.get(key);
     if (!entry) return null;
-    const etag = entry.etag;
     return {
-      httpEtag: etag,
+      // Production R2 exposes the tag two ways: `etag` is the bare value
+      // `onlyIf.etagMatches` compares against; `httpEtag` is the quoted
+      // HTTP entity tag, and a conditional put with the quoted form 412s.
+      etag: entry.etag,
+      httpEtag: `"${entry.etag}"`,
       json: async <T,>() => JSON.parse(entry.body) as T,
       text: async () => entry.body,
     };
@@ -145,6 +148,18 @@ describe("reserveDailySpend (R10-05)", () => {
     expect(await reserveDailySpend(envFor(r2, "1200"), 50)).toEqual({ ok: true });
     expect(r2.conditionalPuts).toBe(2);
     expect(r2.ledger()).toEqual({ reserved: 1150 });
+  });
+
+  it("lands a second reserve of the same UTC day on the live ledger", async () => {
+    // Regression: the conditional put compared `httpEtag` (the quoted HTTP
+    // tag) against R2's unquoted etag, so every reserve after the first of
+    // a day 412'd eight times and failed closed as contention — the 2026-11-06
+    // incident where the first create of a UTC day succeeded and every
+    // subsequent one returned job_create_failed.
+    const r2 = new LedgerR2();
+    expect(await reserveDailySpend(envFor(r2, "1200"), 120)).toEqual({ ok: true });
+    expect(await reserveDailySpend(envFor(r2, "1200"), 120)).toEqual({ ok: true });
+    expect(r2.ledger()).toEqual({ reserved: 240 });
   });
 
   it("fails closed on a persistent contention storm, nothing written", async () => {
